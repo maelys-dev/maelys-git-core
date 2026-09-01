@@ -814,6 +814,9 @@
                   "apply"
                 ]
               },
+              "policyFingerprint": {
+                "type": "string"
+              },
               "preparedOid": {
                 "type": "string"
               },
@@ -838,6 +841,7 @@
               "mergeBaseOid",
               "mergeTreeOid",
               "preparedOid",
+              "policyFingerprint",
               "conflicts",
               "changeSummary"
             ],
@@ -862,7 +866,29 @@
           },
           "id": "pr.merge",
           "input": {
-            "constraints": [],
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-prepared-oid",
+                  "--apply"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-policy-fingerprint",
+                  "--expected-prepared-oid"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--apply",
+                  "--expected-policy-fingerprint"
+                ]
+              }
+            ],
             "operands": [
               {
                 "name": "ROOT",
@@ -985,15 +1011,45 @@
                 "summary": "Assert that a blocking review exists."
               },
               {
+                "argument": {
+                  "name": "OID",
+                  "type": "oid"
+                },
+                "conflictsWith": [],
+                "long": "--expected-prepared-oid",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--apply"
+                ],
+                "summary": "Prepared OID returned by the reviewed plan; required with --apply."
+              },
+              {
+                "argument": {
+                  "name": "SHA256",
+                  "type": "sha256"
+                },
+                "conflictsWith": [],
+                "long": "--expected-policy-fingerprint",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--expected-prepared-oid"
+                ],
+                "summary": "Policy-set fingerprint returned by the reviewed plan; required with --apply."
+              },
+              {
                 "conflictsWith": [],
                 "long": "--apply",
                 "repeatable": false,
                 "required": false,
-                "requires": [],
+                "requires": [
+                  "--expected-policy-fingerprint"
+                ],
                 "summary": "Reauthorize and update the target ref with CAS."
               }
             ],
-            "synopsis": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply]"
+            "synopsis": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -1030,6 +1086,9 @@
                   "apply"
                 ]
               },
+              "policyFingerprint": {
+                "type": "string"
+              },
               "preparedOid": {
                 "type": "string"
               },
@@ -1054,6 +1113,7 @@
               "mergeBaseOid",
               "mergeTreeOid",
               "preparedOid",
+              "policyFingerprint",
               "conflicts",
               "changeSummary"
             ],
@@ -1064,7 +1124,7 @@
             "merge"
           ],
           "purpose": "Plan or execute a gated, reauthorized pull request merge with compare-and-swap.",
-          "usage": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply]"
+          "usage": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256]"
         }
       ],
       "globalOptions": {

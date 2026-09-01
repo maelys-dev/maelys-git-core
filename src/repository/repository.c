@@ -81,7 +81,8 @@ static maelys_git_result_t collect_changed_path(const maelys_git_change_t *chang
                                                 void *context,
                                                 maelys_git_error_t *error) {
     path_collector_t *collector = context;
-    if (collector->paths->count == collector->capacity) {
+    size_t required = change->old_path[0] ? 2u : 1u;
+    while (collector->paths->count + required > collector->capacity) {
         size_t next = collector->capacity ? collector->capacity * 2u : 32u;
         if (next < collector->capacity || next > SIZE_MAX / sizeof(char *)) {
             mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0, "changed path list is too large");
@@ -91,6 +92,11 @@ static maelys_git_result_t collect_changed_path(const maelys_git_change_t *chang
         if (!items) return MAELYS_GIT_ERR_IO;
         collector->paths->items = items;
         collector->capacity = next;
+    }
+    if (change->old_path[0]) {
+        char *old_path = strdup(change->old_path);
+        if (!old_path) return MAELYS_GIT_ERR_IO;
+        collector->paths->items[collector->paths->count++] = old_path;
     }
     char *path = strdup(change->path);
     if (!path) return MAELYS_GIT_ERR_IO;

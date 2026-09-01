@@ -186,6 +186,10 @@ if(MAELYS_GIT_BUILD_TESTS)
             $<TARGET_FILE:maelys-git>
             ${CMAKE_CURRENT_SOURCE_DIR}/policies/manifest.json)
 
+    add_test(NAME maelys-git-hook-integration
+        COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hook_cli.sh
+            $<TARGET_FILE:maelys-git-hook>)
+
     if(Python3_Interpreter_FOUND)
         add_test(NAME maelys-git-cli-docs
             COMMAND ${Python3_EXECUTABLE}

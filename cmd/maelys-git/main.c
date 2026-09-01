@@ -241,12 +241,13 @@ static int emit_pr_result(const maelys_cli_invocation_t *invocation,
         "renamed", (json_int_t)result->changes.renamed_count,
         "maxNewBlobSize", (json_int_t)result->changes.max_new_blob_size,
         "hasBinary", result->changes.has_binary);
-    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:b,s:b,s:s,s:s,s:s,s:o,s:o}",
+    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:b,s:b,s:s,s:s,s:s,s:s,s:o,s:o}",
         "mode", mode, "changed", changed,
         "repository", maelys_cli_operand(invocation, 1u), "style", style_name,
         "mergeable", result->mergeable, "empty", result->empty,
         "mergeBaseOid", result->merge_base_oid, "mergeTreeOid", result->merge_tree_oid,
-        "preparedOid", result->prepared_oid, "conflicts", conflicts,
+        "preparedOid", result->prepared_oid,
+        "policyFingerprint", result->policy_fingerprint, "conflicts", conflicts,
         "changeSummary", summary);
     int emitted = maelys_cli_emit_success(invocation, data, NULL, 0);
     json_decref(data);
@@ -327,12 +328,25 @@ static int command_pr_merge(const maelys_cli_invocation_t *invocation) {
         maelys_cli_operand(invocation, 5u), &policy, &error);
     if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
     int apply = maelys_cli_flag(invocation, "apply");
+    const char *expected_prepared_oid =
+        maelys_cli_option(invocation, "expected-prepared-oid");
+    const char *expected_policy_fingerprint =
+        maelys_cli_option(invocation, "expected-policy-fingerprint");
+    if (apply && (!expected_prepared_oid || !expected_policy_fingerprint)) {
+        maelys_git_policy_close(policy);
+        maelys_cli_error_t cli_error = {
+            "VALIDATION_FAILED",
+            "Apply requires the reviewed plan preconditions.",
+            "Pass --expected-prepared-oid and --expected-policy-fingerprint from the plan output."};
+        return maelys_cli_emit_error(invocation, &cli_error, 1);
+    }
     maelys_git_pr_check_result_t check;
     result = maelys_git_pr_merge(
         git_executable(invocation), repository_path, maelys_cli_operand(invocation, 1u),
         maelys_cli_operand(invocation, 2u), maelys_cli_operand(invocation, 3u),
         maelys_cli_operand(invocation, 4u), style, maelys_cli_option(invocation, "message"),
-        maelys_cli_operand(invocation, 6u), &gates, policy, apply, &check, &error);
+        maelys_cli_operand(invocation, 6u), &gates, policy,
+        expected_prepared_oid, expected_policy_fingerprint, apply, &check, &error);
     maelys_git_policy_close(policy);
     if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
     return emit_pr_result(invocation, apply ? "apply" : "plan", apply, style, &check);

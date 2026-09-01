@@ -40,6 +40,96 @@ static maelys_git_result_t capture_oid(const char *git,
     return MAELYS_GIT_OK;
 }
 
+static maelys_git_result_t capture_commit_epoch(const char *git,
+                                                const char *repository,
+                                                const char *oid,
+                                                long long *out_epoch,
+                                                maelys_git_error_t *error) {
+    char *argv[] = {(char *)git, "--git-dir", (char *)repository,
+                    "show", "-s", "--format=%ct", (char *)oid, NULL};
+    unsigned char *data = NULL;
+    size_t length = 0u;
+    maelys_git_result_t result = mg_process_capture(git, argv, &data, &length, 64u, error);
+    if (result != MAELYS_GIT_OK) return result;
+    trim_line(data, &length);
+    char *end = NULL;
+    errno = 0;
+    long long epoch = strtoll((char *)data, &end, 10);
+    int valid = errno == 0 && end != (char *)data && *end == '\0' && epoch > 0;
+    free(data);
+    if (!valid) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
+                     "Git returned an invalid commit timestamp");
+        return MAELYS_GIT_ERR_PROTOCOL;
+    }
+    *out_epoch = epoch;
+    return MAELYS_GIT_OK;
+}
+
+static maelys_git_result_t create_deterministic_commit(
+    const char *git,
+    const char *repository,
+    const char *tree_oid,
+    const char *base_oid,
+    const char *head_oid,
+    int include_head_parent,
+    const char *message,
+    char out_oid[65],
+    maelys_git_error_t *error) {
+    long long base_epoch = 0;
+    long long head_epoch = 0;
+    maelys_git_result_t result = capture_commit_epoch(
+        git, repository, base_oid, &base_epoch, error);
+    if (result != MAELYS_GIT_OK) return result;
+    result = capture_commit_epoch(git, repository, head_oid, &head_epoch, error);
+    if (result != MAELYS_GIT_OK) return result;
+    long long epoch = base_epoch > head_epoch ? base_epoch : head_epoch;
+    if (epoch == LLONG_MAX) {
+        mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0,
+                     "parent commit timestamp cannot be incremented");
+        return MAELYS_GIT_ERR_LIMIT;
+    }
+    ++epoch;
+    char template[] = "/tmp/maelys-git-commit-XXXXXX";
+    int descriptor = mkstemp(template);
+    if (descriptor < 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "cannot create deterministic commit input: %s", strerror(errno));
+        return MAELYS_GIT_ERR_IO;
+    }
+    FILE *stream = fdopen(descriptor, "wb");
+    if (!stream) {
+        close(descriptor);
+        unlink(template);
+        return MAELYS_GIT_ERR_IO;
+    }
+    int failed = fprintf(stream, "tree %s\nparent %s\n", tree_oid, base_oid) < 0;
+    if (!failed && include_head_parent)
+        failed = fprintf(stream, "parent %s\n", head_oid) < 0;
+    if (!failed)
+        failed = fprintf(stream,
+                         "author Maelys Forge <forge@maelys.local> %lld +0000\n"
+                         "committer Maelys Forge <forge@maelys.local> %lld +0000\n\n",
+                         epoch, epoch) < 0;
+    size_t message_length = strlen(message);
+    if (!failed && fwrite(message, 1u, message_length, stream) != message_length) failed = 1;
+    if (!failed && (message_length == 0u || message[message_length - 1u] != '\n') &&
+        fputc('\n', stream) == EOF) failed = 1;
+    if (!failed && fflush(stream) != 0) failed = 1;
+    if (fclose(stream) != 0) failed = 1;
+    if (failed) {
+        unlink(template);
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "cannot write deterministic commit input");
+        return MAELYS_GIT_ERR_IO;
+    }
+    char *hash_argv[] = {(char *)git, "--git-dir", (char *)repository,
+                         "hash-object", "-t", "commit", "-w", "--", template, NULL};
+    result = capture_oid(git, hash_argv, out_oid, error);
+    unlink(template);
+    return result;
+}
+
 static maelys_git_result_t parse_merge_tree(unsigned char *data,
                                             size_t length,
                                             maelys_git_pr_check_result_t *result,
@@ -175,19 +265,10 @@ static maelys_git_result_t prepare_pr(const char *git,
 
     const char *commit_message = message && *message ? message :
         (style == MAELYS_GIT_MERGE_SQUASH ? "Squash merge" : "Merge pull request");
-    char *merge_commit_argv[] = {
-        (char *)git, "--git-dir", prepared->temporary_repository,
-        "-c", "user.name=Maelys Forge", "-c", "user.email=forge@maelys.local",
-        "commit-tree", prepared->result.merge_tree_oid, "-p", (char *)base_oid,
-        "-p", (char *)head_oid, "-m", (char *)commit_message, NULL};
-    char *squash_commit_argv[] = {
-        (char *)git, "--git-dir", prepared->temporary_repository,
-        "-c", "user.name=Maelys Forge", "-c", "user.email=forge@maelys.local",
-        "commit-tree", prepared->result.merge_tree_oid, "-p", (char *)base_oid,
-        "-m", (char *)commit_message, NULL};
-    rc = capture_oid(git,
-                     style == MAELYS_GIT_MERGE_SQUASH ? squash_commit_argv : merge_commit_argv,
-                     prepared->result.prepared_oid, error);
+    rc = create_deterministic_commit(
+        git, prepared->temporary_repository, prepared->result.merge_tree_oid,
+        base_oid, head_oid, style == MAELYS_GIT_MERGE_COMMIT,
+        commit_message, prepared->result.prepared_oid, error);
     if (rc != MAELYS_GIT_OK) { prepared_clear(prepared); return rc; }
     char *ref_argv[] = {(char *)git, "--git-dir", prepared->temporary_repository,
                         "update-ref", "refs/maelys/prepared",
@@ -232,13 +313,16 @@ static maelys_git_result_t authorize_pr_request(pr_auth_context_t *context,
                                                 const maelys_git_change_t *change,
                                                 const maelys_git_change_summary_t *summary,
                                                 maelys_git_error_t *error) {
-    const char *path = change ? change->path : NULL;
+    const char *paths[2] = {change ? change->path : NULL,
+                            change && change->old_path[0] ? change->old_path : NULL};
     maelys_git_policy_request_t request = {
         .request_id = context->ref, .principal = context->principal,
         .repository = context->repository, .operation = "merge",
         .ref_name = context->ref, .ref_kind = "branch", .update_kind = "fast_forward",
         .change_kind = change ? maelys_git_change_kind_name(change->kind) : NULL,
-        .paths = change ? &path : NULL, .path_count = change ? 1u : 0u,
+        .old_path = change && change->old_path[0] ? change->old_path : NULL,
+        .paths = change ? paths : NULL,
+        .path_count = change ? (change->old_path[0] ? 2u : 1u) : 0u,
         .has_summary = summary != NULL,
     };
     if (summary) {
@@ -284,7 +368,8 @@ maelys_git_result_t maelys_git_pr_merge(
     const char *git, const char *repository_path, const char *repository_name,
     const char *base_ref, const char *base_oid, const char *head_oid,
     maelys_git_merge_style_t style, const char *message, const char *principal,
-    const maelys_git_pr_gates_t *gates, maelys_git_policy_t *policy, int apply,
+    const maelys_git_pr_gates_t *gates, maelys_git_policy_t *policy,
+    const char *expected_prepared_oid, const char *expected_policy_fingerprint, int apply,
     maelys_git_pr_check_result_t *out_result, maelys_git_error_t *error) {
     maelys_git_error_clear(error);
     if (!repository_name || !base_ref || !maelys_git_ref_name_is_valid(base_ref) ||
@@ -301,6 +386,32 @@ maelys_git_result_t maelys_git_pr_merge(
     maelys_git_result_t result = prepare_pr(git, repository_path, base_oid, head_oid,
                                             style, message, &prepared, error);
     if (result != MAELYS_GIT_OK) return result;
+    result = maelys_git_policy_fingerprint(policy, prepared.result.policy_fingerprint,
+                                           error);
+    if (result != MAELYS_GIT_OK) {
+        prepared_clear(&prepared);
+        return result;
+    }
+    if (apply && (!expected_prepared_oid || !*expected_prepared_oid ||
+                  !expected_policy_fingerprint || !*expected_policy_fingerprint)) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0,
+                     "apply requires the prepared OID and policy fingerprint returned by plan");
+        prepared_clear(&prepared);
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    if (apply && strcmp(expected_prepared_oid, prepared.result.prepared_oid) != 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
+                     "prepared result changed; run a new pull request plan");
+        prepared_clear(&prepared);
+        return MAELYS_GIT_ERR_PROCESS;
+    }
+    if (apply && strcmp(expected_policy_fingerprint,
+                        prepared.result.policy_fingerprint) != 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
+                     "policy set changed; run a new pull request plan");
+        prepared_clear(&prepared);
+        return MAELYS_GIT_ERR_PROCESS;
+    }
     if (!prepared.result.mergeable || prepared.result.empty) {
         mg_error_set(error, MAELYS_GIT_ERR_DENIED, 0,
                      prepared.result.empty ? "pull request is empty" : "pull request is not mergeable");

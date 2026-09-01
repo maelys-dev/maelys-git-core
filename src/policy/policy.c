@@ -13,6 +13,7 @@
 
 struct maelys_git_policy {
     maelys_datalog_policy_set_t set;
+    char fingerprint[65];
 };
 
 static char s_policy_atoms[MAELYS_DATALOG_MAX_ATOMS][64];
@@ -26,6 +27,7 @@ static const maelys_datalog_predicate_def_t k_git_domain[] = {
     {.name = "operation", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "ref", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "path", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "old_path", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "ref_kind", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "update_kind", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "change_kind", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
@@ -38,6 +40,10 @@ static const maelys_datalog_predicate_def_t k_git_domain[] = {
     {.name = "has_binary", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "commit_email", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "commit_signed", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "commit_signature_status", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "commit_signer_fingerprint", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "commit_signer_identity", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "commit_signature_trusted", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "ssh_key", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "remote_address", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "group_member", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
@@ -274,7 +280,23 @@ static maelys_git_result_t policy_open_unlocked(const char *manifest_path,
         mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "policy set contains no enabled policy");
         return MAELYS_GIT_ERR_POLICY;
     }
+    result = maelys_datalog_policy_set_fingerprint(&policy->set, policy->fingerprint);
+    if (result != MAELYS_OK) {
+        maelys_datalog_policy_set_clear(&policy->set);
+        free(policy);
+        return datalog_failure(error, "policy-set fingerprint", result);
+    }
     *out_policy = policy;
+    return MAELYS_GIT_OK;
+}
+
+maelys_git_result_t maelys_git_policy_fingerprint(
+    const maelys_git_policy_t *policy,
+    char out_hex[65],
+    maelys_git_error_t *error) {
+    maelys_git_error_clear(error);
+    if (!policy || !out_hex) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    memcpy(out_hex, policy->fingerprint, sizeof(policy->fingerprint));
     return MAELYS_GIT_OK;
 }
 
@@ -358,11 +380,17 @@ static maelys_git_result_t solve_policy(const maelys_datalog_ruleset_t *source_r
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "ref_kind", request->ref_kind);
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "update_kind", request->update_kind);
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "change_kind", request->change_kind);
+    if (rc == MAELYS_OK) rc = add_optional_fact(edb, "old_path", request->old_path);
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "ssh_key", request->ssh_key);
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "remote_address", request->remote_address);
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "commit_email", request->commit_email);
+    if (rc == MAELYS_OK) rc = add_optional_fact(edb, "commit_signature_status", request->commit_signature_status);
+    if (rc == MAELYS_OK) rc = add_optional_fact(edb, "commit_signer_fingerprint", request->commit_signer_fingerprint);
+    if (rc == MAELYS_OK) rc = add_optional_fact(edb, "commit_signer_identity", request->commit_signer_identity);
     if (rc == MAELYS_OK && request->has_commit_signed)
         rc = add_boolean_fact(edb, "commit_signed", request->commit_signed);
+    if (rc == MAELYS_OK && request->has_commit_signature_trusted)
+        rc = add_boolean_fact(edb, "commit_signature_trusted", request->commit_signature_trusted);
     if (rc == MAELYS_OK && request->has_summary)
         rc = add_integer_fact(edb, "changed_count", request->changed_count);
     if (rc == MAELYS_OK && request->has_summary)

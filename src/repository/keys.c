@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,14 +50,163 @@ static int safe_quoted_value(const char *value) {
     return 1;
 }
 
-static int supported_key(const char *line) {
-    static const char *prefixes[] = {
-        "ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-nistp256 ",
-        "ecdsa-sha2-nistp384 ", "ecdsa-sha2-nistp521 ",
-        "sk-ssh-ed25519@openssh.com ", "sk-ecdsa-sha2-nistp256@openssh.com "};
-    for (size_t i = 0u; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
-        if (strncmp(line, prefixes[i], strlen(prefixes[i])) == 0) return 1;
+static int supported_key_type(const char *type, size_t length) {
+    static const char *types[] = {
+        "ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256",
+        "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
+        "sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com"};
+    for (size_t i = 0u; i < sizeof(types) / sizeof(types[0]); ++i)
+        if (strlen(types[i]) == length && memcmp(type, types[i], length) == 0) return 1;
     return 0;
+}
+
+static int base64_value(unsigned char ch) {
+    if (ch >= 'A' && ch <= 'Z') return ch - 'A';
+    if (ch >= 'a' && ch <= 'z') return ch - 'a' + 26;
+    if (ch >= '0' && ch <= '9') return ch - '0' + 52;
+    if (ch == '+') return 62;
+    if (ch == '/') return 63;
+    return -1;
+}
+
+static int read_ssh_field(const unsigned char *blob,
+                          size_t blob_length,
+                          size_t *offset,
+                          const unsigned char **out_data,
+                          size_t *out_length) {
+    if (*offset > blob_length || blob_length - *offset < 4u) return 0;
+    const unsigned char *length_bytes = blob + *offset;
+    size_t length = ((size_t)length_bytes[0] << 24u) |
+                    ((size_t)length_bytes[1] << 16u) |
+                    ((size_t)length_bytes[2] << 8u) |
+                    (size_t)length_bytes[3];
+    *offset += 4u;
+    if (length > blob_length - *offset) return 0;
+    *out_data = blob + *offset;
+    *out_length = length;
+    *offset += length;
+    return 1;
+}
+
+static int validate_decoded_key(const char *type,
+                                size_t type_length,
+                                const unsigned char *decoded,
+                                size_t decoded_length) {
+    size_t offset = 0u;
+    const unsigned char *field = NULL;
+    size_t field_length = 0u;
+    if (!read_ssh_field(decoded, decoded_length, &offset, &field, &field_length) ||
+        field_length != type_length || memcmp(field, type, type_length) != 0)
+        return 0;
+    if (type_length == strlen("ssh-ed25519") && !memcmp(type, "ssh-ed25519", type_length))
+        return read_ssh_field(decoded, decoded_length, &offset, &field, &field_length) &&
+               field_length == 32u && offset == decoded_length;
+    if (type_length == strlen("ssh-rsa") && !memcmp(type, "ssh-rsa", type_length)) {
+        const unsigned char *modulus = NULL;
+        size_t modulus_length = 0u;
+        if (!read_ssh_field(decoded, decoded_length, &offset, &field, &field_length) ||
+            field_length == 0u || field_length > sizeof(uint64_t) ||
+            (field_length > 1u && field[0] == 0u && !(field[1] & 0x80u)))
+            return 0;
+        uint64_t exponent = 0u;
+        for (size_t i = 0u; i < field_length; ++i)
+            exponent = (exponent << 8u) | field[i];
+        if (exponent < 3u || !(exponent & 1u) ||
+            !read_ssh_field(decoded, decoded_length, &offset,
+                            &modulus, &modulus_length) ||
+            modulus_length == 0u || offset != decoded_length)
+            return 0;
+        if (modulus[0] == 0u) {
+            if (modulus_length < 2u || !(modulus[1] & 0x80u)) return 0;
+            ++modulus;
+            --modulus_length;
+        } else if (modulus[0] & 0x80u) {
+            return 0;
+        }
+        return modulus_length >= 256u && (modulus[0] & 0x80u);
+    }
+    if (!strncmp(type, "ecdsa-sha2-", strlen("ecdsa-sha2-"))) {
+        const char *curve = type + strlen("ecdsa-sha2-");
+        size_t curve_length = type_length - strlen("ecdsa-sha2-");
+        const unsigned char *point = NULL;
+        size_t point_length = 0u;
+        size_t expected_point_length =
+            curve_length == strlen("nistp256") && !memcmp(curve, "nistp256", curve_length) ? 65u :
+            curve_length == strlen("nistp384") && !memcmp(curve, "nistp384", curve_length) ? 97u :
+            curve_length == strlen("nistp521") && !memcmp(curve, "nistp521", curve_length) ? 133u : 0u;
+        return expected_point_length &&
+               read_ssh_field(decoded, decoded_length, &offset, &field, &field_length) &&
+               field_length == curve_length && !memcmp(field, curve, curve_length) &&
+               read_ssh_field(decoded, decoded_length, &offset, &point, &point_length) &&
+               point_length == expected_point_length && point[0] == 4u &&
+               offset == decoded_length;
+    }
+    if (type_length == strlen("sk-ssh-ed25519@openssh.com") &&
+        !memcmp(type, "sk-ssh-ed25519@openssh.com", type_length)) {
+        const unsigned char *application = NULL;
+        size_t application_length = 0u;
+        return read_ssh_field(decoded, decoded_length, &offset, &field, &field_length) &&
+               field_length == 32u &&
+               read_ssh_field(decoded, decoded_length, &offset, &application, &application_length) &&
+               application_length > 0u && offset == decoded_length;
+    }
+    if (type_length == strlen("sk-ecdsa-sha2-nistp256@openssh.com") &&
+        !memcmp(type, "sk-ecdsa-sha2-nistp256@openssh.com", type_length)) {
+        const unsigned char *point = NULL, *application = NULL;
+        size_t point_length = 0u, application_length = 0u;
+        return read_ssh_field(decoded, decoded_length, &offset, &field, &field_length) &&
+               field_length == strlen("nistp256") && !memcmp(field, "nistp256", field_length) &&
+               read_ssh_field(decoded, decoded_length, &offset, &point, &point_length) &&
+               point_length == 65u && point[0] == 4u &&
+               read_ssh_field(decoded, decoded_length, &offset, &application, &application_length) &&
+               application_length > 0u && offset == decoded_length;
+    }
+    return 0;
+}
+
+static int validate_key_blob(const char *line) {
+    const char *type_end = strchr(line, ' ');
+    if (!type_end) return 0;
+    size_t type_length = (size_t)(type_end - line);
+    if (!supported_key_type(line, type_length)) return 0;
+    const char *encoded = type_end + 1u;
+    const char *encoded_end = strchr(encoded, ' ');
+    if (!encoded_end) encoded_end = encoded + strlen(encoded);
+    size_t encoded_length = (size_t)(encoded_end - encoded);
+    if (encoded_length < 8u || encoded_length > 16384u || encoded_length % 4u == 1u)
+        return 0;
+    size_t decoded_capacity = encoded_length * 3u / 4u + 3u;
+    unsigned char *decoded = malloc(decoded_capacity);
+    if (!decoded) return 0;
+    size_t decoded_length = 0u;
+    unsigned int accumulator = 0u;
+    unsigned int bits = 0u;
+    size_t padding = 0u;
+    int valid = 1;
+    for (size_t i = 0u; i < encoded_length; ++i) {
+        unsigned char ch = (unsigned char)encoded[i];
+        if (ch == '=') {
+            ++padding;
+            if (padding > 2u) valid = 0;
+            continue;
+        }
+        if (padding) { valid = 0; break; }
+        int value = base64_value(ch);
+        if (value < 0) { valid = 0; break; }
+        accumulator = (accumulator << 6u) | (unsigned int)value;
+        bits += 6u;
+        if (bits >= 8u) {
+            bits -= 8u;
+            decoded[decoded_length++] = (unsigned char)(accumulator >> bits);
+            accumulator &= bits ? ((1u << bits) - 1u) : 0u;
+        }
+    }
+    if (padding && encoded_length % 4u != 0u) valid = 0;
+    if (bits && accumulator != 0u) valid = 0;
+    if (decoded_length < 5u) valid = 0;
+    if (valid) valid = validate_decoded_key(line, type_length, decoded, decoded_length);
+    free(decoded);
+    return valid;
 }
 
 static char *read_key(const char *path, maelys_git_error_t *error) {
@@ -77,7 +227,7 @@ static char *read_key(const char *path, maelys_git_error_t *error) {
     buffer[length] = '\0';
     while (length && (buffer[length - 1u] == '\n' || buffer[length - 1u] == '\r'))
         buffer[--length] = '\0';
-    if (!length || strchr(buffer, '\n') || strchr(buffer, '\r') || !supported_key(buffer)) {
+    if (!length || strchr(buffer, '\n') || strchr(buffer, '\r') || !validate_key_blob(buffer)) {
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "invalid SSH public key: %s", path);
         return NULL;
     }

@@ -2,25 +2,59 @@
 
 #include <errno.h>
 #include <dirent.h>
+#include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 extern char **environ;
+
+#define MG_PROCESS_TIMEOUT_MS 120000LL
+
+static long long monotonic_ms(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return -1;
+    return (long long)now.tv_sec * 1000LL + now.tv_nsec / 1000000LL;
+}
+
+static void terminate_child(pid_t pid) {
+    (void)kill(pid, SIGTERM);
+    struct timespec pause = {.tv_sec = 0, .tv_nsec = 100000000L};
+    (void)nanosleep(&pause, NULL);
+    if (waitpid(pid, NULL, WNOHANG) == 0) (void)kill(pid, SIGKILL);
+}
 
 static maelys_git_result_t wait_child(pid_t pid,
                                       int *out_exit_status,
                                       int require_success,
                                       maelys_git_error_t *error) {
     int status = 0;
-    while (waitpid(pid, &status, 0) < 0) {
-        if (errno == EINTR) continue;
-        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, errno, "waitpid failed: %s", strerror(errno));
-        return MAELYS_GIT_ERR_PROCESS;
+    long long started = monotonic_ms();
+    for (;;) {
+        pid_t waited = waitpid(pid, &status, WNOHANG);
+        if (waited == pid) break;
+        if (waited < 0 && errno != EINTR) {
+            mg_error_set(error, MAELYS_GIT_ERR_PROCESS, errno, "waitpid failed: %s", strerror(errno));
+            return MAELYS_GIT_ERR_PROCESS;
+        }
+        long long now = monotonic_ms();
+        if (started >= 0 && now >= 0 && now - started >= MG_PROCESS_TIMEOUT_MS) {
+            terminate_child(pid);
+            while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+            }
+            mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
+                         "child process exceeded the %lld ms execution limit",
+                         MG_PROCESS_TIMEOUT_MS);
+            return MAELYS_GIT_ERR_PROCESS;
+        }
+        struct timespec pause = {.tv_sec = 0, .tv_nsec = 10000000L};
+        (void)nanosleep(&pause, NULL);
     }
     int exit_status = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
     if (out_exit_status) *out_exit_status = exit_status;
@@ -63,13 +97,14 @@ maelys_git_result_t mg_process_run_status(const char *executable,
     return wait_child(pid, out_exit_status, 0, error);
 }
 
-maelys_git_result_t mg_process_capture_status(const char *executable,
-                                              char *const argv[],
-                                              unsigned char **out_data,
-                                              size_t *out_length,
-                                              size_t max_length,
-                                              int *out_exit_status,
-                                              maelys_git_error_t *error) {
+static maelys_git_result_t process_capture_status(const char *executable,
+                                                  char *const argv[],
+                                                  unsigned char **out_data,
+                                                  size_t *out_length,
+                                                  size_t max_length,
+                                                  int reject_overflow,
+                                                  int *out_exit_status,
+                                                  maelys_git_error_t *error) {
     if (!executable || !argv || !out_data || !out_length || max_length == 0u) {
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     }
@@ -114,7 +149,33 @@ maelys_git_result_t mg_process_capture_status(const char *executable,
 
     size_t used = 0u;
     int overflow = 0;
+    long long started = monotonic_ms();
     for (;;) {
+        struct pollfd descriptor = {.fd = pipe_fds[0], .events = POLLIN | POLLHUP};
+        int ready = poll(&descriptor, 1u, 100);
+        if (ready < 0 && errno == EINTR) continue;
+        if (ready < 0) {
+            int saved = errno;
+            terminate_child(pid);
+            free(data);
+            (void)close(pipe_fds[0]);
+            (void)waitpid(pid, NULL, 0);
+            mg_error_set(error, MAELYS_GIT_ERR_IO, saved, "poll child output failed: %s", strerror(saved));
+            return MAELYS_GIT_ERR_IO;
+        }
+        long long now = monotonic_ms();
+        if (started >= 0 && now >= 0 && now - started >= MG_PROCESS_TIMEOUT_MS) {
+            terminate_child(pid);
+            close(pipe_fds[0]);
+            while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {
+            }
+            free(data);
+            mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
+                         "child process exceeded the %lld ms execution limit",
+                         MG_PROCESS_TIMEOUT_MS);
+            return MAELYS_GIT_ERR_PROCESS;
+        }
+        if (ready == 0) continue;
         unsigned char discard[4096];
         unsigned char *destination = used < max_length ? data + used : discard;
         size_t available = used < max_length ? max_length - used : sizeof(discard);
@@ -142,7 +203,7 @@ maelys_git_result_t mg_process_capture_status(const char *executable,
         free(data);
         return wait_result;
     }
-    if (overflow || used == max_length) {
+    if (reject_overflow && (overflow || used == max_length)) {
         free(data);
         mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0, "child output exceeds %zu bytes", max_length);
         return MAELYS_GIT_ERR_LIMIT;
@@ -152,6 +213,28 @@ maelys_git_result_t mg_process_capture_status(const char *executable,
     *out_length = used;
     if (out_exit_status) *out_exit_status = exit_status;
     return MAELYS_GIT_OK;
+}
+
+maelys_git_result_t mg_process_capture_status(const char *executable,
+                                              char *const argv[],
+                                              unsigned char **out_data,
+                                              size_t *out_length,
+                                              size_t max_length,
+                                              int *out_exit_status,
+                                              maelys_git_error_t *error) {
+    return process_capture_status(executable, argv, out_data, out_length,
+                                  max_length, 1, out_exit_status, error);
+}
+
+maelys_git_result_t mg_process_capture_prefix(const char *executable,
+                                              char *const argv[],
+                                              unsigned char **out_data,
+                                              size_t *out_length,
+                                              size_t prefix_length,
+                                              int *out_exit_status,
+                                              maelys_git_error_t *error) {
+    return process_capture_status(executable, argv, out_data, out_length,
+                                  prefix_length, 0, out_exit_status, error);
 }
 
 maelys_git_result_t mg_process_capture(const char *executable,
@@ -180,23 +263,105 @@ maelys_git_result_t mg_process_to_file(const char *executable,
                                        FILE *output,
                                        int *out_exit_status,
                                        maelys_git_error_t *error) {
-    if (!executable || !argv || !output || !out_exit_status) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
-    int fd = fileno(output);
-    if (fd < 0) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    return mg_process_spool_status(executable, argv, output,
+                                   256u * 1024u * 1024u,
+                                   out_exit_status, error);
+}
+
+maelys_git_result_t mg_process_spool_status(const char *executable,
+                                            char *const argv[],
+                                            FILE *output,
+                                            size_t max_length,
+                                            int *out_exit_status,
+                                            maelys_git_error_t *error) {
+    if (!executable || !argv || !output || !out_exit_status || max_length == 0u)
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    int pipe_fds[2];
+    if (pipe(pipe_fds) != 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "pipe failed: %s", strerror(errno));
+        return MAELYS_GIT_ERR_IO;
+    }
     posix_spawn_file_actions_t actions;
     int rc = posix_spawn_file_actions_init(&actions);
-    if (rc == 0) rc = posix_spawn_file_actions_adddup2(&actions, fd, STDOUT_FILENO);
+    if (rc == 0) rc = posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDOUT_FILENO);
+    if (rc == 0) rc = posix_spawn_file_actions_addclose(&actions, pipe_fds[0]);
+    if (rc == 0) rc = posix_spawn_file_actions_addclose(&actions, pipe_fds[1]);
     if (rc != 0) {
         (void)posix_spawn_file_actions_destroy(&actions);
+        close(pipe_fds[0]); close(pipe_fds[1]);
         mg_error_set(error, MAELYS_GIT_ERR_PROCESS, rc, "spawn action setup failed: %s", strerror(rc));
         return MAELYS_GIT_ERR_PROCESS;
     }
     pid_t pid = 0;
     rc = posix_spawn(&pid, executable, &actions, NULL, argv, environ);
     (void)posix_spawn_file_actions_destroy(&actions);
+    close(pipe_fds[1]);
     if (rc != 0) {
+        close(pipe_fds[0]);
         mg_error_set(error, MAELYS_GIT_ERR_PROCESS, rc, "posix_spawn failed: %s", strerror(rc));
         return MAELYS_GIT_ERR_PROCESS;
+    }
+    unsigned char buffer[16384];
+    size_t total = 0u;
+    int overflow = 0;
+    long long started = monotonic_ms();
+    for (;;) {
+        struct pollfd descriptor = {.fd = pipe_fds[0], .events = POLLIN | POLLHUP};
+        int ready = poll(&descriptor, 1u, 100);
+        if (ready < 0 && errno == EINTR) continue;
+        if (ready < 0) {
+            int saved = errno;
+            terminate_child(pid);
+            close(pipe_fds[0]);
+            (void)waitpid(pid, NULL, 0);
+            mg_error_set(error, MAELYS_GIT_ERR_IO, saved,
+                         "poll child output failed: %s", strerror(saved));
+            return MAELYS_GIT_ERR_IO;
+        }
+        long long now = monotonic_ms();
+        if (started >= 0 && now >= 0 && now - started >= MG_PROCESS_TIMEOUT_MS) {
+            terminate_child(pid); close(pipe_fds[0]);
+            while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {
+            }
+            mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
+                         "child process exceeded the %lld ms execution limit",
+                         MG_PROCESS_TIMEOUT_MS);
+            return MAELYS_GIT_ERR_PROCESS;
+        }
+        if (ready == 0) continue;
+        ssize_t count = read(pipe_fds[0], buffer, sizeof(buffer));
+        if (count > 0) {
+            if ((size_t)count > max_length - (total > max_length ? max_length : total)) {
+                overflow = 1;
+            } else if (!overflow && fwrite(buffer, 1u, (size_t)count, output) != (size_t)count) {
+                int saved = errno;
+                terminate_child(pid); close(pipe_fds[0]); (void)waitpid(pid, NULL, 0);
+                mg_error_set(error, MAELYS_GIT_ERR_IO, saved,
+                             "write child output failed: %s", strerror(saved));
+                return MAELYS_GIT_ERR_IO;
+            }
+            total += (size_t)count;
+            if (overflow) terminate_child(pid);
+            continue;
+        }
+        if (count < 0 && errno == EINTR) continue;
+        if (count < 0) {
+            int saved = errno;
+            terminate_child(pid); close(pipe_fds[0]); (void)waitpid(pid, NULL, 0);
+            mg_error_set(error, MAELYS_GIT_ERR_IO, saved,
+                         "read from child failed: %s", strerror(saved));
+            return MAELYS_GIT_ERR_IO;
+        }
+        break;
+    }
+    close(pipe_fds[0]);
+    if (overflow) {
+        while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {
+        }
+        mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0,
+                     "child output exceeds %zu bytes", max_length);
+        return MAELYS_GIT_ERR_LIMIT;
     }
     maelys_git_result_t result = wait_child(pid, out_exit_status, 0, error);
     if (result == MAELYS_GIT_OK && fflush(output) != 0) {

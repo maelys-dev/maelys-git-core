@@ -19,7 +19,7 @@ Contrat commun : `agent-cli/v2`. Pour le détail machine, exécutez
 | repo.update-ref | repo update-ref ROOT REPOSITORY REF NEW_OID OLD_OID [--git FILE] [--apply] | preview → apply | json-envelope | Plan or compare-and-swap a Git reference. |
 | keys.compile | keys compile KEY_DIRECTORY OUTPUT SHELL ROOT MANIFEST [--apply] | preview → apply | json-envelope | Plan or atomically compile forced-command SSH keys. |
 | pr.check | pr check ROOT REPOSITORY BASE_OID HEAD_OID --style ff\|merge\|squash [--message TEXT] [--git FILE] | read | json-envelope | Compute merge-base, conflicts, emptiness and a prepared result without modifying the repository. |
-| pr.merge | pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff\|merge\|squash --approvals COUNT --required-approvals COUNT [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply] | preview → apply | json-envelope | Plan or execute a gated, reauthorized pull request merge with compare-and-swap. |
+| pr.merge | pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff\|merge\|squash --approvals COUNT --required-approvals COUNT [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256] | preview → apply | json-envelope | Plan or execute a gated, reauthorized pull request merge with compare-and-swap. |
 
 ## `maelys-git-agent`
 
