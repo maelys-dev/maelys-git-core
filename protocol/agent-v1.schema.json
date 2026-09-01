@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maelys.dev/schemas/git-agent-v1.json",
+  "title": "Maelys Git agent command v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "message_id",
+    "agent_id",
+    "type",
+    "command",
+    "issued_at_ms",
+    "expires_at_ms",
+    "payload"
+  ],
+  "properties": {
+    "protocol": {"const": "maelys-git-agent/1"},
+    "message_id": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,127}$"},
+    "agent_id": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,127}$"},
+    "type": {"const": "command"},
+    "command": {
+      "enum": ["health", "authorize", "repository_info", "diff", "update_ref", "create_repository"]
+    },
+    "repository": {"type": "string", "minLength": 1, "maxLength": 511},
+    "principal": {"type": "string", "minLength": 1, "maxLength": 511},
+    "issued_at_ms": {"type": "integer", "minimum": 1},
+    "expires_at_ms": {"type": "integer", "minimum": 1},
+    "payload": {"type": "object"}
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "command": {"const": "health"},
+        "payload": {"type": "object", "maxProperties": 0}
+      }
+    },
+    {
+      "required": ["repository", "principal"],
+      "properties": {
+        "command": {"const": "authorize"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operation"],
+          "properties": {
+            "operation": {"type": "string", "minLength": 1},
+            "ref": {"type": "string", "minLength": 1},
+            "paths": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    },
+    {
+      "required": ["repository", "principal"],
+      "properties": {
+        "command": {"const": "repository_info"},
+        "payload": {"type": "object", "maxProperties": 0}
+      }
+    },
+    {
+      "required": ["repository", "principal"],
+      "properties": {
+        "command": {"const": "diff"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["old_oid", "new_oid"],
+          "properties": {
+            "old_oid": {"type": "string", "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$"},
+            "new_oid": {"type": "string", "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$"}
+          }
+        }
+      }
+    },
+    {
+      "required": ["repository", "principal"],
+      "properties": {
+        "command": {"const": "update_ref"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ref", "old_oid", "new_oid"],
+          "properties": {
+            "ref": {"type": "string", "pattern": "^refs/"},
+            "old_oid": {"type": "string", "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$"},
+            "new_oid": {"type": "string", "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$"}
+          }
+        }
+      }
+    },
+    {
+      "required": ["repository", "principal"],
+      "properties": {
+        "command": {"const": "create_repository"},
+        "payload": {"type": "object", "maxProperties": 0}
+      }
+    }
+  ]
+}

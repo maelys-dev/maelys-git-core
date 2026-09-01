@@ -1,0 +1,1783 @@
+{
+  "contract": "agent-cli/v2",
+  "product": "Maelys Git Core",
+  "programs": {
+    "maelys-git": {
+      "commands": [
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "help",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [],
+            "synopsis": "help"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "CLI help text.",
+            "type": "object"
+          },
+          "pattern": [
+            "help"
+          ],
+          "purpose": "Show the generated CLI guide.",
+          "usage": "help"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "version",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [],
+            "synopsis": "version | --version"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "const": "agent-cli/v2"
+              },
+              "product": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "product",
+              "version",
+              "contract"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "version"
+          ],
+          "purpose": "Return product identity.",
+          "usage": "version | --version"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "describe",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "COMMAND_ID",
+                "required": false,
+                "summary": "Stable command identifier returned by the catalog.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "conflictsWith": [],
+                "long": "--summary",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Return the compact command inventory."
+              }
+            ],
+            "synopsis": "describe [COMMAND_ID] [--summary]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "Versioned command catalog.",
+            "type": "object"
+          },
+          "pattern": [
+            "describe"
+          ],
+          "purpose": "Return executable command contracts.",
+          "usage": "describe [COMMAND_ID] [--summary]"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "validate",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "MANIFEST",
+                "required": true,
+                "summary": "Versioned Maelys Datalog manifest.",
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "synopsis": "validate MANIFEST"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "diagnostics": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "manifest": {
+                "type": "string"
+              },
+              "valid": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "valid",
+              "manifest",
+              "diagnostics"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "validate"
+          ],
+          "purpose": "Validate a Datalog policy manifest.",
+          "usage": "validate MANIFEST"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "authorize",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "MANIFEST",
+                "required": true,
+                "summary": "Versioned Maelys Datalog manifest.",
+                "variadic": false
+              },
+              {
+                "name": "PRINCIPAL",
+                "required": true,
+                "summary": "Authenticated principal.",
+                "variadic": false
+              },
+              {
+                "name": "REPOSITORY",
+                "required": true,
+                "summary": "Repository name below the configured root.",
+                "variadic": false
+              },
+              {
+                "name": "OPERATION",
+                "required": true,
+                "summary": "Datalog operation atom.",
+                "variadic": false
+              },
+              {
+                "name": "REF",
+                "required": false,
+                "summary": "Optional full Git reference, or '-' when omitted.",
+                "variadic": false
+              },
+              {
+                "name": "PATH",
+                "required": false,
+                "summary": "Zero or more changed paths.",
+                "variadic": true
+              }
+            ],
+            "options": [],
+            "synopsis": "authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "allowed": {
+                "type": "boolean"
+              },
+              "explicitDeny": {
+                "type": "boolean"
+              },
+              "matchedPolicy": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "allowed",
+              "explicitDeny",
+              "matchedPolicy",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "authorize"
+          ],
+          "purpose": "Evaluate one authorization request.",
+          "usage": "authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...]"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "parse-ssh",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "COMMAND",
+                "required": true,
+                "summary": "Complete SSH_ORIGINAL_COMMAND value.",
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "synopsis": "parse-ssh COMMAND"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "repository": {
+                "type": "string"
+              },
+              "service": {
+                "enum": [
+                  "upload-pack",
+                  "receive-pack"
+                ]
+              }
+            },
+            "required": [
+              "service",
+              "repository"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "parse-ssh"
+          ],
+          "purpose": "Parse a forced SSH Git command.",
+          "usage": "parse-ssh COMMAND"
+        },
+        {
+          "effect": {
+            "apply": "apply",
+            "plan": "preview"
+          },
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "repo.init",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "ROOT",
+                "required": true,
+                "summary": "Absolute repository root.",
+                "variadic": false
+              },
+              {
+                "name": "REPOSITORY",
+                "required": true,
+                "summary": "Repository name below ROOT.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--git",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Absolute Git executable path."
+              },
+              {
+                "conflictsWith": [],
+                "long": "--apply",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Apply the reviewed transaction; omission returns a read-only plan."
+              }
+            ],
+            "synopsis": "repo init ROOT REPOSITORY [--git FILE] [--apply]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "changed": {
+                "type": "boolean"
+              },
+              "git": {
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "plan",
+                  "apply"
+                ]
+              },
+              "precondition": {
+                "additionalProperties": false,
+                "properties": {
+                  "targetAbsent": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "targetAbsent"
+                ],
+                "type": "object"
+              },
+              "repository": {
+                "type": "string"
+              },
+              "root": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode",
+              "changed",
+              "root",
+              "repository",
+              "git",
+              "precondition"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "repo",
+            "init"
+          ],
+          "purpose": "Plan or create a bare repository.",
+          "usage": "repo init ROOT REPOSITORY [--git FILE] [--apply]"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "repo.diff",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "ROOT",
+                "required": true,
+                "summary": "Absolute repository root.",
+                "variadic": false
+              },
+              {
+                "name": "REPOSITORY",
+                "required": true,
+                "summary": "Repository name below ROOT.",
+                "variadic": false
+              },
+              {
+                "name": "OLD_OID",
+                "required": true,
+                "summary": "Expected old object identifier.",
+                "variadic": false
+              },
+              {
+                "name": "NEW_OID",
+                "required": true,
+                "summary": "New object identifier.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--git",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Absolute Git executable path."
+              }
+            ],
+            "synopsis": "repo diff ROOT REPOSITORY OLD_OID NEW_OID [--git FILE]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "pathCount": {
+                "maximum": 64,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "paths": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 64,
+                "type": "array"
+              },
+              "repository": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "repository",
+              "paths",
+              "pathCount"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "repo",
+            "diff"
+          ],
+          "purpose": "List changed paths between Git objects.",
+          "usage": "repo diff ROOT REPOSITORY OLD_OID NEW_OID [--git FILE]"
+        },
+        {
+          "effect": {
+            "apply": "apply",
+            "plan": "preview"
+          },
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "repo.update-ref",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "ROOT",
+                "required": true,
+                "summary": "Absolute repository root.",
+                "variadic": false
+              },
+              {
+                "name": "REPOSITORY",
+                "required": true,
+                "summary": "Repository name below ROOT.",
+                "variadic": false
+              },
+              {
+                "name": "REF",
+                "required": true,
+                "summary": "Full Git reference.",
+                "variadic": false
+              },
+              {
+                "name": "NEW_OID",
+                "required": true,
+                "summary": "New object identifier.",
+                "variadic": false
+              },
+              {
+                "name": "OLD_OID",
+                "required": true,
+                "summary": "Expected current object identifier.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--git",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Absolute Git executable path."
+              },
+              {
+                "conflictsWith": [],
+                "long": "--apply",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Apply the reviewed transaction; omission returns a read-only plan."
+              }
+            ],
+            "synopsis": "repo update-ref ROOT REPOSITORY REF NEW_OID OLD_OID [--git FILE] [--apply]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "changed": {
+                "type": "boolean"
+              },
+              "git": {
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "plan",
+                  "apply"
+                ]
+              },
+              "newOid": {
+                "type": "string"
+              },
+              "precondition": {
+                "additionalProperties": false,
+                "properties": {
+                  "currentOid": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "currentOid"
+                ],
+                "type": "object"
+              },
+              "ref": {
+                "type": "string"
+              },
+              "repository": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode",
+              "changed",
+              "repository",
+              "ref",
+              "newOid",
+              "git",
+              "precondition"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "repo",
+            "update-ref"
+          ],
+          "purpose": "Plan or compare-and-swap a Git reference.",
+          "usage": "repo update-ref ROOT REPOSITORY REF NEW_OID OLD_OID [--git FILE] [--apply]"
+        }
+      ],
+      "globalOptions": {
+        "compact": "single-line JSON",
+        "format": "text|json",
+        "json": "alias of --format json",
+        "non-interactive": "never prompt",
+        "pretty": "--pretty=false selects compact JSON"
+      },
+      "invariants": [
+        "usage and agent discovery share one catalog",
+        "transactional commands plan by default and require --apply",
+        "stdout carries success data; stderr carries failures",
+        "--json and --format json are identical",
+        "stream commands reject envelope rendering flags"
+      ],
+      "kind": "catalog",
+      "output": {
+        "contract": "agent-cli/v2",
+        "schemaVersion": 2,
+        "stdout": "success data only; protocol streams are explicit exceptions"
+      },
+      "product": "Maelys Git Core",
+      "schemaVersion": 1,
+      "version": "0.1.0"
+    },
+    "maelys-git-agent": {
+      "commands": [
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "help",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [],
+            "synopsis": "help"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "CLI help text.",
+            "type": "object"
+          },
+          "pattern": [
+            "help"
+          ],
+          "purpose": "Show the generated CLI guide.",
+          "usage": "help"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "version",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [],
+            "synopsis": "version | --version"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "const": "agent-cli/v2"
+              },
+              "product": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "product",
+              "version",
+              "contract"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "version"
+          ],
+          "purpose": "Return product identity.",
+          "usage": "version | --version"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "describe",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "COMMAND_ID",
+                "required": false,
+                "summary": "Stable command identifier returned by the catalog.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "conflictsWith": [],
+                "long": "--summary",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Return the compact command inventory."
+              }
+            ],
+            "synopsis": "describe [COMMAND_ID] [--summary]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "Versioned command catalog.",
+            "type": "object"
+          },
+          "pattern": [
+            "describe"
+          ],
+          "purpose": "Return executable command contracts.",
+          "usage": "describe [COMMAND_ID] [--summary]"
+        },
+        {
+          "effect": {
+            "apply": "apply",
+            "plan": "preview"
+          },
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "provision",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--config",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Configuration file to create."
+              },
+              {
+                "argument": {
+                  "name": "ID",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--agent-id",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Stable agent identifier."
+              },
+              {
+                "argument": {
+                  "name": "HOST[:PORT]",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--authority",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "HTTPS authority without scheme."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--ca",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Trusted CA bundle."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--token",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Mode-0600 bearer token file."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--database",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "SQLite journal path."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--manifest",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Datalog manifest path."
+              },
+              {
+                "argument": {
+                  "name": "DIR",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--root",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Repository root."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--executor",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Executor binary path."
+              },
+              {
+                "conflictsWith": [],
+                "long": "--apply",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Create the reviewed configuration."
+              }
+            ],
+            "synopsis": "provision --config FILE --agent-id ID --authority HOST[:PORT] --ca FILE --token FILE --database FILE --manifest FILE --root DIR --executor FILE [--apply]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "agentId": {
+                "type": "string"
+              },
+              "authority": {
+                "type": "string"
+              },
+              "changed": {
+                "type": "boolean"
+              },
+              "config": {
+                "type": "string"
+              },
+              "database": {
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "plan",
+                  "apply"
+                ]
+              },
+              "precondition": {
+                "additionalProperties": false,
+                "properties": {
+                  "configAbsent": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "configAbsent"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "mode",
+              "changed",
+              "config",
+              "agentId",
+              "authority",
+              "database",
+              "precondition"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "provision"
+          ],
+          "purpose": "Plan or create an agent configuration.",
+          "usage": "provision --config FILE --agent-id ID --authority HOST[:PORT] --ca FILE --token FILE --database FILE --manifest FILE --root DIR --executor FILE [--apply]"
+        },
+        {
+          "effect": "execute",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "run",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--config",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Agent configuration file."
+              },
+              {
+                "conflictsWith": [],
+                "long": "--once",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Run one synchronization cycle."
+              }
+            ],
+            "synopsis": "run --config FILE [--once]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "completed": {
+                "const": true
+              },
+              "mode": {
+                "enum": [
+                  "once",
+                  "continuous"
+                ]
+              }
+            },
+            "required": [
+              "completed",
+              "mode"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "run"
+          ],
+          "purpose": "Run the persistent Cloud synchronization loop.",
+          "usage": "run --config FILE [--once]"
+        },
+        {
+          "effect": "stream",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "stdio",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--manifest",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Datalog manifest path."
+              },
+              {
+                "argument": {
+                  "name": "DIR",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--root",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Repository root."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--git",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Absolute Git executable path."
+              }
+            ],
+            "synopsis": "stdio --manifest FILE --root DIR [--git FILE]"
+          },
+          "outputMode": "maelys-git-agent-jsonl-stream",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "Protocol stream; no CLI envelope.",
+            "type": "object"
+          },
+          "pattern": [
+            "stdio"
+          ],
+          "purpose": "Serve the executor JSONL protocol on stdio.",
+          "usage": "stdio --manifest FILE --root DIR [--git FILE]"
+        }
+      ],
+      "globalOptions": {
+        "compact": "single-line JSON",
+        "format": "text|json",
+        "json": "alias of --format json",
+        "non-interactive": "never prompt",
+        "pretty": "--pretty=false selects compact JSON"
+      },
+      "invariants": [
+        "usage and agent discovery share one catalog",
+        "transactional commands plan by default and require --apply",
+        "stdout carries success data; stderr carries failures",
+        "--json and --format json are identical",
+        "stream commands reject envelope rendering flags"
+      ],
+      "kind": "catalog",
+      "output": {
+        "contract": "agent-cli/v2",
+        "schemaVersion": 2,
+        "stdout": "success data only; protocol streams are explicit exceptions"
+      },
+      "product": "Maelys Git Core",
+      "schemaVersion": 1,
+      "version": "0.1.0"
+    },
+    "maelys-git-executor": {
+      "commands": [
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "help",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [],
+            "synopsis": "help"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "CLI help text.",
+            "type": "object"
+          },
+          "pattern": [
+            "help"
+          ],
+          "purpose": "Show the generated CLI guide.",
+          "usage": "help"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "version",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [],
+            "synopsis": "version | --version"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "const": "agent-cli/v2"
+              },
+              "product": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "product",
+              "version",
+              "contract"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "version"
+          ],
+          "purpose": "Return product identity.",
+          "usage": "version | --version"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "describe",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "COMMAND_ID",
+                "required": false,
+                "summary": "Stable command identifier returned by the catalog.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "conflictsWith": [],
+                "long": "--summary",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Return the compact command inventory."
+              }
+            ],
+            "synopsis": "describe [COMMAND_ID] [--summary]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "Versioned command catalog.",
+            "type": "object"
+          },
+          "pattern": [
+            "describe"
+          ],
+          "purpose": "Return executable command contracts.",
+          "usage": "describe [COMMAND_ID] [--summary]"
+        },
+        {
+          "effect": "stream",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "serve",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--manifest",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Datalog manifest path."
+              },
+              {
+                "argument": {
+                  "name": "DIR",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--root",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Repository root."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--git",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Absolute Git executable path."
+              }
+            ],
+            "synopsis": "serve --manifest FILE --root DIR [--git FILE]"
+          },
+          "outputMode": "maelys-git-agent-jsonl-stream",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "Protocol stream; no CLI envelope.",
+            "type": "object"
+          },
+          "pattern": [
+            "serve"
+          ],
+          "purpose": "Serve one-command-at-a-time JSONL execution.",
+          "usage": "serve --manifest FILE --root DIR [--git FILE]"
+        }
+      ],
+      "globalOptions": {
+        "compact": "single-line JSON",
+        "format": "text|json",
+        "json": "alias of --format json",
+        "non-interactive": "never prompt",
+        "pretty": "--pretty=false selects compact JSON"
+      },
+      "invariants": [
+        "usage and agent discovery share one catalog",
+        "transactional commands plan by default and require --apply",
+        "stdout carries success data; stderr carries failures",
+        "--json and --format json are identical",
+        "stream commands reject envelope rendering flags"
+      ],
+      "kind": "catalog",
+      "output": {
+        "contract": "agent-cli/v2",
+        "schemaVersion": 2,
+        "stdout": "success data only; protocol streams are explicit exceptions"
+      },
+      "product": "Maelys Git Core",
+      "schemaVersion": 1,
+      "version": "0.1.0"
+    },
+    "maelys-git-hook": {
+      "commands": [
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "help",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [],
+            "synopsis": "help"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "CLI help text.",
+            "type": "object"
+          },
+          "pattern": [
+            "help"
+          ],
+          "purpose": "Show the generated CLI guide.",
+          "usage": "help"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "version",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [],
+            "synopsis": "version | --version"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "const": "agent-cli/v2"
+              },
+              "product": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "product",
+              "version",
+              "contract"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "version"
+          ],
+          "purpose": "Return product identity.",
+          "usage": "version | --version"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "describe",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "COMMAND_ID",
+                "required": false,
+                "summary": "Stable command identifier returned by the catalog.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "conflictsWith": [],
+                "long": "--summary",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Return the compact command inventory."
+              }
+            ],
+            "synopsis": "describe [COMMAND_ID] [--summary]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "Versioned command catalog.",
+            "type": "object"
+          },
+          "pattern": [
+            "describe"
+          ],
+          "purpose": "Return executable command contracts.",
+          "usage": "describe [COMMAND_ID] [--summary]"
+        },
+        {
+          "effect": "stream",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "pre-receive",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [
+              {
+                "argument": {
+                  "name": "NAME",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--repository",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Repository name."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--manifest",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Datalog manifest path."
+              },
+              {
+                "argument": {
+                  "name": "PRINCIPAL",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--user",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Authenticated principal; defaults to the environment."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--git",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Absolute Git executable path."
+              },
+              {
+                "argument": {
+                  "name": "DIR",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--git-dir",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Bare Git directory."
+              }
+            ],
+            "synopsis": "pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR]"
+          },
+          "outputMode": "git-hook-stream",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "Git hook diagnostics; no CLI envelope.",
+            "type": "object"
+          },
+          "pattern": [
+            "pre-receive"
+          ],
+          "purpose": "Authorize a Git receive transaction from stdin.",
+          "usage": "pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR]"
+        },
+        {
+          "effect": "stream",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "post-receive",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [
+              {
+                "argument": {
+                  "name": "NAME",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--repository",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Repository name."
+              },
+              {
+                "argument": {
+                  "name": "PRINCIPAL",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--user",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Authenticated principal; defaults to the environment."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--events",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Append-only JSONL event file; stdout when omitted."
+              }
+            ],
+            "synopsis": "post-receive --repository NAME [--user PRINCIPAL] [--events FILE]"
+          },
+          "outputMode": "maelys-git-events-jsonl-stream",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "Versioned event stream; no CLI envelope.",
+            "type": "object"
+          },
+          "pattern": [
+            "post-receive"
+          ],
+          "purpose": "Convert received refs into JSONL events.",
+          "usage": "post-receive --repository NAME [--user PRINCIPAL] [--events FILE]"
+        }
+      ],
+      "globalOptions": {
+        "compact": "single-line JSON",
+        "format": "text|json",
+        "json": "alias of --format json",
+        "non-interactive": "never prompt",
+        "pretty": "--pretty=false selects compact JSON"
+      },
+      "invariants": [
+        "usage and agent discovery share one catalog",
+        "transactional commands plan by default and require --apply",
+        "stdout carries success data; stderr carries failures",
+        "--json and --format json are identical",
+        "stream commands reject envelope rendering flags"
+      ],
+      "kind": "catalog",
+      "output": {
+        "contract": "agent-cli/v2",
+        "schemaVersion": 2,
+        "stdout": "success data only; protocol streams are explicit exceptions"
+      },
+      "product": "Maelys Git Core",
+      "schemaVersion": 1,
+      "version": "0.1.0"
+    },
+    "maelys-git-shell": {
+      "commands": [
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "help",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [],
+            "synopsis": "help"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "CLI help text.",
+            "type": "object"
+          },
+          "pattern": [
+            "help"
+          ],
+          "purpose": "Show the generated CLI guide.",
+          "usage": "help"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "version",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [],
+            "synopsis": "version | --version"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "const": "agent-cli/v2"
+              },
+              "product": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "product",
+              "version",
+              "contract"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "version"
+          ],
+          "purpose": "Return product identity.",
+          "usage": "version | --version"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "describe",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "COMMAND_ID",
+                "required": false,
+                "summary": "Stable command identifier returned by the catalog.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "conflictsWith": [],
+                "long": "--summary",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Return the compact command inventory."
+              }
+            ],
+            "synopsis": "describe [COMMAND_ID] [--summary]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "Versioned command catalog.",
+            "type": "object"
+          },
+          "pattern": [
+            "describe"
+          ],
+          "purpose": "Return executable command contracts.",
+          "usage": "describe [COMMAND_ID] [--summary]"
+        },
+        {
+          "effect": "stream",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "serve",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [
+              {
+                "argument": {
+                  "name": "PRINCIPAL",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--user",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Authenticated SSH principal."
+              },
+              {
+                "argument": {
+                  "name": "DIR",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--root",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Repository root."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--manifest",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Datalog manifest path."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--git",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Absolute Git executable path."
+              }
+            ],
+            "synopsis": "serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE]"
+          },
+          "outputMode": "git-smart-protocol-stream",
+          "outputSchema": {
+            "additionalProperties": true,
+            "description": "Git smart-protocol stream; no CLI envelope.",
+            "type": "object"
+          },
+          "pattern": [
+            "serve"
+          ],
+          "purpose": "Authorize SSH_ORIGINAL_COMMAND then replace the process with Git.",
+          "usage": "serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE]"
+        }
+      ],
+      "globalOptions": {
+        "compact": "single-line JSON",
+        "format": "text|json",
+        "json": "alias of --format json",
+        "non-interactive": "never prompt",
+        "pretty": "--pretty=false selects compact JSON"
+      },
+      "invariants": [
+        "usage and agent discovery share one catalog",
+        "transactional commands plan by default and require --apply",
+        "stdout carries success data; stderr carries failures",
+        "--json and --format json are identical",
+        "stream commands reject envelope rendering flags"
+      ],
+      "kind": "catalog",
+      "output": {
+        "contract": "agent-cli/v2",
+        "schemaVersion": 2,
+        "stdout": "success data only; protocol streams are explicit exceptions"
+      },
+      "product": "Maelys Git Core",
+      "schemaVersion": 1,
+      "version": "0.1.0"
+    }
+  },
+  "schemaVersion": 1
+}

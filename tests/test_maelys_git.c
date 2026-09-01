@@ -1,0 +1,194 @@
+#include "maelys_git_agent.h"
+
+#include <dirent.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
+
+#define CHECK(condition) do { \
+    if (!(condition)) { \
+        (void)fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #condition); \
+        return 0; \
+    } \
+} while (0)
+
+static int remove_tree(const char *path) {
+    DIR *directory = opendir(path);
+    if (!directory) return unlink(path) == 0;
+    struct dirent *entry;
+    int ok = 1;
+    while ((entry = readdir(directory))) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        char child[4096];
+        int count = snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
+        if (count < 0 || (size_t)count >= sizeof(child)) { ok = 0; break; }
+        struct stat status;
+        if (lstat(child, &status) != 0) { ok = 0; break; }
+        if (S_ISDIR(status.st_mode)) {
+            if (!remove_tree(child)) ok = 0;
+        } else if (unlink(child) != 0) {
+            ok = 0;
+        }
+    }
+    (void)closedir(directory);
+    return rmdir(path) == 0 && ok;
+}
+
+static int test_repository_names(void) {
+    CHECK(maelys_git_repository_name_is_valid("example.git"));
+    CHECK(maelys_git_repository_name_is_valid("teams/platform/api.git"));
+    CHECK(!maelys_git_repository_name_is_valid("../secret.git"));
+    CHECK(!maelys_git_repository_name_is_valid("/absolute.git"));
+    CHECK(!maelys_git_repository_name_is_valid("repo;id.git"));
+    CHECK(!maelys_git_repository_name_is_valid("repo"));
+    CHECK(maelys_git_ref_name_is_valid("refs/heads/main"));
+    CHECK(!maelys_git_ref_name_is_valid("main"));
+    CHECK(!maelys_git_ref_name_is_valid("refs/heads/../secret"));
+    return 1;
+}
+
+static int test_ssh_parser(void) {
+    maelys_git_error_t error;
+    maelys_git_ssh_command_t command;
+    CHECK(maelys_git_parse_ssh_command("git-upload-pack 'example.git'", &command, &error) == MAELYS_GIT_OK);
+    CHECK(command.service == MAELYS_GIT_SERVICE_UPLOAD_PACK);
+    CHECK(strcmp(command.repository, "example.git") == 0);
+    CHECK(maelys_git_parse_ssh_command("git-receive-pack \"teams/a.git\"", &command, &error) == MAELYS_GIT_OK);
+    CHECK(command.service == MAELYS_GIT_SERVICE_RECEIVE_PACK);
+    CHECK(maelys_git_parse_ssh_command("git-upload-pack '../secret.git'", &command, &error) != MAELYS_GIT_OK);
+    CHECK(maelys_git_parse_ssh_command("sh -c id", &command, &error) != MAELYS_GIT_OK);
+    CHECK(maelys_git_parse_ssh_command("git-upload-pack 'example.git' extra", &command, &error) != MAELYS_GIT_OK);
+    return 1;
+}
+
+static int authorize(maelys_git_policy_t *policy,
+                     const char *user,
+                     const char *operation,
+                     const char *ref,
+                     const char *path,
+                     maelys_git_policy_decision_t *decision) {
+    const char *paths[] = {path};
+    maelys_git_policy_request_t request = {
+        .request_id = "test",
+        .principal = user,
+        .repository = "example.git",
+        .operation = operation,
+        .ref_name = ref,
+        .paths = path ? paths : NULL,
+        .path_count = path ? 1u : 0u,
+    };
+    maelys_git_error_t error;
+    maelys_git_result_t result = maelys_git_policy_authorize(policy, &request, decision, &error);
+    if (result != MAELYS_GIT_OK) (void)fprintf(stderr, "authorize: %s\n", error.message);
+    return result == MAELYS_GIT_OK;
+}
+
+static int test_policy(void) {
+    maelys_git_error_t error;
+    maelys_git_policy_t *policy = NULL;
+    CHECK(maelys_git_policy_open(TEST_MANIFEST_FILE, &policy, &error) == MAELYS_GIT_OK);
+    maelys_git_policy_decision_t decision;
+    CHECK(authorize(policy, "alice", "read", NULL, NULL, &decision));
+    CHECK(decision.allowed);
+    CHECK(authorize(policy, "bob", "read", NULL, NULL, &decision));
+    CHECK(decision.allowed);
+    CHECK(authorize(policy, "mallory", "read", NULL, NULL, &decision));
+    CHECK(!decision.allowed && !decision.explicit_deny);
+    CHECK(authorize(policy, "bob", "push", "refs/heads/feature", NULL, &decision));
+    CHECK(decision.allowed);
+    CHECK(authorize(policy, "bob", "push", "refs/heads/main", NULL, &decision));
+    CHECK(!decision.allowed && decision.explicit_deny);
+    CHECK(authorize(policy, "bob", "push", "refs/heads/feature", "secrets/production.env", &decision));
+    CHECK(!decision.allowed && decision.explicit_deny);
+    CHECK(authorize(policy, "alice", "push", "refs/heads/main", "secrets/production.env", &decision));
+    CHECK(decision.allowed);
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
+static int test_repository_init(void) {
+    char template[] = "/tmp/maelys_git_test_XXXXXX";
+    char *root = mkdtemp(template);
+    CHECK(root != NULL);
+    maelys_git_error_t error;
+    maelys_git_result_t result = maelys_git_repository_init_bare(
+        "/usr/bin/git", root, "example.git", &error);
+    if (result != MAELYS_GIT_OK) (void)fprintf(stderr, "repo init: %s\n", error.message);
+    CHECK(result == MAELYS_GIT_OK);
+    char resolved[4096];
+    CHECK(maelys_git_resolve_repository(root, "example.git", resolved, sizeof(resolved), &error) == MAELYS_GIT_OK);
+    CHECK(strstr(resolved, "/example.git") != NULL);
+    CHECK(remove_tree(root));
+    return 1;
+}
+
+static int test_agent_protocol(void) {
+    maelys_git_error_t error;
+    maelys_git_policy_t *policy = NULL;
+    CHECK(maelys_git_policy_open(TEST_MANIFEST_FILE, &policy, &error) == MAELYS_GIT_OK);
+    FILE *input = tmpfile();
+    FILE *output = tmpfile();
+    CHECK(input && output);
+    long long now = (long long)time(NULL) * 1000LL;
+    CHECK(fprintf(input, "{\"protocol\":\"maelys-git-agent/1\",\"message_id\":\"health-1\","
+                         "\"agent_id\":\"agent-1\",\"type\":\"command\",\"command\":\"health\","
+                         "\"issued_at_ms\":%lld,\"expires_at_ms\":%lld,\"payload\":{}}\n",
+                         now, now + 60000LL) > 0);
+    CHECK(fprintf(input, "{\"protocol\":\"maelys-git-agent/1\",\"message_id\":\"r1\","
+                         "\"agent_id\":\"agent-1\",\"type\":\"command\",\"command\":\"authorize\","
+                         "\"repository\":\"example.git\",\"principal\":\"alice\","
+                         "\"issued_at_ms\":%lld,\"expires_at_ms\":%lld,"
+                         "\"payload\":{\"operation\":\"read\"}}\n",
+                         now, now + 60000LL) > 0);
+    rewind(input);
+    CHECK(maelys_git_agent_serve(policy, "/usr/bin/git", "/tmp", input, output, stderr, &error) == MAELYS_GIT_OK);
+    rewind(output);
+    char responses[2048];
+    size_t count = fread(responses, 1u, sizeof(responses) - 1u, output);
+    responses[count] = '\0';
+    CHECK(strstr(responses, "\"command\":\"health\"") != NULL);
+    CHECK(strstr(responses, "\"message_id\":\"r1\"") != NULL);
+    CHECK(strstr(responses, "\"allowed\":true") != NULL);
+    fclose(input);
+    fclose(output);
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
+static int test_post_receive_event(void) {
+    FILE *input = tmpfile();
+    FILE *events = tmpfile();
+    CHECK(input && events);
+    CHECK(fputs("0000000000000000000000000000000000000000 "
+                "1111111111111111111111111111111111111111 refs/heads/main\n",
+                input) >= 0);
+    rewind(input);
+    maelys_git_error_t error;
+    CHECK(maelys_git_post_receive("example.git", "alice", input, events, &error) == MAELYS_GIT_OK);
+    rewind(events);
+    char event[1024];
+    size_t count = fread(event, 1u, sizeof(event) - 1u, events);
+    event[count] = '\0';
+    CHECK(strstr(event, "\"type\":\"ref_updated\"") != NULL);
+    CHECK(strstr(event, "\"principal\":\"alice\"") != NULL);
+    CHECK(strstr(event, "\"ref\":\"refs/heads/main\"") != NULL);
+    fclose(input);
+    fclose(events);
+    return 1;
+}
+
+int main(void) {
+    int passed = 0;
+    passed += test_repository_names();
+    passed += test_ssh_parser();
+    passed += test_policy();
+    passed += test_repository_init();
+    passed += test_agent_protocol();
+    passed += test_post_receive_event();
+    if (passed != 6) return 1;
+    (void)printf("ok: %d test groups passed\n", passed);
+    return 0;
+}

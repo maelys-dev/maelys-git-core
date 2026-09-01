@@ -1,0 +1,25 @@
+{
+  "policy_set_id": "maelys-git.example",
+  "policy_set_version": "1",
+  "manifest_version": "1",
+  "default_profile": "enforce",
+  "created_for": "maelys-git-core",
+  "strict_loading": true,
+  "fail_closed": true,
+  "capabilities": [],
+  "policies": [
+    {
+      "policy_id": "maelys-git.example.authorization",
+      "domain": "maelys_git",
+      "file": "example.dl",
+      "sha256": "166f8a5d3d044cfdf06ed1c4c0f6e548479747d28eb089b595bb71a135e6f9eb",
+      "mode": "enforce",
+      "enabled": true,
+      "description": "Example Git authorization policy",
+      "queries": [
+        {"name": "allow", "arity": 1},
+        {"name": "deny", "arity": 1}
+      ]
+    }
+  ]
+}

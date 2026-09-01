@@ -1,0 +1,165 @@
+#ifndef MAELYS_GIT_AGENT_INTERNAL_H
+#define MAELYS_GIT_AGENT_INTERNAL_H
+
+#include "internal.h"
+#include "maelys_git_agent.h"
+
+#include <jansson.h>
+#include <sqlite3.h>
+#include <stdint.h>
+
+#define MG_AGENT_ID_MAX 128u
+#define MG_MESSAGE_ID_MAX 128u
+#define MG_COMMAND_MAX 64u
+#define MG_AUTHORITY_MAX 512u
+#define MG_TARGET_MAX 1024u
+#define MG_TOKEN_MAX 4096u
+
+typedef struct {
+    char protocol[32];
+    char message_id[MG_MESSAGE_ID_MAX];
+    char agent_id[MG_AGENT_ID_MAX];
+    char type[32];
+    char command[MG_COMMAND_MAX];
+    char repository[MAELYS_GIT_MAX_REPOSITORY];
+    char principal[512];
+    int64_t issued_at_ms;
+    int64_t expires_at_ms;
+    json_t *payload;
+} mg_agent_message_t;
+
+struct maelys_git_agent_config {
+    char agent_id[MG_AGENT_ID_MAX];
+    char authority[MG_AUTHORITY_MAX];
+    char ca_file[4096];
+    char token_file[4096];
+    char database_path[4096];
+    char manifest_path[4096];
+    char repository_root[4096];
+    char git_executable[4096];
+    char executor_path[4096];
+    char command_target[MG_TARGET_MAX];
+    char event_target[MG_TARGET_MAX];
+    uint64_t poll_timeout_ms;
+    uint64_t request_timeout_ms;
+};
+
+struct maelys_git_agent_store {
+    sqlite3 *database;
+};
+
+typedef enum {
+    MG_STORE_COMMAND_NEW = 1,
+    MG_STORE_COMMAND_PENDING,
+    MG_STORE_COMMAND_RUNNING,
+    MG_STORE_COMMAND_COMPLETE,
+    MG_STORE_COMMAND_FAILED
+} mg_store_command_state_t;
+
+typedef struct {
+    char id[MG_MESSAGE_ID_MAX];
+    char kind[64];
+    char *payload;
+    unsigned attempts;
+} mg_outbox_item_t;
+
+maelys_git_result_t mg_protocol_parse(const char *bytes,
+                                      size_t length,
+                                      mg_agent_message_t *out,
+                                      maelys_git_error_t *error);
+void mg_protocol_message_clear(mg_agent_message_t *message);
+char *mg_protocol_encode_result(const mg_agent_message_t *command,
+                                const char *status,
+                                json_t *payload,
+                                maelys_git_error_t *error);
+char *mg_protocol_encode_event(const char *agent_id,
+                               const char *message_id,
+                               const char *event_type,
+                               json_t *payload,
+                               maelys_git_error_t *error);
+
+maelys_git_result_t mg_config_load(const char *path,
+                                   maelys_git_agent_config_t **out,
+                                   maelys_git_error_t *error);
+void mg_config_free(maelys_git_agent_config_t *config);
+maelys_git_result_t mg_token_load(const char *path,
+                                  char *out,
+                                  size_t capacity,
+                                  maelys_git_error_t *error);
+
+maelys_git_result_t mg_store_open(const char *path,
+                                  maelys_git_agent_store_t **out,
+                                  maelys_git_error_t *error);
+void mg_store_close(maelys_git_agent_store_t *store);
+maelys_git_result_t mg_store_record_command(maelys_git_agent_store_t *store,
+                                            const mg_agent_message_t *message,
+                                            const char *raw_json,
+                                            mg_store_command_state_t *out_state,
+                                            char **out_result,
+                                            maelys_git_error_t *error);
+maelys_git_result_t mg_store_mark_running(maelys_git_agent_store_t *store,
+                                          const char *command_id,
+                                          maelys_git_error_t *error);
+maelys_git_result_t mg_store_complete_command(maelys_git_agent_store_t *store,
+                                              const char *command_id,
+                                              int succeeded,
+                                              const char *result_json,
+                                              int64_t now_ms,
+                                              maelys_git_error_t *error);
+maelys_git_result_t mg_store_enqueue(maelys_git_agent_store_t *store,
+                                     const char *id,
+                                     const char *kind,
+                                     const char *payload,
+                                     int64_t now_ms,
+                                     maelys_git_error_t *error);
+maelys_git_result_t mg_store_next_outbox(maelys_git_agent_store_t *store,
+                                         int64_t now_ms,
+                                         mg_outbox_item_t *out,
+                                         maelys_git_error_t *error);
+void mg_outbox_item_clear(mg_outbox_item_t *item);
+maelys_git_result_t mg_store_ack_outbox(maelys_git_agent_store_t *store,
+                                        const char *id,
+                                        maelys_git_error_t *error);
+maelys_git_result_t mg_store_retry_outbox(maelys_git_agent_store_t *store,
+                                          const char *id,
+                                          unsigned attempts,
+                                          int64_t next_attempt_ms,
+                                          maelys_git_error_t *error);
+maelys_git_result_t mg_store_get_cursor(maelys_git_agent_store_t *store,
+                                        char *out,
+                                        size_t capacity,
+                                        maelys_git_error_t *error);
+maelys_git_result_t mg_store_set_cursor(maelys_git_agent_store_t *store,
+                                        const char *cursor,
+                                        maelys_git_error_t *error);
+maelys_git_result_t mg_store_audit(maelys_git_agent_store_t *store,
+                                   const char *event_id,
+                                   const char *kind,
+                                   const char *payload,
+                                   int64_t now_ms,
+                                   maelys_git_error_t *error);
+
+int64_t mg_now_ms(void);
+uint64_t mg_retry_delay_ms(const char *key,
+                           unsigned attempt,
+                           uint64_t base_ms,
+                           uint64_t maximum_ms);
+
+maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
+                                        const char *git_executable,
+                                        const char *repository_root,
+                                        const mg_agent_message_t *message,
+                                        char **out_result_json,
+                                        maelys_git_error_t *error);
+
+#ifdef MAELYS_GIT_ENABLE_CLOUD_AGENT
+maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *config,
+                                          const char *request_json,
+                                          char **out_response_json,
+                                          maelys_git_error_t *error);
+maelys_git_result_t mg_cloud_run(const maelys_git_agent_config_t *config,
+                                 int run_once,
+                                 maelys_git_error_t *error);
+#endif
+
+#endif

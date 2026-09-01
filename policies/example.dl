@@ -1,0 +1,31 @@
+% Direct user grants.
+grant_read("alice", "example.git").
+grant_write("alice", "example.git").
+grant_push("alice", "example.git").
+grant_create("alice", "new-project.git").
+
+% Group-based grants.
+group_member("bob", "developers").
+group_grant_read("developers", "example.git").
+group_grant_write("developers", "example.git").
+group_grant_push("developers", "example.git").
+group_grant_create("developers", "team-project.git").
+
+% Protected objects.
+admin("alice").
+protected_ref("refs/heads/main").
+protected_path("secrets/production.env").
+
+allow(R) :- request(R), user(U), repository(P), operation("read"), grant_read(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("write"), grant_write(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), grant_push(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("update-ref"), grant_push(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("create"), grant_create(U, P).
+
+allow(R) :- request(R), user(U), repository(P), operation("read"), group_member(U, G), group_grant_read(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("write"), group_member(U, G), group_grant_write(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), group_member(U, G), group_grant_push(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("create"), group_member(U, G), group_grant_create(G, P).
+
+deny(R) :- request(R), user(U), operation("push"), ref(B), protected_ref(B), not(admin(U)).
+deny(R) :- request(R), user(U), operation("push"), path(P), protected_path(P), not(admin(U)).
