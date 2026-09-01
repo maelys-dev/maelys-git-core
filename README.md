@@ -11,8 +11,12 @@ The project is a security-oriented foundation. Its current capabilities are:
   `git-receive-pack`;
 - canonical repository-root confinement, including symlink escape checks;
 - fail-closed authorization through versioned Maelys Datalog manifests;
-- `pre-receive` authorization by user, repository, ref and changed path;
+- streamed multi-ref `pre-receive` authorization by update kind, commit, path
+  operation and transaction summary;
 - bare repository creation and compare-and-swap `git update-ref` operations;
+- a same-repository PR core for conflict checks, FF, merge, squash,
+  Datalog reauthorization and compare-and-swap;
+- deterministic, atomic compilation of forced-command `authorized_keys`;
 - a strict, versioned JSON protocol implemented with Jansson;
 - a durable SQLite command journal, idempotency table, audit log and outbox;
 - a persistent HTTPS/1.1 Cloud agent built on Maelys HTTP and Maelys System;
@@ -53,7 +57,10 @@ Every request injects these runtime facts when the associated value exists:
 
 ```text
 request/1 user/1 repository/1 operation/1 ref/1 path/1
-ssh_key/1 remote_address/1
+ssh_key/1 remote_address/1 ref_kind/1 update_kind/1 change_kind/1
+commit_email/1 commit_signed/1 changed_count/1 added_count/1
+modified_count/1 deleted_count/1 renamed_count/1 max_new_blob_size/1
+has_binary/1
 ```
 
 The domain also declares policy facts for direct and group grants, admins,
@@ -131,10 +138,11 @@ exec /usr/local/bin/maelys-git-hook \
 
 The forced SSH shell passes the authenticated identity to `git-receive-pack` as
 `MAELYS_GIT_PRINCIPAL`; the hook inherits it. The wrapper itself is trusted
-configuration. The core hook never builds a shell command. Changed paths are
-obtained from Git with NUL delimiters and a bounded one-megabyte capture. More
-than 64 changed paths is currently denied; this matches the per-predicate limit
-of the default small Datalog profile and should become configurable.
+configuration. The core hook never builds a shell command. Git change records
+are NUL-delimited and spooled through a temporary file, so authorization is not
+limited to 64 changed paths. Each path is evaluated in a bounded Datalog
+request, followed by a summary request. New commits are likewise streamed and
+expose author-email and signature-verification facts.
 
 The same binary can be installed as `post-receive` to append versioned JSONL
 events for an audit collector or the forge agent:
@@ -209,13 +217,16 @@ Supported executor commands are:
 - `repository_info`;
 - `diff` with `old_oid` and `new_oid`;
 - `update_ref` with `ref`, `old_oid` and `new_oid`;
-- `create_repository`.
+- `create_repository`;
+- `pr_check` for read-only merge analysis;
+- `pr_merge` for explicit plan/apply, forge-supplied gates, local Datalog
+  reauthorization and atomic target-ref CAS.
 
 `update_ref` calculates changed paths first, authorizes the operation as a
-`push`, and only then invokes Git's compare-and-swap update. There is no
-arbitrary command execution field. Merge/PR orchestration belongs to the forge;
-a future merge executor command should use the same prepare/authorize/CAS
-pattern.
+`push`, and only then invokes Git's compare-and-swap update. `pr_merge` uses the
+same invariant and repeats authorization immediately before its state change.
+There is no arbitrary command execution field. Durable PR metadata, reviews and
+status-check production remain responsibilities of the forge.
 
 For local protocol testing, run the executor-compatible mode:
 

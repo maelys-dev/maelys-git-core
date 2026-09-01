@@ -22,6 +22,14 @@ static const char *required_string(json_t *object, const char *name) {
     return json_is_string(value) && json_string_length(value) > 0u ? json_string_value(value) : NULL;
 }
 
+static maelys_git_merge_style_t required_style(json_t *object) {
+    const char *style = required_string(object, "style");
+    if (style && strcmp(style, "ff") == 0) return MAELYS_GIT_MERGE_FAST_FORWARD;
+    if (style && strcmp(style, "merge") == 0) return MAELYS_GIT_MERGE_COMMIT;
+    if (style && strcmp(style, "squash") == 0) return MAELYS_GIT_MERGE_SQUASH;
+    return 0;
+}
+
 static char *failure(const mg_agent_message_t *message,
                      const char *status,
                      maelys_git_result_t code,
@@ -213,6 +221,110 @@ static char *execute_create_repository(maelys_git_policy_t *policy,
     return encoded;
 }
 
+static json_t *pr_payload(maelys_git_pr_check_result_t *result, int applied) {
+    json_t *conflicts = json_array();
+    if (!conflicts) return NULL;
+    for (size_t i = 0u; i < result->conflict_paths.count; ++i)
+        if (json_array_append_new(conflicts, json_string(result->conflict_paths.items[i])) != 0) {
+            json_decref(conflicts);
+            return NULL;
+        }
+    return json_pack("{s:b,s:b,s:b,s:s,s:s,s:s,s:o,s:I,s:I,s:I,s:I,s:I,s:I}",
+        "applied", applied, "mergeable", result->mergeable, "empty", result->empty,
+        "merge_base_oid", result->merge_base_oid, "merge_tree_oid", result->merge_tree_oid,
+        "prepared_oid", result->prepared_oid, "conflicts", conflicts,
+        "changed_count", (json_int_t)result->changes.changed_count,
+        "added_count", (json_int_t)result->changes.added_count,
+        "modified_count", (json_int_t)result->changes.modified_count,
+        "deleted_count", (json_int_t)result->changes.deleted_count,
+        "renamed_count", (json_int_t)result->changes.renamed_count,
+        "max_new_blob_size", (json_int_t)result->changes.max_new_blob_size);
+}
+
+static char *execute_pr_check(maelys_git_policy_t *policy,
+                              const char *git,
+                              const char *root,
+                              const mg_agent_message_t *message,
+                              maelys_git_error_t *error) {
+    static const char *const allowed[] = {"base_oid", "head_oid", "style", "message", NULL};
+    const char *base = required_string(message->payload, "base_oid");
+    const char *head = required_string(message->payload, "head_oid");
+    const char *merge_message = NULL;
+    json_t *message_json = json_object_get(message->payload, "message");
+    if (json_is_string(message_json)) merge_message = json_string_value(message_json);
+    maelys_git_merge_style_t style = required_style(message->payload);
+    if (!object_has_only(message->payload, allowed) || !base || !head || !style ||
+        (message_json && !json_is_string(message_json)))
+        return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid pr_check payload", error);
+    maelys_git_policy_decision_t decision;
+    maelys_git_result_t result = authorize(policy, message, "read", NULL, NULL, 0u,
+                                           &decision, error);
+    if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
+    if (!decision.allowed) return decision_result(message, &decision, error);
+    char repository_path[4096];
+    result = maelys_git_resolve_repository(root, message->repository, repository_path,
+                                           sizeof(repository_path), error);
+    maelys_git_pr_check_result_t check;
+    if (result == MAELYS_GIT_OK)
+        result = maelys_git_pr_check(git, repository_path, base, head, style,
+                                     merge_message, &check, error);
+    if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
+    json_t *payload = pr_payload(&check, 0);
+    maelys_git_pr_check_result_clear(&check);
+    char *encoded = payload ? mg_protocol_encode_result(message, "ok", payload, error) : NULL;
+    json_decref(payload);
+    return encoded;
+}
+
+static char *execute_pr_merge(maelys_git_policy_t *policy,
+                              const char *git,
+                              const char *root,
+                              const mg_agent_message_t *message,
+                              maelys_git_error_t *error) {
+    static const char *const allowed[] = {
+        "base_ref", "base_oid", "head_oid", "style", "message", "approvals",
+        "required_approvals", "status_checks_passed", "blocking_review", "apply", NULL};
+    const char *base_ref = required_string(message->payload, "base_ref");
+    const char *base = required_string(message->payload, "base_oid");
+    const char *head = required_string(message->payload, "head_oid");
+    maelys_git_merge_style_t style = required_style(message->payload);
+    json_t *approvals = json_object_get(message->payload, "approvals");
+    json_t *required = json_object_get(message->payload, "required_approvals");
+    json_t *checks = json_object_get(message->payload, "status_checks_passed");
+    json_t *blocking = json_object_get(message->payload, "blocking_review");
+    json_t *apply = json_object_get(message->payload, "apply");
+    json_t *message_json = json_object_get(message->payload, "message");
+    if (!object_has_only(message->payload, allowed) || !base_ref || !base || !head || !style ||
+        !json_is_integer(approvals) || json_integer_value(approvals) < 0 ||
+        !json_is_integer(required) || json_integer_value(required) < 0 ||
+        !json_is_boolean(checks) || !json_is_boolean(blocking) || !json_is_boolean(apply) ||
+        (message_json && !json_is_string(message_json)))
+        return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid pr_merge payload", error);
+    char repository_path[4096];
+    maelys_git_result_t result = maelys_git_resolve_repository(
+        root, message->repository, repository_path, sizeof(repository_path), error);
+    if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
+    maelys_git_pr_gates_t gates = {
+        .approvals = (size_t)json_integer_value(approvals),
+        .required_approvals = (size_t)json_integer_value(required),
+        .status_checks_passed = json_is_true(checks),
+        .blocking_review = json_is_true(blocking),
+    };
+    maelys_git_pr_check_result_t merge;
+    result = maelys_git_pr_merge(
+        git, repository_path, message->repository, base_ref, base, head, style,
+        json_is_string(message_json) ? json_string_value(message_json) : NULL,
+        message->principal, &gates, policy, json_is_true(apply), &merge, error);
+    if (result == MAELYS_GIT_ERR_DENIED)
+        return failure(message, "denied", result, error->message, error);
+    if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
+    json_t *payload = pr_payload(&merge, json_is_true(apply));
+    maelys_git_pr_check_result_clear(&merge);
+    char *encoded = payload ? mg_protocol_encode_result(message, "ok", payload, error) : NULL;
+    json_decref(payload);
+    return encoded;
+}
+
 maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
                                         const char *git_executable,
                                         const char *repository_root,
@@ -246,6 +358,10 @@ maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
         *out_result_json = execute_update_ref(policy, git_executable, repository_root, message, error);
     } else if (strcmp(message->command, "create_repository") == 0) {
         *out_result_json = execute_create_repository(policy, git_executable, repository_root, message, error);
+    } else if (strcmp(message->command, "pr_check") == 0) {
+        *out_result_json = execute_pr_check(policy, git_executable, repository_root, message, error);
+    } else if (strcmp(message->command, "pr_merge") == 0) {
+        *out_result_json = execute_pr_merge(policy, git_executable, repository_root, message, error);
     } else {
         *out_result_json = failure(message, "failed", MAELYS_GIT_ERR_INVALID_COMMAND,
                                    "unsupported command", error);

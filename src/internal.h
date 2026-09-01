@@ -19,11 +19,28 @@ maelys_git_result_t mg_process_run(const char *executable,
                                    char *const argv[],
                                    int *out_exit_status,
                                    maelys_git_error_t *error);
+maelys_git_result_t mg_process_run_status(const char *executable,
+                                          char *const argv[],
+                                          int *out_exit_status,
+                                          maelys_git_error_t *error);
 maelys_git_result_t mg_process_capture(const char *executable,
                                        char *const argv[],
                                        unsigned char **out_data,
                                        size_t *out_length,
                                        size_t max_length,
                                        maelys_git_error_t *error);
+maelys_git_result_t mg_process_capture_status(const char *executable,
+                                              char *const argv[],
+                                              unsigned char **out_data,
+                                              size_t *out_length,
+                                              size_t max_length,
+                                              int *out_exit_status,
+                                              maelys_git_error_t *error);
+maelys_git_result_t mg_process_to_file(const char *executable,
+                                       char *const argv[],
+                                       FILE *output,
+                                       int *out_exit_status,
+                                       maelys_git_error_t *error);
+int mg_remove_tree(const char *path);
 
 #endif

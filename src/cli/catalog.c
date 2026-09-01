@@ -9,8 +9,10 @@
 #define AUTHORIZE_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"allowed\",\"explicitDeny\",\"matchedPolicy\",\"reason\"],\"properties\":{\"allowed\":{\"type\":\"boolean\"},\"explicitDeny\":{\"type\":\"boolean\"},\"matchedPolicy\":{\"type\":\"integer\",\"minimum\":0},\"reason\":{\"type\":\"string\"}}}"
 #define PARSE_SSH_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"service\",\"repository\"],\"properties\":{\"service\":{\"enum\":[\"upload-pack\",\"receive-pack\"]},\"repository\":{\"type\":\"string\"}}}"
 #define REPO_INIT_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"mode\",\"changed\",\"root\",\"repository\",\"git\",\"precondition\"],\"properties\":{\"mode\":{\"enum\":[\"plan\",\"apply\"]},\"changed\":{\"type\":\"boolean\"},\"root\":{\"type\":\"string\"},\"repository\":{\"type\":\"string\"},\"git\":{\"type\":\"string\"},\"precondition\":{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"targetAbsent\"],\"properties\":{\"targetAbsent\":{\"const\":true}}}}}"
-#define REPO_DIFF_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"repository\",\"paths\",\"pathCount\"],\"properties\":{\"repository\":{\"type\":\"string\"},\"paths\":{\"type\":\"array\",\"maxItems\":64,\"items\":{\"type\":\"string\"}},\"pathCount\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":64}}}"
+#define REPO_DIFF_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"repository\",\"paths\",\"pathCount\"],\"properties\":{\"repository\":{\"type\":\"string\"},\"paths\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"pathCount\":{\"type\":\"integer\",\"minimum\":0}}}"
 #define UPDATE_REF_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"mode\",\"changed\",\"repository\",\"ref\",\"newOid\",\"git\",\"precondition\"],\"properties\":{\"mode\":{\"enum\":[\"plan\",\"apply\"]},\"changed\":{\"type\":\"boolean\"},\"repository\":{\"type\":\"string\"},\"ref\":{\"type\":\"string\"},\"newOid\":{\"type\":\"string\"},\"git\":{\"type\":\"string\"},\"precondition\":{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"currentOid\"],\"properties\":{\"currentOid\":{\"type\":\"string\"}}}}}"
+#define KEYS_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"mode\",\"changed\",\"keyDirectory\",\"output\",\"keyCount\"],\"properties\":{\"mode\":{\"enum\":[\"plan\",\"apply\"]},\"changed\":{\"type\":\"boolean\"},\"keyDirectory\":{\"type\":\"string\"},\"output\":{\"type\":\"string\"},\"keyCount\":{\"type\":\"integer\",\"minimum\":0}}}"
+#define PR_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"mode\",\"changed\",\"repository\",\"style\",\"mergeable\",\"empty\",\"mergeBaseOid\",\"mergeTreeOid\",\"preparedOid\",\"conflicts\",\"changeSummary\"],\"properties\":{\"mode\":{\"enum\":[\"check\",\"plan\",\"apply\"]},\"changed\":{\"type\":\"boolean\"},\"repository\":{\"type\":\"string\"},\"style\":{\"enum\":[\"ff\",\"merge\",\"squash\"]},\"mergeable\":{\"type\":\"boolean\"},\"empty\":{\"type\":\"boolean\"},\"mergeBaseOid\":{\"type\":\"string\"},\"mergeTreeOid\":{\"type\":\"string\"},\"preparedOid\":{\"type\":\"string\"},\"conflicts\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"changeSummary\":{\"type\":\"object\"}}}"
 #define PROVISION_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"mode\",\"changed\",\"config\",\"agentId\",\"authority\",\"database\",\"precondition\"],\"properties\":{\"mode\":{\"enum\":[\"plan\",\"apply\"]},\"changed\":{\"type\":\"boolean\"},\"config\":{\"type\":\"string\"},\"agentId\":{\"type\":\"string\"},\"authority\":{\"type\":\"string\"},\"database\":{\"type\":\"string\"},\"precondition\":{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"configAbsent\"],\"properties\":{\"configAbsent\":{\"const\":true}}}}}"
 #define RUN_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"completed\",\"mode\"],\"properties\":{\"completed\":{\"const\":true},\"mode\":{\"enum\":[\"once\",\"continuous\"]}}}"
 
@@ -52,6 +54,28 @@ static const maelys_cli_operand_descriptor_t update_operands[] = {
     {"NEW_OID", 1, 0, "New object identifier."},
     {"OLD_OID", 1, 0, "Expected current object identifier."},
 };
+static const maelys_cli_operand_descriptor_t keys_operands[] = {
+    {"KEY_DIRECTORY", 1, 0, "Directory containing PRINCIPAL.pub public keys."},
+    {"OUTPUT", 1, 0, "authorized_keys file to replace atomically."},
+    {"SHELL", 1, 0, "Absolute maelys-git-shell executable path."},
+    {"ROOT", 1, 0, "Absolute repository root."},
+    {"MANIFEST", 1, 0, "Absolute Datalog policy manifest path."},
+};
+static const maelys_cli_operand_descriptor_t pr_check_operands[] = {
+    {"ROOT", 1, 0, "Absolute repository root."},
+    {"REPOSITORY", 1, 0, "Repository name below ROOT."},
+    {"BASE_OID", 1, 0, "Current target commit."},
+    {"HEAD_OID", 1, 0, "Pull request head commit."},
+};
+static const maelys_cli_operand_descriptor_t pr_merge_operands[] = {
+    {"ROOT", 1, 0, "Absolute repository root."},
+    {"REPOSITORY", 1, 0, "Repository name below ROOT."},
+    {"BASE_REF", 1, 0, "Target branch reference."},
+    {"BASE_OID", 1, 0, "Expected target commit for CAS."},
+    {"HEAD_OID", 1, 0, "Pull request head commit."},
+    {"MANIFEST", 1, 0, "Datalog manifest used for final authorization."},
+    {"PRINCIPAL", 1, 0, "Authenticated merge principal."},
+};
 static const maelys_cli_option_descriptor_t git_option[] = {
     {"git", MAELYS_CLI_VALUE_PATH, "FILE", 0, 0, NULL, NULL,
      "Absolute Git executable path."},
@@ -61,6 +85,25 @@ static const maelys_cli_option_descriptor_t git_apply_options[] = {
      "Absolute Git executable path."},
     {"apply", MAELYS_CLI_VALUE_NONE, NULL, 0, 0, NULL, NULL,
      "Apply the reviewed transaction; omission returns a read-only plan."},
+};
+static const maelys_cli_option_descriptor_t apply_option[] = {
+    {"apply", MAELYS_CLI_VALUE_NONE, NULL, 0, 0, NULL, NULL,
+     "Apply the reviewed transaction; omission returns a read-only plan."},
+};
+static const maelys_cli_option_descriptor_t pr_check_options[] = {
+    {"git", MAELYS_CLI_VALUE_PATH, "FILE", 0, 0, NULL, NULL, "Absolute Git executable path."},
+    {"style", MAELYS_CLI_VALUE_STRING, "ff|merge|squash", 1, 0, NULL, NULL, "Merge strategy to evaluate."},
+    {"message", MAELYS_CLI_VALUE_STRING, "TEXT", 0, 0, NULL, NULL, "Prepared merge commit message."},
+};
+static const maelys_cli_option_descriptor_t pr_merge_options[] = {
+    {"git", MAELYS_CLI_VALUE_PATH, "FILE", 0, 0, NULL, NULL, "Absolute Git executable path."},
+    {"style", MAELYS_CLI_VALUE_STRING, "ff|merge|squash", 1, 0, NULL, NULL, "Merge strategy to execute."},
+    {"message", MAELYS_CLI_VALUE_STRING, "TEXT", 0, 0, NULL, NULL, "Prepared merge commit message."},
+    {"approvals", MAELYS_CLI_VALUE_INTEGER, "COUNT", 1, 0, NULL, NULL, "Verified approval count supplied by the forge."},
+    {"required-approvals", MAELYS_CLI_VALUE_INTEGER, "COUNT", 1, 0, NULL, NULL, "Required approval count supplied by the forge."},
+    {"status-checks-passed", MAELYS_CLI_VALUE_NONE, NULL, 0, 0, NULL, NULL, "Assert that required status checks passed."},
+    {"blocking-review", MAELYS_CLI_VALUE_NONE, NULL, 0, 0, NULL, NULL, "Assert that a blocking review exists."},
+    {"apply", MAELYS_CLI_VALUE_NONE, NULL, 0, 0, NULL, NULL, "Reauthorize and update the target ref with CAS."},
 };
 
 static const maelys_cli_option_descriptor_t agent_provision_options[] = {
@@ -113,6 +156,9 @@ static const maelys_cli_command_descriptor_t commands[] = {
     {"maelys-git", "repo.init", "repo init", "repo init ROOT REPOSITORY [--git FILE] [--apply]", "Plan or create a bare repository.", "preview", "apply", "json-envelope", repo_operands, COUNT(repo_operands), git_apply_options, COUNT(git_apply_options), REPO_INIT_SCHEMA},
     {"maelys-git", "repo.diff", "repo diff", "repo diff ROOT REPOSITORY OLD_OID NEW_OID [--git FILE]", "List changed paths between Git objects.", "read", NULL, "json-envelope", diff_operands, COUNT(diff_operands), git_option, COUNT(git_option), REPO_DIFF_SCHEMA},
     {"maelys-git", "repo.update-ref", "repo update-ref", "repo update-ref ROOT REPOSITORY REF NEW_OID OLD_OID [--git FILE] [--apply]", "Plan or compare-and-swap a Git reference.", "preview", "apply", "json-envelope", update_operands, COUNT(update_operands), git_apply_options, COUNT(git_apply_options), UPDATE_REF_SCHEMA},
+    {"maelys-git", "keys.compile", "keys compile", "keys compile KEY_DIRECTORY OUTPUT SHELL ROOT MANIFEST [--apply]", "Plan or atomically compile forced-command SSH keys.", "preview", "apply", "json-envelope", keys_operands, COUNT(keys_operands), apply_option, COUNT(apply_option), KEYS_SCHEMA},
+    {"maelys-git", "pr.check", "pr check", "pr check ROOT REPOSITORY BASE_OID HEAD_OID --style ff|merge|squash [--message TEXT] [--git FILE]", "Compute merge-base, conflicts, emptiness and a prepared result without modifying the repository.", "read", NULL, "json-envelope", pr_check_operands, COUNT(pr_check_operands), pr_check_options, COUNT(pr_check_options), PR_SCHEMA},
+    {"maelys-git", "pr.merge", "pr merge", "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply]", "Plan or execute a gated, reauthorized pull request merge with compare-and-swap.", "preview", "apply", "json-envelope", pr_merge_operands, COUNT(pr_merge_operands), pr_merge_options, COUNT(pr_merge_options), PR_SCHEMA},
 
     {"maelys-git-agent", "help", "help", "help", "Show the generated CLI guide.", "read", NULL, "json-envelope", NULL, 0, NULL, 0, OBJECT_SCHEMA("CLI help text.")},
     {"maelys-git-agent", "version", "version", "version | --version", "Return product identity.", "read", NULL, "json-envelope", NULL, 0, NULL, 0, VERSION_SCHEMA},

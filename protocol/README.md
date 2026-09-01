@@ -29,3 +29,8 @@ This agent JSONL protocol is distinct from the process CLI envelope. Human and
 agent invocations use `agent-cli/v2`, described by `cli-envelope-v2.schema.json`.
 Commands declared as streams reject CLI rendering flags so the two protocols
 cannot be accidentally nested or mixed on stdout.
+
+Pull-request orchestration uses `pr_check` for read-only merge analysis and
+`pr_merge` for gated execution. The latter requires an explicit `apply`
+boolean, validates the target OID, re-evaluates local Datalog policy, and uses
+Git compare-and-swap before changing the target reference.

@@ -454,7 +454,6 @@
             "additionalProperties": false,
             "properties": {
               "pathCount": {
-                "maximum": 64,
                 "minimum": 0,
                 "type": "integer"
               },
@@ -462,7 +461,6 @@
                 "items": {
                   "type": "string"
                 },
-                "maxItems": 64,
                 "type": "array"
               },
               "repository": {
@@ -607,6 +605,466 @@
           ],
           "purpose": "Plan or compare-and-swap a Git reference.",
           "usage": "repo update-ref ROOT REPOSITORY REF NEW_OID OLD_OID [--git FILE] [--apply]"
+        },
+        {
+          "effect": {
+            "apply": "apply",
+            "plan": "preview"
+          },
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "keys.compile",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "KEY_DIRECTORY",
+                "required": true,
+                "summary": "Directory containing PRINCIPAL.pub public keys.",
+                "variadic": false
+              },
+              {
+                "name": "OUTPUT",
+                "required": true,
+                "summary": "authorized_keys file to replace atomically.",
+                "variadic": false
+              },
+              {
+                "name": "SHELL",
+                "required": true,
+                "summary": "Absolute maelys-git-shell executable path.",
+                "variadic": false
+              },
+              {
+                "name": "ROOT",
+                "required": true,
+                "summary": "Absolute repository root.",
+                "variadic": false
+              },
+              {
+                "name": "MANIFEST",
+                "required": true,
+                "summary": "Absolute Datalog policy manifest path.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "conflictsWith": [],
+                "long": "--apply",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Apply the reviewed transaction; omission returns a read-only plan."
+              }
+            ],
+            "synopsis": "keys compile KEY_DIRECTORY OUTPUT SHELL ROOT MANIFEST [--apply]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "changed": {
+                "type": "boolean"
+              },
+              "keyCount": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "keyDirectory": {
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "plan",
+                  "apply"
+                ]
+              },
+              "output": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode",
+              "changed",
+              "keyDirectory",
+              "output",
+              "keyCount"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "keys",
+            "compile"
+          ],
+          "purpose": "Plan or atomically compile forced-command SSH keys.",
+          "usage": "keys compile KEY_DIRECTORY OUTPUT SHELL ROOT MANIFEST [--apply]"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "pr.check",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "ROOT",
+                "required": true,
+                "summary": "Absolute repository root.",
+                "variadic": false
+              },
+              {
+                "name": "REPOSITORY",
+                "required": true,
+                "summary": "Repository name below ROOT.",
+                "variadic": false
+              },
+              {
+                "name": "BASE_OID",
+                "required": true,
+                "summary": "Current target commit.",
+                "variadic": false
+              },
+              {
+                "name": "HEAD_OID",
+                "required": true,
+                "summary": "Pull request head commit.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--git",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Absolute Git executable path."
+              },
+              {
+                "argument": {
+                  "name": "ff|merge|squash",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--style",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Merge strategy to evaluate."
+              },
+              {
+                "argument": {
+                  "name": "TEXT",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--message",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Prepared merge commit message."
+              }
+            ],
+            "synopsis": "pr check ROOT REPOSITORY BASE_OID HEAD_OID --style ff|merge|squash [--message TEXT] [--git FILE]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "changeSummary": {
+                "type": "object"
+              },
+              "changed": {
+                "type": "boolean"
+              },
+              "conflicts": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "empty": {
+                "type": "boolean"
+              },
+              "mergeBaseOid": {
+                "type": "string"
+              },
+              "mergeTreeOid": {
+                "type": "string"
+              },
+              "mergeable": {
+                "type": "boolean"
+              },
+              "mode": {
+                "enum": [
+                  "check",
+                  "plan",
+                  "apply"
+                ]
+              },
+              "preparedOid": {
+                "type": "string"
+              },
+              "repository": {
+                "type": "string"
+              },
+              "style": {
+                "enum": [
+                  "ff",
+                  "merge",
+                  "squash"
+                ]
+              }
+            },
+            "required": [
+              "mode",
+              "changed",
+              "repository",
+              "style",
+              "mergeable",
+              "empty",
+              "mergeBaseOid",
+              "mergeTreeOid",
+              "preparedOid",
+              "conflicts",
+              "changeSummary"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "pr",
+            "check"
+          ],
+          "purpose": "Compute merge-base, conflicts, emptiness and a prepared result without modifying the repository.",
+          "usage": "pr check ROOT REPOSITORY BASE_OID HEAD_OID --style ff|merge|squash [--message TEXT] [--git FILE]"
+        },
+        {
+          "effect": {
+            "apply": "apply",
+            "plan": "preview"
+          },
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "pr.merge",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "ROOT",
+                "required": true,
+                "summary": "Absolute repository root.",
+                "variadic": false
+              },
+              {
+                "name": "REPOSITORY",
+                "required": true,
+                "summary": "Repository name below ROOT.",
+                "variadic": false
+              },
+              {
+                "name": "BASE_REF",
+                "required": true,
+                "summary": "Target branch reference.",
+                "variadic": false
+              },
+              {
+                "name": "BASE_OID",
+                "required": true,
+                "summary": "Expected target commit for CAS.",
+                "variadic": false
+              },
+              {
+                "name": "HEAD_OID",
+                "required": true,
+                "summary": "Pull request head commit.",
+                "variadic": false
+              },
+              {
+                "name": "MANIFEST",
+                "required": true,
+                "summary": "Datalog manifest used for final authorization.",
+                "variadic": false
+              },
+              {
+                "name": "PRINCIPAL",
+                "required": true,
+                "summary": "Authenticated merge principal.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--git",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Absolute Git executable path."
+              },
+              {
+                "argument": {
+                  "name": "ff|merge|squash",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--style",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Merge strategy to execute."
+              },
+              {
+                "argument": {
+                  "name": "TEXT",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--message",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Prepared merge commit message."
+              },
+              {
+                "argument": {
+                  "name": "COUNT",
+                  "type": "integer"
+                },
+                "conflictsWith": [],
+                "long": "--approvals",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Verified approval count supplied by the forge."
+              },
+              {
+                "argument": {
+                  "name": "COUNT",
+                  "type": "integer"
+                },
+                "conflictsWith": [],
+                "long": "--required-approvals",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Required approval count supplied by the forge."
+              },
+              {
+                "conflictsWith": [],
+                "long": "--status-checks-passed",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Assert that required status checks passed."
+              },
+              {
+                "conflictsWith": [],
+                "long": "--blocking-review",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Assert that a blocking review exists."
+              },
+              {
+                "conflictsWith": [],
+                "long": "--apply",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Reauthorize and update the target ref with CAS."
+              }
+            ],
+            "synopsis": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "changeSummary": {
+                "type": "object"
+              },
+              "changed": {
+                "type": "boolean"
+              },
+              "conflicts": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "empty": {
+                "type": "boolean"
+              },
+              "mergeBaseOid": {
+                "type": "string"
+              },
+              "mergeTreeOid": {
+                "type": "string"
+              },
+              "mergeable": {
+                "type": "boolean"
+              },
+              "mode": {
+                "enum": [
+                  "check",
+                  "plan",
+                  "apply"
+                ]
+              },
+              "preparedOid": {
+                "type": "string"
+              },
+              "repository": {
+                "type": "string"
+              },
+              "style": {
+                "enum": [
+                  "ff",
+                  "merge",
+                  "squash"
+                ]
+              }
+            },
+            "required": [
+              "mode",
+              "changed",
+              "repository",
+              "style",
+              "mergeable",
+              "empty",
+              "mergeBaseOid",
+              "mergeTreeOid",
+              "preparedOid",
+              "conflicts",
+              "changeSummary"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "pr",
+            "merge"
+          ],
+          "purpose": "Plan or execute a gated, reauthorized pull request merge with compare-and-swap.",
+          "usage": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply]"
         }
       ],
       "globalOptions": {

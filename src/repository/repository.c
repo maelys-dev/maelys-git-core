@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,50 +72,29 @@ void maelys_git_path_list_clear(maelys_git_path_list_t *paths) {
     paths->count = 0u;
 }
 
-static maelys_git_result_t split_nul_paths(unsigned char *data,
-                                           size_t length,
-                                           maelys_git_path_list_t *out_paths,
-                                           maelys_git_error_t *error) {
-    size_t count = 0u;
-    for (size_t i = 0u; i < length; ++i) if (data[i] == '\0') ++count;
-    if (length > 0u && data[length - 1u] != '\0') {
-        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "Git returned an unterminated path");
-        return MAELYS_GIT_ERR_PROTOCOL;
-    }
-    if (count > MAELYS_GIT_MAX_CHANGED_PATHS) {
-        mg_error_set(error,
-                     MAELYS_GIT_ERR_LIMIT,
-                     0,
-                     "push changes more than %u paths",
-                     (unsigned)MAELYS_GIT_MAX_CHANGED_PATHS);
-        return MAELYS_GIT_ERR_LIMIT;
-    }
-    char **items = count ? calloc(count, sizeof(*items)) : NULL;
-    if (count && !items) return MAELYS_GIT_ERR_IO;
-    size_t start = 0u;
-    size_t item = 0u;
-    for (size_t i = 0u; i < length; ++i) {
-        if (data[i] != '\0') continue;
-        size_t path_length = i - start;
-        if (path_length == 0u || path_length >= PATH_MAX) {
-            for (size_t j = 0u; j < item; ++j) free(items[j]);
-            free(items);
-            mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "Git returned an invalid path");
-            return MAELYS_GIT_ERR_PROTOCOL;
+typedef struct {
+    maelys_git_path_list_t *paths;
+    size_t capacity;
+} path_collector_t;
+
+static maelys_git_result_t collect_changed_path(const maelys_git_change_t *change,
+                                                void *context,
+                                                maelys_git_error_t *error) {
+    path_collector_t *collector = context;
+    if (collector->paths->count == collector->capacity) {
+        size_t next = collector->capacity ? collector->capacity * 2u : 32u;
+        if (next < collector->capacity || next > SIZE_MAX / sizeof(char *)) {
+            mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0, "changed path list is too large");
+            return MAELYS_GIT_ERR_LIMIT;
         }
-        items[item] = malloc(path_length + 1u);
-        if (!items[item]) {
-            for (size_t j = 0u; j < item; ++j) free(items[j]);
-            free(items);
-            return MAELYS_GIT_ERR_IO;
-        }
-        memcpy(items[item], data + start, path_length);
-        items[item][path_length] = '\0';
-        ++item;
-        start = i + 1u;
+        char **items = realloc(collector->paths->items, next * sizeof(*items));
+        if (!items) return MAELYS_GIT_ERR_IO;
+        collector->paths->items = items;
+        collector->capacity = next;
     }
-    out_paths->items = items;
-    out_paths->count = count;
+    char *path = strdup(change->path);
+    if (!path) return MAELYS_GIT_ERR_IO;
+    collector->paths->items[collector->paths->count++] = path;
     return MAELYS_GIT_OK;
 }
 
@@ -128,33 +108,12 @@ maelys_git_result_t maelys_git_repository_changed_paths(const char *git_executab
     if (!git_executable || !repository_path || !old_oid || !new_oid || !out_paths ||
         !mg_is_oid(old_oid) || !mg_is_oid(new_oid)) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     memset(out_paths, 0, sizeof(*out_paths));
-    if (mg_is_zero_oid(old_oid) && mg_is_zero_oid(new_oid)) return MAELYS_GIT_OK;
-
-    char treeish[72];
-    const char *tree_oid = mg_is_zero_oid(new_oid) ? old_oid : new_oid;
-    int treeish_length = snprintf(treeish, sizeof(treeish), "%s^{tree}", tree_oid);
-    if (treeish_length < 0 || (size_t)treeish_length >= sizeof(treeish)) {
-        return MAELYS_GIT_ERR_LIMIT;
-    }
-    char *whole_tree_argv[] = {
-        (char *)git_executable, "--git-dir", (char *)repository_path,
-        "ls-tree", "--name-only", "-r", "-z", treeish, NULL};
-    char *update_argv[] = {
-        (char *)git_executable, "--git-dir", (char *)repository_path,
-        "diff", "--name-only", "--no-renames", "-z",
-        (char *)old_oid, (char *)new_oid, "--", NULL};
-    unsigned char *data = NULL;
-    size_t length = 0u;
-    maelys_git_result_t result = mg_process_capture(
-        git_executable,
-        (mg_is_zero_oid(old_oid) || mg_is_zero_oid(new_oid)) ? whole_tree_argv : update_argv,
-        &data,
-        &length,
-        1024u * 1024u,
-        error);
-    if (result != MAELYS_GIT_OK) return result;
-    result = split_nul_paths(data, length, out_paths, error);
-    free(data);
+    path_collector_t collector = {.paths = out_paths};
+    maelys_git_change_summary_t summary;
+    maelys_git_result_t result = maelys_git_repository_visit_changes(
+        git_executable, repository_path, old_oid, new_oid,
+        collect_changed_path, &collector, &summary, error);
+    if (result != MAELYS_GIT_OK) maelys_git_path_list_clear(out_paths);
     return result;
 }
 

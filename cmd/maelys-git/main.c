@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <ctype.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -215,6 +216,128 @@ static int command_repo_update(const maelys_cli_invocation_t *invocation) {
     return emitted;
 }
 
+static maelys_git_merge_style_t merge_style(const char *value) {
+    if (!value || !strcmp(value, "ff")) return MAELYS_GIT_MERGE_FAST_FORWARD;
+    if (!strcmp(value, "merge")) return MAELYS_GIT_MERGE_COMMIT;
+    if (!strcmp(value, "squash")) return MAELYS_GIT_MERGE_SQUASH;
+    return 0;
+}
+
+static int emit_pr_result(const maelys_cli_invocation_t *invocation,
+                          const char *mode,
+                          int changed,
+                          maelys_git_merge_style_t style,
+                          maelys_git_pr_check_result_t *result) {
+    const char *style_name = style == MAELYS_GIT_MERGE_FAST_FORWARD ? "ff" :
+                             style == MAELYS_GIT_MERGE_COMMIT ? "merge" : "squash";
+    json_t *conflicts = json_array();
+    for (size_t i = 0u; i < result->conflict_paths.count; ++i)
+        json_array_append_new(conflicts, json_string(result->conflict_paths.items[i]));
+    json_t *summary = json_pack("{s:I,s:I,s:I,s:I,s:I,s:I,s:b}",
+        "changed", (json_int_t)result->changes.changed_count,
+        "added", (json_int_t)result->changes.added_count,
+        "modified", (json_int_t)result->changes.modified_count,
+        "deleted", (json_int_t)result->changes.deleted_count,
+        "renamed", (json_int_t)result->changes.renamed_count,
+        "maxNewBlobSize", (json_int_t)result->changes.max_new_blob_size,
+        "hasBinary", result->changes.has_binary);
+    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:b,s:b,s:s,s:s,s:s,s:o,s:o}",
+        "mode", mode, "changed", changed,
+        "repository", maelys_cli_operand(invocation, 1u), "style", style_name,
+        "mergeable", result->mergeable, "empty", result->empty,
+        "mergeBaseOid", result->merge_base_oid, "mergeTreeOid", result->merge_tree_oid,
+        "preparedOid", result->prepared_oid, "conflicts", conflicts,
+        "changeSummary", summary);
+    int emitted = maelys_cli_emit_success(invocation, data, NULL, 0);
+    json_decref(data);
+    maelys_git_pr_check_result_clear(result);
+    return emitted;
+}
+
+static int command_keys_compile(const maelys_cli_invocation_t *invocation) {
+    int apply = maelys_cli_flag(invocation, "apply");
+    size_t key_count = 0u;
+    maelys_git_error_t error = {0};
+    maelys_git_result_t result = maelys_git_compile_authorized_keys(
+        maelys_cli_operand(invocation, 0u), maelys_cli_operand(invocation, 1u),
+        maelys_cli_operand(invocation, 2u), maelys_cli_operand(invocation, 3u),
+        maelys_cli_operand(invocation, 4u), apply, &key_count, &error);
+    if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
+    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:I}",
+        "mode", apply ? "apply" : "plan", "changed", apply,
+        "keyDirectory", maelys_cli_operand(invocation, 0u),
+        "output", maelys_cli_operand(invocation, 1u),
+        "keyCount", (json_int_t)key_count);
+    int emitted = maelys_cli_emit_success(invocation, data,
+        apply ? "authorized_keys replaced atomically." : "Plan only; add --apply to replace authorized_keys.", 0);
+    json_decref(data);
+    return emitted;
+}
+
+static int command_pr_check(const maelys_cli_invocation_t *invocation) {
+    maelys_git_error_t error = {0};
+    char repository_path[4096];
+    int resolved = resolve_repository(invocation, repository_path, &error);
+    if (resolved) return resolved;
+    maelys_git_merge_style_t style = merge_style(maelys_cli_option(invocation, "style"));
+    if (!style) {
+        maelys_cli_error_t cli_error = {"VALIDATION_FAILED", "Invalid --style value.",
+                                         "Use ff, merge, or squash."};
+        return maelys_cli_emit_error(invocation, &cli_error, 1);
+    }
+    maelys_git_pr_check_result_t check;
+    maelys_git_result_t result = maelys_git_pr_check(
+        git_executable(invocation), repository_path,
+        maelys_cli_operand(invocation, 2u), maelys_cli_operand(invocation, 3u),
+        style, maelys_cli_option(invocation, "message"), &check, &error);
+    if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
+    return emit_pr_result(invocation, "check", 0, style, &check);
+}
+
+static int parse_count_option(const maelys_cli_invocation_t *invocation,
+                              const char *name,
+                              size_t *out) {
+    const char *value = maelys_cli_option(invocation, name);
+    char *end = NULL;
+    errno = 0;
+    unsigned long long parsed = strtoull(value ? value : "", &end, 10);
+    if (errno || !value || end == value || *end || parsed > SIZE_MAX) return 0;
+    *out = (size_t)parsed;
+    return 1;
+}
+
+static int command_pr_merge(const maelys_cli_invocation_t *invocation) {
+    maelys_git_error_t error = {0};
+    char repository_path[4096];
+    int resolved = resolve_repository(invocation, repository_path, &error);
+    if (resolved) return resolved;
+    maelys_git_merge_style_t style = merge_style(maelys_cli_option(invocation, "style"));
+    maelys_git_pr_gates_t gates = {
+        .status_checks_passed = maelys_cli_flag(invocation, "status-checks-passed"),
+        .blocking_review = maelys_cli_flag(invocation, "blocking-review"),
+    };
+    if (!style || !parse_count_option(invocation, "approvals", &gates.approvals) ||
+        !parse_count_option(invocation, "required-approvals", &gates.required_approvals)) {
+        maelys_cli_error_t cli_error = {"VALIDATION_FAILED", "Invalid PR merge options.",
+                                         "Use a supported style and non-negative gate counts."};
+        return maelys_cli_emit_error(invocation, &cli_error, 1);
+    }
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_result_t result = maelys_git_policy_open(
+        maelys_cli_operand(invocation, 5u), &policy, &error);
+    if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
+    int apply = maelys_cli_flag(invocation, "apply");
+    maelys_git_pr_check_result_t check;
+    result = maelys_git_pr_merge(
+        git_executable(invocation), repository_path, maelys_cli_operand(invocation, 1u),
+        maelys_cli_operand(invocation, 2u), maelys_cli_operand(invocation, 3u),
+        maelys_cli_operand(invocation, 4u), style, maelys_cli_option(invocation, "message"),
+        maelys_cli_operand(invocation, 6u), &gates, policy, apply, &check, &error);
+    maelys_git_policy_close(policy);
+    if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
+    return emit_pr_result(invocation, apply ? "apply" : "plan", apply, style, &check);
+}
+
 int main(int argc, char **argv) {
     maelys_cli_invocation_t invocation;
     maelys_cli_error_t parse_error;
@@ -230,5 +353,8 @@ int main(int argc, char **argv) {
     if (!strcmp(command, "repo.init")) return command_repo_init(&invocation);
     if (!strcmp(command, "repo.diff")) return command_repo_diff(&invocation);
     if (!strcmp(command, "repo.update-ref")) return command_repo_update(&invocation);
+    if (!strcmp(command, "keys.compile")) return command_keys_compile(&invocation);
+    if (!strcmp(command, "pr.check")) return command_pr_check(&invocation);
+    if (!strcmp(command, "pr.merge")) return command_pr_merge(&invocation);
     return 1;
 }

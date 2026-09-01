@@ -20,7 +20,7 @@
     "agent_id": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,127}$"},
     "type": {"const": "command"},
     "command": {
-      "enum": ["health", "authorize", "repository_info", "diff", "update_ref", "create_repository"]
+      "enum": ["health", "authorize", "repository_info", "diff", "update_ref", "create_repository", "pr_check", "pr_merge"]
     },
     "repository": {"type": "string", "minLength": 1, "maxLength": 511},
     "principal": {"type": "string", "minLength": 1, "maxLength": 511},
@@ -98,6 +98,46 @@
       "properties": {
         "command": {"const": "create_repository"},
         "payload": {"type": "object", "maxProperties": 0}
+      }
+    },
+    {
+      "required": ["repository", "principal"],
+      "properties": {
+        "command": {"const": "pr_check"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["base_oid", "head_oid", "style"],
+          "properties": {
+            "base_oid": {"type": "string", "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$"},
+            "head_oid": {"type": "string", "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$"},
+            "style": {"enum": ["ff", "merge", "squash"]},
+            "message": {"type": "string", "minLength": 1, "maxLength": 65536}
+          }
+        }
+      }
+    },
+    {
+      "required": ["repository", "principal"],
+      "properties": {
+        "command": {"const": "pr_merge"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["base_ref", "base_oid", "head_oid", "style", "approvals", "required_approvals", "status_checks_passed", "blocking_review", "apply"],
+          "properties": {
+            "base_ref": {"type": "string", "pattern": "^refs/heads/"},
+            "base_oid": {"type": "string", "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$"},
+            "head_oid": {"type": "string", "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$"},
+            "style": {"enum": ["ff", "merge", "squash"]},
+            "message": {"type": "string", "minLength": 1, "maxLength": 65536},
+            "approvals": {"type": "integer", "minimum": 0},
+            "required_approvals": {"type": "integer", "minimum": 0},
+            "status_checks_passed": {"type": "boolean"},
+            "blocking_review": {"type": "boolean"},
+            "apply": {"type": "boolean"}
+          }
+        }
       }
     }
   ]

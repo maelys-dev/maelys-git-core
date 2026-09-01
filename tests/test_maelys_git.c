@@ -180,6 +180,57 @@ static int test_post_receive_event(void) {
     return 1;
 }
 
+static int test_receive_transaction(void) {
+    FILE *input = tmpfile();
+    CHECK(input != NULL);
+    CHECK(fputs("0000000000000000000000000000000000000000 "
+                "1111111111111111111111111111111111111111 refs/heads/topic\n"
+                "2222222222222222222222222222222222222222 "
+                "0000000000000000000000000000000000000000 refs/tags/v1\n", input) >= 0);
+    rewind(input);
+    maelys_git_receive_transaction_t transaction;
+    maelys_git_error_t error;
+    CHECK(maelys_git_receive_transaction_read(input, &transaction, &error) == MAELYS_GIT_OK);
+    CHECK(transaction.update_count == 2u);
+    CHECK(transaction.updates[0].ref_kind == MAELYS_GIT_REF_BRANCH);
+    CHECK(transaction.updates[1].ref_kind == MAELYS_GIT_REF_TAG);
+    CHECK(!strcmp(maelys_git_ref_kind_name(transaction.updates[0].ref_kind), "branch"));
+    maelys_git_receive_transaction_clear(&transaction);
+    fclose(input);
+    return 1;
+}
+
+static int test_authorized_keys(void) {
+    char template[] = "/tmp/maelys_git_keys_XXXXXX";
+    char *root = mkdtemp(template);
+    CHECK(root != NULL);
+    char keys[4096], key[4096], output[4096];
+    CHECK(snprintf(keys, sizeof(keys), "%s/keys", root) > 0);
+    CHECK(snprintf(key, sizeof(key), "%s/alice.pub", keys) > 0);
+    CHECK(snprintf(output, sizeof(output), "%s/authorized_keys", root) > 0);
+    CHECK(mkdir(keys, 0700) == 0);
+    FILE *file = fopen(key, "w");
+    CHECK(file != NULL);
+    CHECK(fputs("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey alice@test\n", file) >= 0);
+    CHECK(fclose(file) == 0);
+    size_t count = 0u;
+    maelys_git_error_t error;
+    CHECK(maelys_git_compile_authorized_keys(keys, output, "/usr/local/bin/maelys-git-shell",
+        "/srv/git", "/etc/maelys/policy.json", 0, &count, &error) == MAELYS_GIT_OK);
+    CHECK(count == 1u && access(output, F_OK) != 0);
+    CHECK(maelys_git_compile_authorized_keys(keys, output, "/usr/local/bin/maelys-git-shell",
+        "/srv/git", "/etc/maelys/policy.json", 1, &count, &error) == MAELYS_GIT_OK);
+    file = fopen(output, "r");
+    CHECK(file != NULL);
+    char line[2048];
+    CHECK(fgets(line, sizeof(line), file) != NULL);
+    CHECK(strstr(line, "restrict,command=\"") != NULL);
+    CHECK(strstr(line, "--user alice") != NULL);
+    fclose(file);
+    CHECK(remove_tree(root));
+    return 1;
+}
+
 int main(void) {
     int passed = 0;
     passed += test_repository_names();
@@ -188,7 +239,9 @@ int main(void) {
     passed += test_repository_init();
     passed += test_agent_protocol();
     passed += test_post_receive_event();
-    if (passed != 6) return 1;
+    passed += test_receive_transaction();
+    passed += test_authorized_keys();
+    if (passed != 8) return 1;
     (void)printf("ok: %d test groups passed\n", passed);
     return 0;
 }

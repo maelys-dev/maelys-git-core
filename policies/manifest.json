@@ -12,7 +12,7 @@
       "policy_id": "maelys-git.example.authorization",
       "domain": "maelys_git",
       "file": "example.dl",
-      "sha256": "166f8a5d3d044cfdf06ed1c4c0f6e548479747d28eb089b595bb71a135e6f9eb",
+      "sha256": "7cb91b72265b8fa19db5b744311f87f00f2c1f235ba99fc60aa04fde3a2b533f",
       "mode": "enforce",
       "enabled": true,
       "description": "Example Git authorization policy",

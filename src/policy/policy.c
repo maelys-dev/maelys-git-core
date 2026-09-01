@@ -26,6 +26,18 @@ static const maelys_datalog_predicate_def_t k_git_domain[] = {
     {.name = "operation", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "ref", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "path", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "ref_kind", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "update_kind", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "change_kind", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "changed_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "added_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "modified_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "deleted_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "renamed_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "max_new_blob_size", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "has_binary", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "commit_email", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "commit_signed", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "ssh_key", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "remote_address", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "group_member", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
@@ -39,6 +51,10 @@ static const maelys_datalog_predicate_def_t k_git_domain[] = {
     {.name = "group_grant_create", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "admin", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "protected_ref", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "protected_branch", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "protected_tag", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "require_signed_ref", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "allowed_commit_email", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "protected_path", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "allow",
      .arity = 1,
@@ -285,6 +301,23 @@ static maelys_result_t add_optional_fact(maelys_datalog_edb_t *edb,
     return maelys_datalog_edb_add_runtime_symbol_fact(edb, predicate, value);
 }
 
+static maelys_result_t add_integer_fact(maelys_datalog_edb_t *edb,
+                                        const char *predicate,
+                                        unsigned long long value) {
+    if (value > INT64_MAX) return MAELYS_ERR_PAYLOAD_TOO_LARGE;
+    maelys_datalog_term_t term = {.kind = MAELYS_DATALOG_TERM_INT};
+    term.as.integer = (int64_t)value;
+    return maelys_datalog_edb_add_fact(edb, predicate, &term, 1u);
+}
+
+static maelys_result_t add_boolean_fact(maelys_datalog_edb_t *edb,
+                                        const char *predicate,
+                                        int value) {
+    maelys_datalog_term_t term = {.kind = MAELYS_DATALOG_TERM_BOOL};
+    term.as.boolean = value != 0;
+    return maelys_datalog_edb_add_fact(edb, predicate, &term, 1u);
+}
+
 static maelys_git_result_t solve_policy(const maelys_datalog_ruleset_t *source_ruleset,
                                         const maelys_git_policy_request_t *request,
                                         int *out_allow,
@@ -322,8 +355,28 @@ static maelys_git_result_t solve_policy(const maelys_datalog_ruleset_t *source_r
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "repository", request->repository);
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "operation", request->operation);
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "ref", request->ref_name);
+    if (rc == MAELYS_OK) rc = add_optional_fact(edb, "ref_kind", request->ref_kind);
+    if (rc == MAELYS_OK) rc = add_optional_fact(edb, "update_kind", request->update_kind);
+    if (rc == MAELYS_OK) rc = add_optional_fact(edb, "change_kind", request->change_kind);
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "ssh_key", request->ssh_key);
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "remote_address", request->remote_address);
+    if (rc == MAELYS_OK) rc = add_optional_fact(edb, "commit_email", request->commit_email);
+    if (rc == MAELYS_OK && request->has_commit_signed)
+        rc = add_boolean_fact(edb, "commit_signed", request->commit_signed);
+    if (rc == MAELYS_OK && request->has_summary)
+        rc = add_integer_fact(edb, "changed_count", request->changed_count);
+    if (rc == MAELYS_OK && request->has_summary)
+        rc = add_integer_fact(edb, "added_count", request->added_count);
+    if (rc == MAELYS_OK && request->has_summary)
+        rc = add_integer_fact(edb, "modified_count", request->modified_count);
+    if (rc == MAELYS_OK && request->has_summary)
+        rc = add_integer_fact(edb, "deleted_count", request->deleted_count);
+    if (rc == MAELYS_OK && request->has_summary)
+        rc = add_integer_fact(edb, "renamed_count", request->renamed_count);
+    if (rc == MAELYS_OK && request->has_summary)
+        rc = add_integer_fact(edb, "max_new_blob_size", request->max_new_blob_size);
+    if (rc == MAELYS_OK && request->has_summary)
+        rc = add_boolean_fact(edb, "has_binary", request->has_binary);
     if (request->path_count > MAELYS_DATALOG_MAX_FACTS_PER_PRED) rc = MAELYS_ERR_PAYLOAD_TOO_LARGE;
     for (size_t i = 0u; rc == MAELYS_OK && i < request->path_count; ++i) {
         rc = add_optional_fact(edb, "path", request->paths[i]);

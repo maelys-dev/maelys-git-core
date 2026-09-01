@@ -40,6 +40,9 @@ add_library(maelys_git_core STATIC
     src/shell/command.c
     src/policy/policy.c
     src/repository/repository.c
+    src/repository/transaction.c
+    src/repository/pull_request.c
+    src/repository/keys.c
     src/hooks/pre_receive.c)
 
 target_include_directories(maelys_git_core
@@ -177,6 +180,11 @@ if(MAELYS_GIT_BUILD_TESTS)
             -DMAELYS_SHELL_BIN=$<TARGET_FILE:maelys-git-shell>
             -DTEST_MANIFEST=${CMAKE_CURRENT_SOURCE_DIR}/policies/manifest.json
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cli_integration.cmake)
+
+    add_test(NAME maelys-git-pr-integration
+        COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pr_cli.sh
+            $<TARGET_FILE:maelys-git>
+            ${CMAKE_CURRENT_SOURCE_DIR}/policies/manifest.json)
 
     if(Python3_Interpreter_FOUND)
         add_test(NAME maelys-git-cli-docs
