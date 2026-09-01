@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maelys.dev/schemas/git-repository-event-v1.json",
+  "title": "Maelys Git repository lifecycle event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "type",
+    "sourceRepository",
+    "targetRepository",
+    "storageId",
+    "sourceIdentity",
+    "sourceState",
+    "targetState"
+  ],
+  "properties": {
+    "version": {"const": "1"},
+    "type": {
+      "enum": [
+        "repository_rename_planned",
+        "repository_renamed",
+        "repository_archive_planned",
+        "repository_archived",
+        "repository_delete_planned",
+        "repository_trashed",
+        "repository_restore_planned",
+        "repository_restored"
+      ]
+    },
+    "sourceRepository": {"type": "string", "minLength": 1, "maxLength": 511},
+    "targetRepository": {"type": "string", "minLength": 1, "maxLength": 511},
+    "storageId": {"type": "string", "maxLength": 127},
+    "sourceIdentity": {"type": "string", "pattern": "^[0-9a-f]+:[0-9a-f]+$"},
+    "sourceState": {"enum": ["active", "archive", "trash"]},
+    "targetState": {"enum": ["active", "archive", "trash"]}
+  }
+}

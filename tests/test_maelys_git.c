@@ -44,6 +44,10 @@ static int test_repository_names(void) {
     CHECK(!maelys_git_repository_name_is_valid("/absolute.git"));
     CHECK(!maelys_git_repository_name_is_valid("repo;id.git"));
     CHECK(!maelys_git_repository_name_is_valid("repo"));
+    CHECK(!maelys_git_repository_name_is_valid(".maelys-git/archive/item/repository.git"));
+    CHECK(!maelys_git_repository_name_is_valid("team/.maelys-git/repository.git"));
+    CHECK(maelys_git_lifecycle_id_is_valid("archive-2026.09_01"));
+    CHECK(!maelys_git_lifecycle_id_is_valid("../archive"));
     CHECK(maelys_git_ref_name_is_valid("refs/heads/main"));
     CHECK(!maelys_git_ref_name_is_valid("main"));
     CHECK(!maelys_git_ref_name_is_valid("refs/heads/../secret"));

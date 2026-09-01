@@ -10,7 +10,8 @@
 static int valid_component(const char *start, size_t length) {
     if (length == 0u) return 0;
     if ((length == 1u && start[0] == '.') ||
-        (length == 2u && start[0] == '.' && start[1] == '.')) return 0;
+        (length == 2u && start[0] == '.' && start[1] == '.') ||
+        (length == 11u && memcmp(start, ".maelys-git", 11u) == 0)) return 0;
     return 1;
 }
 

@@ -18,6 +18,7 @@ future Cloudflare forge UI as part of the core.
 | Multi-ref receive transaction | Fully read and fail-closed before acceptance | Covered |
 | Key administration | Atomic compiler, structural validation, scoped read/write deploy keys, expiry and revocation | Beyond flat principal keys |
 | Flat groups and exact repository ACL migration | Plan/apply compiler for `R`, `RW`, and `RW+` with no silent fallback | Covered common subset |
+| Repository lifecycle | Inventory, inspection, CAS rename, archive, recoverable delete and restore | Beyond basic Gitolite administration |
 | Repository patterns, ref rules and rule precedence | Reported source line by source line by the migration compiler | Missing compatibility |
 | VREF ecosystem and custom triggers | Native facts and C inspectors exist; no compatibility layer | Partial |
 | Delegated administration, mirroring and legacy extensions | Not implemented | Missing |
@@ -55,18 +56,16 @@ services communicating through the versioned agent protocol.
 
 ## Next work
 
-1. Add repository lifecycle administration: list, inspect, archive, rename and
-   recoverable delete, all with plan/apply and audit events.
-2. Define cross-fork PR object quarantine, reachability validation, object-size
+1. Define cross-fork PR object quarantine, reachability validation, object-size
    quotas, and promotion before enabling fork imports.
-3. Add a durable forge-side PR record and map its state transitions to the
+2. Add a durable forge-side PR record and map its state transitions to the
    normalized local events without coupling the C core to a database.
-4. Extend Gitolite migration with an explicit library of selected ref/VREF
+3. Extend Gitolite migration with an explicit library of selected ref/VREF
    mappings; continue refusing unknown behavior.
-5. Add cancellation propagation from the Cloud agent into long Git processes.
-6. Add hardware-key attestation metadata and rotation workflows for deploy
+4. Add cancellation propagation from the Cloud agent into long Git processes.
+5. Add hardware-key attestation metadata and rotation workflows for deploy
    keys.
-7. When Datalog work resumes, return bounded proof/receipt data with decisions
+6. When Datalog work resumes, return bounded proof/receipt data with decisions
    and reuse a compiled request session across changed paths.
 
 ## Maelys Datalog opportunities

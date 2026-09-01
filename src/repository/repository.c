@@ -145,6 +145,9 @@ maelys_git_result_t maelys_git_repository_init_bare(const char *git_executable,
         mg_error_set(error, MAELYS_GIT_ERR_INVALID_REPOSITORY, errno, "repository target already exists or is inaccessible");
         return MAELYS_GIT_ERR_INVALID_REPOSITORY;
     }
+    maelys_git_result_t result = mg_repository_ensure_parent_directories(
+        canonical_root, target, error);
+    if (result != MAELYS_GIT_OK) return result;
     char *const argv[] = {
         (char *)git_executable, "init", "--quiet", "--bare", "--", target, NULL};
     return mg_process_run(git_executable, argv, NULL, error);

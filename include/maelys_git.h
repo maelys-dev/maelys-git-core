@@ -16,6 +16,7 @@ extern "C" {
 #define MAELYS_GIT_MAX_CHANGED_PATHS 64u /* legacy bounded request helper */
 #define MAELYS_GIT_MAX_RECEIVE_UPDATES 1024u
 #define MAELYS_GIT_MAX_CONFLICT_PATHS 128u
+#define MAELYS_GIT_MAX_LIFECYCLE_ID 128u
 
 typedef enum {
     MAELYS_GIT_OK = 0,
@@ -275,6 +276,86 @@ maelys_git_result_t maelys_git_repository_update_ref(
     const char *ref_name,
     const char *new_oid,
     const char *expected_old_oid,
+    maelys_git_error_t *error);
+
+typedef enum {
+    MAELYS_GIT_REPOSITORY_ACTIVE = 1,
+    MAELYS_GIT_REPOSITORY_ARCHIVE = 2,
+    MAELYS_GIT_REPOSITORY_TRASH = 3
+} maelys_git_repository_state_t;
+
+typedef struct {
+    char repository[MAELYS_GIT_MAX_REPOSITORY];
+    char storage_id[MAELYS_GIT_MAX_LIFECYCLE_ID];
+    maelys_git_repository_state_t state;
+} maelys_git_repository_entry_t;
+
+typedef struct {
+    maelys_git_repository_entry_t *entries;
+    size_t count;
+} maelys_git_repository_list_t;
+
+typedef struct {
+    char repository[MAELYS_GIT_MAX_REPOSITORY];
+    char path[4096];
+    char identity[128];
+    char head_ref[MAELYS_GIT_MAX_REF];
+    char head_oid[65];
+    size_t ref_count;
+    unsigned long long object_count;
+    unsigned long long object_bytes;
+} maelys_git_repository_info_t;
+
+typedef struct {
+    char source_repository[MAELYS_GIT_MAX_REPOSITORY];
+    char target_repository[MAELYS_GIT_MAX_REPOSITORY];
+    char storage_id[MAELYS_GIT_MAX_LIFECYCLE_ID];
+    char source_identity[128];
+    char source_path[4096];
+    char target_path[4096];
+    maelys_git_repository_state_t source_state;
+    maelys_git_repository_state_t target_state;
+} maelys_git_repository_transition_t;
+
+const char *maelys_git_repository_state_name(maelys_git_repository_state_t state);
+int maelys_git_lifecycle_id_is_valid(const char *identifier);
+void maelys_git_repository_list_clear(maelys_git_repository_list_t *list);
+maelys_git_result_t maelys_git_repository_list(
+    const char *repository_root,
+    int include_stored,
+    maelys_git_repository_list_t *out_list,
+    maelys_git_error_t *error);
+maelys_git_result_t maelys_git_repository_inspect(
+    const char *git_executable,
+    const char *repository_root,
+    const char *repository_name,
+    maelys_git_repository_info_t *out_info,
+    maelys_git_error_t *error);
+maelys_git_result_t maelys_git_repository_rename(
+    const char *repository_root,
+    const char *source_repository,
+    const char *target_repository,
+    const char *expected_source_identity,
+    int apply,
+    maelys_git_repository_transition_t *out_transition,
+    maelys_git_error_t *error);
+maelys_git_result_t maelys_git_repository_store(
+    const char *repository_root,
+    const char *repository_name,
+    maelys_git_repository_state_t target_state,
+    const char *storage_id,
+    const char *expected_source_identity,
+    int apply,
+    maelys_git_repository_transition_t *out_transition,
+    maelys_git_error_t *error);
+maelys_git_result_t maelys_git_repository_restore(
+    const char *repository_root,
+    maelys_git_repository_state_t source_state,
+    const char *storage_id,
+    const char *target_repository,
+    const char *expected_source_identity,
+    int apply,
+    maelys_git_repository_transition_t *out_transition,
     maelys_git_error_t *error);
 
 typedef enum {

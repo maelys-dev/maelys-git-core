@@ -143,6 +143,140 @@ static int command_repo_init(const maelys_cli_invocation_t *invocation) {
     return emitted;
 }
 
+static int command_repo_list(const maelys_cli_invocation_t *invocation) {
+    maelys_git_error_t error = {0};
+    maelys_git_repository_list_t repositories;
+    maelys_git_result_t result = maelys_git_repository_list(
+        maelys_cli_operand(invocation, 0u), maelys_cli_flag(invocation, "include-stored"),
+        &repositories, &error);
+    if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
+    char root[4096];
+    if (!realpath(maelys_cli_operand(invocation, 0u), root)) {
+        maelys_git_repository_list_clear(&repositories);
+        error.code = MAELYS_GIT_ERR_NOT_FOUND;
+        error.system_error = errno;
+        (void)snprintf(error.message, sizeof(error.message), "cannot resolve repository root");
+        return maelys_cli_emit_maelys_error(invocation, error.code, &error);
+    }
+    json_t *items = json_array();
+    if (!items) { maelys_git_repository_list_clear(&repositories); return 1; }
+    for (size_t i = 0u; i < repositories.count; ++i) {
+        maelys_git_repository_entry_t *entry = &repositories.entries[i];
+        json_array_append_new(items, json_pack("{s:s,s:s,s:s}",
+            "name", entry->repository, "state", maelys_git_repository_state_name(entry->state),
+            "storageId", entry->storage_id));
+    }
+    json_t *data = json_pack("{s:s,s:I,s:o}", "root", root,
+                             "count", (json_int_t)repositories.count,
+                             "repositories", items);
+    maelys_git_repository_list_clear(&repositories);
+    int emitted = maelys_cli_emit_success(invocation, data, NULL, 0);
+    json_decref(data);
+    return emitted;
+}
+
+static int command_repo_inspect(const maelys_cli_invocation_t *invocation) {
+    maelys_git_error_t error = {0};
+    maelys_git_repository_info_t info;
+    maelys_git_result_t result = maelys_git_repository_inspect(
+        git_executable(invocation), maelys_cli_operand(invocation, 0u),
+        maelys_cli_operand(invocation, 1u), &info, &error);
+    if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
+    json_t *data = json_pack("{s:s,s:s,s:s,s:s,s:s,s:I,s:I,s:I}",
+        "repository", info.repository, "path", info.path, "identity", info.identity,
+        "headRef", info.head_ref, "headOid", info.head_oid,
+        "refCount", (json_int_t)info.ref_count,
+        "objectCount", (json_int_t)info.object_count,
+        "objectBytes", (json_int_t)info.object_bytes);
+    int emitted = maelys_cli_emit_success(invocation, data, NULL, 0);
+    json_decref(data);
+    return emitted;
+}
+
+static int emit_repository_transition(const maelys_cli_invocation_t *invocation,
+                                      const char *action,
+                                      const char *event_type,
+                                      int apply,
+                                      maelys_git_repository_transition_t *transition) {
+    json_t *precondition = json_pack("{s:s,s:b}",
+        "sourceIdentity", transition->source_identity, "targetAbsent", 1);
+    json_t *event = json_pack("{s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:s}",
+        "version", "1", "type", event_type,
+        "sourceRepository", transition->source_repository,
+        "targetRepository", transition->target_repository,
+        "storageId", transition->storage_id,
+        "sourceIdentity", transition->source_identity,
+        "sourceState", maelys_git_repository_state_name(transition->source_state),
+        "targetState", maelys_git_repository_state_name(transition->target_state));
+    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:o,s:o}",
+        "mode", apply ? "apply" : "plan", "changed", apply, "action", action,
+        "sourceRepository", transition->source_repository,
+        "targetRepository", transition->target_repository,
+        "sourceState", maelys_git_repository_state_name(transition->source_state),
+        "targetState", maelys_git_repository_state_name(transition->target_state),
+        "storageId", transition->storage_id, "sourcePath", transition->source_path,
+        "targetPath", transition->target_path, "precondition", precondition,
+        "event", event);
+    int emitted = maelys_cli_emit_success(invocation, data, NULL, 0);
+    json_decref(data);
+    return emitted;
+}
+
+static int command_repo_rename(const maelys_cli_invocation_t *invocation) {
+    int apply = maelys_cli_flag(invocation, "apply");
+    maelys_git_error_t error = {0};
+    maelys_git_repository_transition_t transition;
+    maelys_git_result_t result = maelys_git_repository_rename(
+        maelys_cli_operand(invocation, 0u), maelys_cli_operand(invocation, 1u),
+        maelys_cli_operand(invocation, 2u),
+        maelys_cli_option(invocation, "expected-source-identity"), apply,
+        &transition, &error);
+    if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
+    return emit_repository_transition(invocation, "rename",
+        apply ? "repository_renamed" : "repository_rename_planned", apply, &transition);
+}
+
+static int command_repo_store(const maelys_cli_invocation_t *invocation,
+                              maelys_git_repository_state_t state,
+                              const char *action) {
+    int apply = maelys_cli_flag(invocation, "apply");
+    maelys_git_error_t error = {0};
+    maelys_git_repository_transition_t transition;
+    maelys_git_result_t result = maelys_git_repository_store(
+        maelys_cli_operand(invocation, 0u), maelys_cli_operand(invocation, 1u), state,
+        maelys_cli_operand(invocation, 2u),
+        maelys_cli_option(invocation, "expected-source-identity"), apply,
+        &transition, &error);
+    if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
+    const char *event_type = state == MAELYS_GIT_REPOSITORY_ARCHIVE ?
+        (apply ? "repository_archived" : "repository_archive_planned") :
+        (apply ? "repository_trashed" : "repository_delete_planned");
+    return emit_repository_transition(invocation, action, event_type, apply, &transition);
+}
+
+static int command_repo_restore(const maelys_cli_invocation_t *invocation) {
+    const char *from = maelys_cli_option(invocation, "from");
+    maelys_git_repository_state_t state = from && !strcmp(from, "archive") ?
+        MAELYS_GIT_REPOSITORY_ARCHIVE : from && !strcmp(from, "trash") ?
+        MAELYS_GIT_REPOSITORY_TRASH : 0;
+    if (!state) {
+        maelys_cli_error_t cli_error = {"VALIDATION_FAILED",
+            "Invalid --from storage area.", "Use --from archive or --from trash."};
+        return maelys_cli_emit_error(invocation, &cli_error, 1);
+    }
+    int apply = maelys_cli_flag(invocation, "apply");
+    maelys_git_error_t error = {0};
+    maelys_git_repository_transition_t transition;
+    maelys_git_result_t result = maelys_git_repository_restore(
+        maelys_cli_operand(invocation, 0u), state, maelys_cli_operand(invocation, 1u),
+        maelys_cli_option(invocation, "as"),
+        maelys_cli_option(invocation, "expected-source-identity"), apply,
+        &transition, &error);
+    if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
+    return emit_repository_transition(invocation, "restore",
+        apply ? "repository_restored" : "repository_restore_planned", apply, &transition);
+}
+
 static int resolve_repository(const maelys_cli_invocation_t *invocation,
                               char path[4096],
                               maelys_git_error_t *error) {
@@ -413,6 +547,14 @@ int main(int argc, char **argv) {
     if (!strcmp(command, "authorize")) return command_authorize(&invocation);
     if (!strcmp(command, "parse-ssh")) return command_parse_ssh(&invocation);
     if (!strcmp(command, "repo.init")) return command_repo_init(&invocation);
+    if (!strcmp(command, "repo.list")) return command_repo_list(&invocation);
+    if (!strcmp(command, "repo.inspect")) return command_repo_inspect(&invocation);
+    if (!strcmp(command, "repo.rename")) return command_repo_rename(&invocation);
+    if (!strcmp(command, "repo.archive"))
+        return command_repo_store(&invocation, MAELYS_GIT_REPOSITORY_ARCHIVE, "archive");
+    if (!strcmp(command, "repo.delete"))
+        return command_repo_store(&invocation, MAELYS_GIT_REPOSITORY_TRASH, "delete");
+    if (!strcmp(command, "repo.restore")) return command_repo_restore(&invocation);
     if (!strcmp(command, "repo.diff")) return command_repo_diff(&invocation);
     if (!strcmp(command, "repo.update-ref")) return command_repo_update(&invocation);
     if (!strcmp(command, "keys.compile")) return command_keys_compile(&invocation);

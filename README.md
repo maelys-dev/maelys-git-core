@@ -111,6 +111,11 @@ with `cmake --build build --target generate-cli-reference`.
 The current Gitolite parity, Forgejo gap and ordered hardening roadmap are
 tracked in `docs/gitolite-forgejo-gap.md`.
 
+Local lifecycle administration is available through `repo list`,
+`repo inspect`, `repo rename`, `repo archive`, `repo delete`, and
+`repo restore`. Destructive-looking delete is recoverable and never erases Git
+objects. See `docs/repository-lifecycle.md`.
+
 ## SSH forced command
 
 An `authorized_keys` entry can bind an identity to the shell. The user value is

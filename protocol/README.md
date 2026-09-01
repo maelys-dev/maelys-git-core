@@ -36,3 +36,9 @@ boolean, validates the target OID, re-evaluates local Datalog policy, and uses
 Git compare-and-swap before changing the target reference. An optional
 `pr_id` creates forge-neutral `refs/maelys/pulls/<id>/head` and `merged`
 references in the same atomic Git reference transaction as the target branch.
+
+Local repository administration returns lifecycle events conforming to
+`repository-events-v1.schema.json`. Plan and apply have distinct event types;
+the forge should persist apply events only after it has durably accepted the
+successful CLI result. The stable source identity makes retries and audit
+correlation explicit.

@@ -40,6 +40,7 @@ add_library(maelys_git_core STATIC
     src/shell/command.c
     src/policy/policy.c
     src/repository/repository.c
+    src/repository/lifecycle.c
     src/repository/transaction.c
     src/repository/pull_request.c
     src/repository/keys.c
@@ -193,6 +194,10 @@ if(MAELYS_GIT_BUILD_TESTS)
 
     add_test(NAME maelys-git-gitolite-integration
         COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gitolite_cli.sh
+            $<TARGET_FILE:maelys-git>)
+
+    add_test(NAME maelys-git-repository-lifecycle
+        COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_repository_lifecycle.sh
             $<TARGET_FILE:maelys-git>)
 
     if(Python3_Interpreter_FOUND)

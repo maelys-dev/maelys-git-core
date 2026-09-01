@@ -15,6 +15,12 @@ Contrat commun : `agent-cli/v2`. Pour le détail machine, exécutez
 | authorize | authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...] | read | json-envelope | Evaluate one authorization request. |
 | parse-ssh | parse-ssh COMMAND | read | json-envelope | Parse a forced SSH Git command. |
 | repo.init | repo init ROOT REPOSITORY [--git FILE] [--apply] | preview → apply | json-envelope | Plan or create a bare repository. |
+| repo.list | repo list ROOT [--include-stored] | read | json-envelope | Inventory active repositories and optionally recoverable stored repositories. |
+| repo.inspect | repo inspect ROOT REPOSITORY [--git FILE] | read | json-envelope | Inspect the identity, HEAD, refs and object storage of an active repository. |
+| repo.rename | repo rename ROOT SOURCE TARGET [--apply --expected-source-identity IDENTITY] | preview → apply | json-envelope | Plan or atomically rename an active repository. |
+| repo.archive | repo archive ROOT REPOSITORY STORAGE_ID [--apply --expected-source-identity IDENTITY] | preview → apply | json-envelope | Plan or move a repository into recoverable archive storage. |
+| repo.delete | repo delete ROOT REPOSITORY STORAGE_ID [--apply --expected-source-identity IDENTITY] | preview → apply | json-envelope | Plan or move a repository into recoverable trash without erasing objects. |
+| repo.restore | repo restore ROOT STORAGE_ID --from archive\|trash [--as REPOSITORY] [--apply --expected-source-identity IDENTITY] | preview → apply | json-envelope | Plan or restore an archived or deleted repository. |
 | repo.diff | repo diff ROOT REPOSITORY OLD_OID NEW_OID [--git FILE] | read | json-envelope | List changed paths between Git objects. |
 | repo.update-ref | repo update-ref ROOT REPOSITORY REF NEW_OID OLD_OID [--git FILE] [--apply] | preview → apply | json-envelope | Plan or compare-and-swap a Git reference. |
 | keys.compile | keys compile KEY_DIRECTORY OUTPUT SHELL ROOT MANIFEST [--apply] | preview → apply | json-envelope | Plan or atomically compile forced-command SSH keys. |

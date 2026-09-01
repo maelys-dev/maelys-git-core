@@ -62,5 +62,9 @@ maelys_git_result_t mg_process_filter_spool_status(const char *executable,
                                                    int *out_exit_status,
                                                    maelys_git_error_t *error);
 int mg_remove_tree(const char *path);
+maelys_git_result_t mg_repository_ensure_parent_directories(
+    const char *root,
+    const char *target,
+    maelys_git_error_t *error);
 
 #endif

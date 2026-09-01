@@ -404,6 +404,801 @@
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "id": "repo.list",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "ROOT",
+                "required": true,
+                "summary": "Absolute repository root.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "conflictsWith": [],
+                "long": "--include-stored",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Include repositories held in archive and recoverable trash."
+              }
+            ],
+            "synopsis": "repo list ROOT [--include-stored]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "repositories": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "root": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "root",
+              "count",
+              "repositories"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "repo",
+            "list"
+          ],
+          "purpose": "Inventory active repositories and optionally recoverable stored repositories.",
+          "usage": "repo list ROOT [--include-stored]"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "repo.inspect",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "ROOT",
+                "required": true,
+                "summary": "Absolute repository root.",
+                "variadic": false
+              },
+              {
+                "name": "REPOSITORY",
+                "required": true,
+                "summary": "Repository name below ROOT.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--git",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Absolute Git executable path."
+              }
+            ],
+            "synopsis": "repo inspect ROOT REPOSITORY [--git FILE]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "headOid": {
+                "type": "string"
+              },
+              "headRef": {
+                "type": "string"
+              },
+              "identity": {
+                "type": "string"
+              },
+              "objectBytes": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "objectCount": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "path": {
+                "type": "string"
+              },
+              "refCount": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "repository": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "repository",
+              "path",
+              "identity",
+              "headRef",
+              "headOid",
+              "refCount",
+              "objectCount",
+              "objectBytes"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "repo",
+            "inspect"
+          ],
+          "purpose": "Inspect the identity, HEAD, refs and object storage of an active repository.",
+          "usage": "repo inspect ROOT REPOSITORY [--git FILE]"
+        },
+        {
+          "effect": {
+            "apply": "apply",
+            "plan": "preview"
+          },
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "repo.rename",
+          "input": {
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-source-identity",
+                  "--apply"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--apply",
+                  "--expected-source-identity"
+                ]
+              }
+            ],
+            "operands": [
+              {
+                "name": "ROOT",
+                "required": true,
+                "summary": "Absolute repository root.",
+                "variadic": false
+              },
+              {
+                "name": "SOURCE",
+                "required": true,
+                "summary": "Existing active repository name.",
+                "variadic": false
+              },
+              {
+                "name": "TARGET",
+                "required": true,
+                "summary": "Absent target repository name.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "argument": {
+                  "name": "IDENTITY",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--expected-source-identity",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--apply"
+                ],
+                "summary": "Source device/inode identity returned by the reviewed plan."
+              },
+              {
+                "conflictsWith": [],
+                "long": "--apply",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--expected-source-identity"
+                ],
+                "summary": "Apply the reviewed repository transition."
+              }
+            ],
+            "synopsis": "repo rename ROOT SOURCE TARGET [--apply --expected-source-identity IDENTITY]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "rename",
+                  "archive",
+                  "delete",
+                  "restore"
+                ]
+              },
+              "changed": {
+                "type": "boolean"
+              },
+              "event": {
+                "type": "object"
+              },
+              "mode": {
+                "enum": [
+                  "plan",
+                  "apply"
+                ]
+              },
+              "precondition": {
+                "type": "object"
+              },
+              "sourcePath": {
+                "type": "string"
+              },
+              "sourceRepository": {
+                "type": "string"
+              },
+              "sourceState": {
+                "enum": [
+                  "active",
+                  "archive",
+                  "trash"
+                ]
+              },
+              "storageId": {
+                "type": "string"
+              },
+              "targetPath": {
+                "type": "string"
+              },
+              "targetRepository": {
+                "type": "string"
+              },
+              "targetState": {
+                "enum": [
+                  "active",
+                  "archive",
+                  "trash"
+                ]
+              }
+            },
+            "required": [
+              "mode",
+              "changed",
+              "action",
+              "sourceRepository",
+              "targetRepository",
+              "sourceState",
+              "targetState",
+              "storageId",
+              "sourcePath",
+              "targetPath",
+              "precondition",
+              "event"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "repo",
+            "rename"
+          ],
+          "purpose": "Plan or atomically rename an active repository.",
+          "usage": "repo rename ROOT SOURCE TARGET [--apply --expected-source-identity IDENTITY]"
+        },
+        {
+          "effect": {
+            "apply": "apply",
+            "plan": "preview"
+          },
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "repo.archive",
+          "input": {
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-source-identity",
+                  "--apply"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--apply",
+                  "--expected-source-identity"
+                ]
+              }
+            ],
+            "operands": [
+              {
+                "name": "ROOT",
+                "required": true,
+                "summary": "Absolute repository root.",
+                "variadic": false
+              },
+              {
+                "name": "REPOSITORY",
+                "required": true,
+                "summary": "Existing active repository name.",
+                "variadic": false
+              },
+              {
+                "name": "STORAGE_ID",
+                "required": true,
+                "summary": "Stable archive or deletion identifier.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "argument": {
+                  "name": "IDENTITY",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--expected-source-identity",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--apply"
+                ],
+                "summary": "Source device/inode identity returned by the reviewed plan."
+              },
+              {
+                "conflictsWith": [],
+                "long": "--apply",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--expected-source-identity"
+                ],
+                "summary": "Apply the reviewed repository transition."
+              }
+            ],
+            "synopsis": "repo archive ROOT REPOSITORY STORAGE_ID [--apply --expected-source-identity IDENTITY]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "rename",
+                  "archive",
+                  "delete",
+                  "restore"
+                ]
+              },
+              "changed": {
+                "type": "boolean"
+              },
+              "event": {
+                "type": "object"
+              },
+              "mode": {
+                "enum": [
+                  "plan",
+                  "apply"
+                ]
+              },
+              "precondition": {
+                "type": "object"
+              },
+              "sourcePath": {
+                "type": "string"
+              },
+              "sourceRepository": {
+                "type": "string"
+              },
+              "sourceState": {
+                "enum": [
+                  "active",
+                  "archive",
+                  "trash"
+                ]
+              },
+              "storageId": {
+                "type": "string"
+              },
+              "targetPath": {
+                "type": "string"
+              },
+              "targetRepository": {
+                "type": "string"
+              },
+              "targetState": {
+                "enum": [
+                  "active",
+                  "archive",
+                  "trash"
+                ]
+              }
+            },
+            "required": [
+              "mode",
+              "changed",
+              "action",
+              "sourceRepository",
+              "targetRepository",
+              "sourceState",
+              "targetState",
+              "storageId",
+              "sourcePath",
+              "targetPath",
+              "precondition",
+              "event"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "repo",
+            "archive"
+          ],
+          "purpose": "Plan or move a repository into recoverable archive storage.",
+          "usage": "repo archive ROOT REPOSITORY STORAGE_ID [--apply --expected-source-identity IDENTITY]"
+        },
+        {
+          "effect": {
+            "apply": "apply",
+            "plan": "preview"
+          },
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "repo.delete",
+          "input": {
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-source-identity",
+                  "--apply"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--apply",
+                  "--expected-source-identity"
+                ]
+              }
+            ],
+            "operands": [
+              {
+                "name": "ROOT",
+                "required": true,
+                "summary": "Absolute repository root.",
+                "variadic": false
+              },
+              {
+                "name": "REPOSITORY",
+                "required": true,
+                "summary": "Existing active repository name.",
+                "variadic": false
+              },
+              {
+                "name": "STORAGE_ID",
+                "required": true,
+                "summary": "Stable archive or deletion identifier.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "argument": {
+                  "name": "IDENTITY",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--expected-source-identity",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--apply"
+                ],
+                "summary": "Source device/inode identity returned by the reviewed plan."
+              },
+              {
+                "conflictsWith": [],
+                "long": "--apply",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--expected-source-identity"
+                ],
+                "summary": "Apply the reviewed repository transition."
+              }
+            ],
+            "synopsis": "repo delete ROOT REPOSITORY STORAGE_ID [--apply --expected-source-identity IDENTITY]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "rename",
+                  "archive",
+                  "delete",
+                  "restore"
+                ]
+              },
+              "changed": {
+                "type": "boolean"
+              },
+              "event": {
+                "type": "object"
+              },
+              "mode": {
+                "enum": [
+                  "plan",
+                  "apply"
+                ]
+              },
+              "precondition": {
+                "type": "object"
+              },
+              "sourcePath": {
+                "type": "string"
+              },
+              "sourceRepository": {
+                "type": "string"
+              },
+              "sourceState": {
+                "enum": [
+                  "active",
+                  "archive",
+                  "trash"
+                ]
+              },
+              "storageId": {
+                "type": "string"
+              },
+              "targetPath": {
+                "type": "string"
+              },
+              "targetRepository": {
+                "type": "string"
+              },
+              "targetState": {
+                "enum": [
+                  "active",
+                  "archive",
+                  "trash"
+                ]
+              }
+            },
+            "required": [
+              "mode",
+              "changed",
+              "action",
+              "sourceRepository",
+              "targetRepository",
+              "sourceState",
+              "targetState",
+              "storageId",
+              "sourcePath",
+              "targetPath",
+              "precondition",
+              "event"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "repo",
+            "delete"
+          ],
+          "purpose": "Plan or move a repository into recoverable trash without erasing objects.",
+          "usage": "repo delete ROOT REPOSITORY STORAGE_ID [--apply --expected-source-identity IDENTITY]"
+        },
+        {
+          "effect": {
+            "apply": "apply",
+            "plan": "preview"
+          },
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "repo.restore",
+          "input": {
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-source-identity",
+                  "--apply"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--apply",
+                  "--expected-source-identity"
+                ]
+              }
+            ],
+            "operands": [
+              {
+                "name": "ROOT",
+                "required": true,
+                "summary": "Absolute repository root.",
+                "variadic": false
+              },
+              {
+                "name": "STORAGE_ID",
+                "required": true,
+                "summary": "Existing archive or deletion identifier.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "argument": {
+                  "name": "archive|trash",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--from",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Storage area containing the repository."
+              },
+              {
+                "argument": {
+                  "name": "REPOSITORY",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--as",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Optional new active name; defaults to the stored original name."
+              },
+              {
+                "argument": {
+                  "name": "IDENTITY",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--expected-source-identity",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--apply"
+                ],
+                "summary": "Stored repository device/inode identity returned by the reviewed plan."
+              },
+              {
+                "conflictsWith": [],
+                "long": "--apply",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--expected-source-identity"
+                ],
+                "summary": "Apply the reviewed repository restoration."
+              }
+            ],
+            "synopsis": "repo restore ROOT STORAGE_ID --from archive|trash [--as REPOSITORY] [--apply --expected-source-identity IDENTITY]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "rename",
+                  "archive",
+                  "delete",
+                  "restore"
+                ]
+              },
+              "changed": {
+                "type": "boolean"
+              },
+              "event": {
+                "type": "object"
+              },
+              "mode": {
+                "enum": [
+                  "plan",
+                  "apply"
+                ]
+              },
+              "precondition": {
+                "type": "object"
+              },
+              "sourcePath": {
+                "type": "string"
+              },
+              "sourceRepository": {
+                "type": "string"
+              },
+              "sourceState": {
+                "enum": [
+                  "active",
+                  "archive",
+                  "trash"
+                ]
+              },
+              "storageId": {
+                "type": "string"
+              },
+              "targetPath": {
+                "type": "string"
+              },
+              "targetRepository": {
+                "type": "string"
+              },
+              "targetState": {
+                "enum": [
+                  "active",
+                  "archive",
+                  "trash"
+                ]
+              }
+            },
+            "required": [
+              "mode",
+              "changed",
+              "action",
+              "sourceRepository",
+              "targetRepository",
+              "sourceState",
+              "targetState",
+              "storageId",
+              "sourcePath",
+              "targetPath",
+              "precondition",
+              "event"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "repo",
+            "restore"
+          ],
+          "purpose": "Plan or restore an archived or deleted repository.",
+          "usage": "repo restore ROOT STORAGE_ID --from archive|trash [--as REPOSITORY] [--apply --expected-source-identity IDENTITY]"
+        },
+        {
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
           "id": "repo.diff",
           "input": {
             "constraints": [],
