@@ -21,6 +21,7 @@ Contrat commun : `agent-cli/v2`. Pour le détail machine, exécutez
 | repo.archive | repo archive ROOT REPOSITORY STORAGE_ID [--apply --expected-source-identity IDENTITY] | preview → apply | json-envelope | Plan or move a repository into recoverable archive storage. |
 | repo.delete | repo delete ROOT REPOSITORY STORAGE_ID [--apply --expected-source-identity IDENTITY] | preview → apply | json-envelope | Plan or move a repository into recoverable trash without erasing objects. |
 | repo.restore | repo restore ROOT STORAGE_ID --from archive\|trash [--as REPOSITORY] [--apply --expected-source-identity IDENTITY] | preview → apply | json-envelope | Plan or restore an archived or deleted repository. |
+| repo.mirror | repo mirror SOURCE_ROOT REPOSITORY TARGET_ROOT [--as REPOSITORY] [--git FILE] [--apply --expected-source-identity IDENTITY --expected-target-identity IDENTITY\|absent --expected-source-fingerprint SHA256 --expected-target-fingerprint SHA256] | preview → apply | json-envelope | Plan or idempotently synchronize a complete local bare mirror. |
 | repo.diff | repo diff ROOT REPOSITORY OLD_OID NEW_OID [--git FILE] | read | json-envelope | List changed paths between Git objects. |
 | repo.update-ref | repo update-ref ROOT REPOSITORY REF NEW_OID OLD_OID [--git FILE] [--apply] | preview → apply | json-envelope | Plan or compare-and-swap a Git reference. |
 | keys.compile | keys compile KEY_DIRECTORY OUTPUT SHELL ROOT MANIFEST [--apply] | preview → apply | json-envelope | Plan or atomically compile forced-command SSH keys. |

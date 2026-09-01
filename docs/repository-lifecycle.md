@@ -53,3 +53,19 @@ Every plan/apply result contains a versioned event matching
 `protocol/repository-events-v1.schema.json`. The local CLI does not append the
 event to an external log on its own; the invoking agent or forge can commit the
 successful result and event in its own durable transaction.
+
+## Idempotent local mirrors
+
+`repo mirror SOURCE_ROOT REPOSITORY TARGET_ROOT [--as REPOSITORY]` fingerprints
+all refs plus the symbolic or detached `HEAD`. Its plan returns source and
+target device/inode identities and both fingerprints. Apply requires all four
+values, so replacement of either repository or any intervening ref update
+fails closed.
+
+An absent target is created with `git clone --mirror --no-local`. An existing
+target receives an atomic `git push --mirror`; `HEAD` is then synchronized and
+the complete target fingerprint must equal the source fingerprint. Repeating
+the command when both sides already match performs no mutation. This release
+implements local filesystem mirrors. Remote transport, automatic scheduling,
+master election and transparent redirection remain responsibilities of the
+agent or forge layer.

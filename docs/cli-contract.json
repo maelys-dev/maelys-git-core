@@ -1193,6 +1193,228 @@
           "usage": "repo restore ROOT STORAGE_ID --from archive|trash [--as REPOSITORY] [--apply --expected-source-identity IDENTITY]"
         },
         {
+          "effect": {
+            "apply": "apply",
+            "plan": "preview"
+          },
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "repo.mirror",
+          "input": {
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-source-identity",
+                  "--apply"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-target-identity",
+                  "--expected-source-identity"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-source-fingerprint",
+                  "--expected-target-identity"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-target-fingerprint",
+                  "--expected-source-fingerprint"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--apply",
+                  "--expected-target-fingerprint"
+                ]
+              }
+            ],
+            "operands": [
+              {
+                "name": "SOURCE_ROOT",
+                "required": true,
+                "summary": "Absolute root containing the source repository.",
+                "variadic": false
+              },
+              {
+                "name": "REPOSITORY",
+                "required": true,
+                "summary": "Existing source repository name.",
+                "variadic": false
+              },
+              {
+                "name": "TARGET_ROOT",
+                "required": true,
+                "summary": "Absolute root that will contain the mirror.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "argument": {
+                  "name": "REPOSITORY",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--as",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Optional mirror repository name; defaults to the source name."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--git",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Absolute Git executable path."
+              },
+              {
+                "argument": {
+                  "name": "IDENTITY",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--expected-source-identity",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--apply"
+                ],
+                "summary": "Source device/inode identity returned by the reviewed plan."
+              },
+              {
+                "argument": {
+                  "name": "IDENTITY|absent",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--expected-target-identity",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--expected-source-identity"
+                ],
+                "summary": "Target identity or absent marker returned by the reviewed plan."
+              },
+              {
+                "argument": {
+                  "name": "SHA256",
+                  "type": "sha256"
+                },
+                "conflictsWith": [],
+                "long": "--expected-source-fingerprint",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--expected-target-identity"
+                ],
+                "summary": "Source refs and HEAD fingerprint returned by the reviewed plan."
+              },
+              {
+                "argument": {
+                  "name": "SHA256",
+                  "type": "sha256"
+                },
+                "conflictsWith": [],
+                "long": "--expected-target-fingerprint",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--expected-source-fingerprint"
+                ],
+                "summary": "Target refs and HEAD fingerprint returned by the reviewed plan."
+              },
+              {
+                "conflictsWith": [],
+                "long": "--apply",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--expected-target-fingerprint"
+                ],
+                "summary": "Synchronize the mirror using the reviewed preconditions."
+              }
+            ],
+            "synopsis": "repo mirror SOURCE_ROOT REPOSITORY TARGET_ROOT [--as REPOSITORY] [--git FILE] [--apply --expected-source-identity IDENTITY --expected-target-identity IDENTITY|absent --expected-source-fingerprint SHA256 --expected-target-fingerprint SHA256]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "changed": {
+                "type": "boolean"
+              },
+              "event": {
+                "type": "object"
+              },
+              "mode": {
+                "enum": [
+                  "plan",
+                  "apply"
+                ]
+              },
+              "precondition": {
+                "type": "object"
+              },
+              "sourcePath": {
+                "type": "string"
+              },
+              "sourceRepository": {
+                "type": "string"
+              },
+              "synchronizationRequired": {
+                "type": "boolean"
+              },
+              "targetExists": {
+                "type": "boolean"
+              },
+              "targetPath": {
+                "type": "string"
+              },
+              "targetRepository": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode",
+              "changed",
+              "synchronizationRequired",
+              "sourceRepository",
+              "targetRepository",
+              "sourcePath",
+              "targetPath",
+              "targetExists",
+              "precondition",
+              "event"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "repo",
+            "mirror"
+          ],
+          "purpose": "Plan or idempotently synchronize a complete local bare mirror.",
+          "usage": "repo mirror SOURCE_ROOT REPOSITORY TARGET_ROOT [--as REPOSITORY] [--git FILE] [--apply --expected-source-identity IDENTITY --expected-target-identity IDENTITY|absent --expected-source-fingerprint SHA256 --expected-target-fingerprint SHA256]"
+        },
+        {
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
@@ -1576,6 +1798,10 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "vrefCount": {
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "required": [
@@ -1586,6 +1812,7 @@
               "groupCount",
               "repositoryCount",
               "ruleCount",
+              "vrefCount",
               "unsupported",
               "canApply"
             ],

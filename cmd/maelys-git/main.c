@@ -277,6 +277,56 @@ static int command_repo_restore(const maelys_cli_invocation_t *invocation) {
         apply ? "repository_restored" : "repository_restore_planned", apply, &transition);
 }
 
+static int command_repo_mirror(const maelys_cli_invocation_t *invocation) {
+    const char *target_repository = maelys_cli_option(invocation, "as");
+    if (!target_repository) target_repository = maelys_cli_operand(invocation, 1u);
+    int apply = maelys_cli_flag(invocation, "apply");
+    maelys_git_error_t error = {0};
+    maelys_git_repository_mirror_result_t mirror;
+    maelys_git_result_t result = maelys_git_repository_mirror(
+        git_executable(invocation),
+        maelys_cli_operand(invocation, 0u),
+        maelys_cli_operand(invocation, 1u),
+        maelys_cli_operand(invocation, 2u),
+        target_repository,
+        maelys_cli_option(invocation, "expected-source-identity"),
+        maelys_cli_option(invocation, "expected-target-identity"),
+        maelys_cli_option(invocation, "expected-source-fingerprint"),
+        maelys_cli_option(invocation, "expected-target-fingerprint"),
+        apply, &mirror, &error);
+    if (result != MAELYS_GIT_OK)
+        return maelys_cli_emit_maelys_error(invocation, result, &error);
+    json_t *precondition = json_pack("{s:s,s:s,s:s,s:s}",
+        "sourceIdentity", mirror.source_identity,
+        "targetIdentity", mirror.target_identity,
+        "sourceFingerprint", mirror.source_fingerprint,
+        "targetFingerprint", mirror.target_fingerprint);
+    json_t *event = json_pack("{s:s,s:s,s:s,s:s,s:s}",
+        "version", "1",
+        "type", apply && mirror.changed ? "repository_mirrored" :
+                apply ? "repository_mirror_unchanged" : "repository_mirror_planned",
+        "sourceRepository", mirror.source_repository,
+        "targetRepository", mirror.target_repository,
+        "sourceFingerprint", mirror.source_fingerprint);
+    json_t *data = json_pack("{s:s,s:b,s:b,s:s,s:s,s:s,s:s,s:b,s:o,s:o}",
+        "mode", apply ? "apply" : "plan",
+        "changed", apply && mirror.changed,
+        "synchronizationRequired", mirror.changed,
+        "sourceRepository", mirror.source_repository,
+        "targetRepository", mirror.target_repository,
+        "sourcePath", mirror.source_path,
+        "targetPath", mirror.target_path,
+        "targetExists", mirror.target_exists,
+        "precondition", precondition,
+        "event", event);
+    int emitted = maelys_cli_emit_success(invocation, data,
+        apply ? (mirror.changed ? "Repository mirror synchronized and verified." :
+                                  "Repository mirror already synchronized.") :
+                "Mirror plan complete; apply with all returned preconditions.", 0);
+    json_decref(data);
+    return emitted;
+}
+
 static int resolve_repository(const maelys_cli_invocation_t *invocation,
                               char path[4096],
                               maelys_git_error_t *error) {
@@ -437,13 +487,14 @@ static int command_migrate_gitolite(const maelys_cli_invocation_t *invocation) {
     }
     for (size_t i = 0u; i < migration.unsupported_count; ++i)
         json_array_append_new(unsupported, json_string(migration.unsupported[i]));
-    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:I,s:I,s:I,s:o,s:b}",
+    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:I,s:I,s:I,s:I,s:o,s:b}",
         "mode", apply ? "apply" : "plan", "changed", apply,
         "input", maelys_cli_operand(invocation, 0u),
         "output", maelys_cli_operand(invocation, 1u),
         "groupCount", (json_int_t)migration.group_count,
         "repositoryCount", (json_int_t)migration.repository_count,
         "ruleCount", (json_int_t)migration.rule_count,
+        "vrefCount", (json_int_t)migration.vref_count,
         "unsupported", unsupported,
         "canApply", migration.unsupported_count == 0u);
     maelys_git_gitolite_migration_result_clear(&migration);
@@ -555,6 +606,7 @@ int main(int argc, char **argv) {
     if (!strcmp(command, "repo.delete"))
         return command_repo_store(&invocation, MAELYS_GIT_REPOSITORY_TRASH, "delete");
     if (!strcmp(command, "repo.restore")) return command_repo_restore(&invocation);
+    if (!strcmp(command, "repo.mirror")) return command_repo_mirror(&invocation);
     if (!strcmp(command, "repo.diff")) return command_repo_diff(&invocation);
     if (!strcmp(command, "repo.update-ref")) return command_repo_update(&invocation);
     if (!strcmp(command, "keys.compile")) return command_keys_compile(&invocation);

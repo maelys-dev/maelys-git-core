@@ -358,6 +358,33 @@ maelys_git_result_t maelys_git_repository_restore(
     maelys_git_repository_transition_t *out_transition,
     maelys_git_error_t *error);
 
+typedef struct {
+    char source_repository[MAELYS_GIT_MAX_REPOSITORY];
+    char target_repository[MAELYS_GIT_MAX_REPOSITORY];
+    char source_path[4096];
+    char target_path[4096];
+    char source_identity[128];
+    char target_identity[128];
+    char source_fingerprint[65];
+    char target_fingerprint[65];
+    int target_exists;
+    int changed;
+} maelys_git_repository_mirror_result_t;
+
+maelys_git_result_t maelys_git_repository_mirror(
+    const char *git_executable,
+    const char *source_root,
+    const char *source_repository,
+    const char *target_root,
+    const char *target_repository,
+    const char *expected_source_identity,
+    const char *expected_target_identity,
+    const char *expected_source_fingerprint,
+    const char *expected_target_fingerprint,
+    int apply,
+    maelys_git_repository_mirror_result_t *out_result,
+    maelys_git_error_t *error);
+
 typedef enum {
     MAELYS_GIT_MERGE_FAST_FORWARD = 1,
     MAELYS_GIT_MERGE_COMMIT = 2,
@@ -447,6 +474,7 @@ typedef struct {
     size_t group_count;
     size_t repository_count;
     size_t rule_count;
+    size_t vref_count;
     char **unsupported;
     size_t unsupported_count;
 } maelys_git_gitolite_migration_result_t;

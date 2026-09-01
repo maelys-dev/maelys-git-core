@@ -24,8 +24,8 @@ Git Core vise un noyau local de securite pilotable par une forge separee.
 | Transport | Confinement SSH sans shell utilisateur | **Complet** : analyse stricte, confinement du depot, `execve`/`posix_spawn` | **Complet** : compte Unix unique et commandes forcees | **Complet** : serveur SSH integre ou OpenSSH | Acquis |
 | Transport | Git smart HTTP/HTTPS | **Absent** : l'HTTPS actuel transporte les commandes de l'agent, pas Git | **Partiel** : smart HTTP pris en charge, moins central que SSH | **Complet** | P1 si une forge Web l'exige |
 | Autorisation | Lecture, ecriture et creation par depot | **Complet** : decisions Datalog et creation bare dynamique | **Complet** | **Complet** | Acquis |
-| Autorisation | Groupes d'utilisateurs | **Complet** dans les politiques ; migration limitee aux groupes plats | **Complet** : groupes, inclusions, macros, LDAP extensible | **Complet** : utilisateurs, organisations et equipes | P1 pour l'administration dynamique |
-| Autorisation | Regles par branche, tag et type de mise a jour | **Complet** : faits `ref_kind`, `update_kind`, protections et deny prioritaire | **Complet** : refex, creation, suppression, rewind et ordre des regles | **Complet** : protections de branches et tags, glob/regex selon le type | Acquis pour le noyau |
+| Autorisation | Groupes d'utilisateurs | **Complet** dans les politiques et groupes imbriques dans la migration ; includes/LDAP externes | **Complet** : groupes, inclusions, macros, LDAP extensible | **Complet** : utilisateurs, organisations et equipes | P1 pour les sources dynamiques |
+| Autorisation | Regles par branche, tag et type de mise a jour | **Complet** dans le noyau ; migration des full refs exactes, mais pas encore des refex/precedences regex | **Complet** : refex, creation, suppression, rewind et ordre des regles | **Complet** : protections de branches et tags, glob/regex selon le type | P1 pour les refex selectionnees |
 | Autorisation | Regles selon les fichiers modifies | **Complet** : tous les changements sont streams, sans plafond historique de 64 chemins | **Complet** : `VREF/NAME` | **Partiel** : protections de refs, sans moteur general de faits par chemin equivalent | Avantage Maelys |
 | Autorisation | Renommages et double chemin ancien/nouveau | **Complet** : `path` et `old_path` | **Partiel** : le VREF expose les noms touches, sans domaine type de renommage equivalent | **Partiel** : pas de domaine de politique general equivalent | Avantage Maelys |
 | Autorisation | Faits sur objets Git | **Complet** : taille, mode, binaire, symlink, submodule et pointeur LFS | **Partiel** : VREF livres pour compte, nom, type et taille de nouveaux binaires ; extensions possibles | **Partiel** : controles integres cibles, sans faits composables equivalents | Avantage Maelys |
@@ -34,11 +34,11 @@ Git Core vise un noyau local de securite pilotable par une forge separee.
 | Autorisation | Extension de la politique | **Complet** : regles Datalog versionnees et inspecteurs C bornes | **Complet** : vaste ecosysteme VREF, triggers et commandes | **Partiel** : hooks et code de la forge, moins adaptes aux politiques locales declaratives | P1 : bibliotheque de politiques |
 | Audit | Explication et preuve d'une decision | **Partiel** : explications du solveur et empreinte de politique ; recu compact versionne encore absent | **Partiel** : test et diagnostic de regles, sans preuve declarative equivalente | **Partiel** : motifs fonctionnels et journaux, sans preuve de politique equivalente | P1 : decision receipt |
 | Cles | Cles utilisateur et deploy keys | **Complet** : compilation atomique, validation, portee depot, lecture seule, expiration et revocation | **Complet** pour les cles utilisateur ; deploy keys specialisees a construire par convention/extension | **Complet** | P1 : rotation et attestation |
-| Depots | Creation dynamique | **Complet** pour un nom exact autorise par Datalog | **Complet** : wild repos, regex, `CREATOR` et permissions dynamiques | **Complet** : UI/API et push-to-create configurable | P1 : patrons et proprietaire |
+| Depots | Creation dynamique | **Partiel avance** : segments/depth/leaf injectes en Datalog et migration de `NAMESPACE/CREATOR/..*`; pas de moteur regex general | **Complet** : wild repos, regex, `CREATOR` et permissions dynamiques | **Complet** : UI/API et push-to-create configurable | P1 : autres patrons choisis |
 | Depots | Inventaire, inspection, renommage, archive, suppression recuperable et restauration | **Complet** : plan/apply et preconditions CAS | **Partiel** : administration centree configuration ; operations de cycle de vie souvent externes | **Complet** via la forge, avec modele plus riche | Acquis pour le local |
-| Depots | Mirroring | **Absent** | **Complet** : maitres/copies, synchronisation et redirection avec limites documentees | **Complet** : miroirs de depot | P1 |
-| Administration | Delegation d'administration | **Absent** | **Complet** : `subconf` et `VREF/NAME` | **Complet** : organisations, equipes et permissions | P1 |
-| Migration | Import de configuration Gitolite | **Partiel** : groupes plats, depots exacts, `R`, `RW`, `RW+`; refus ferme du reste | Sans objet | Sans objet | P1 : mappings ref/VREF choisis |
+| Depots | Mirroring | **Partiel avance** : miroir local idempotent, refs atomiques, HEAD et preconditions ; pas de redirection/scheduling distribue | **Complet** : maitres/copies, synchronisation et redirection avec limites documentees | **Complet** : miroirs de depot | P1 : orchestration distante |
+| Administration | Delegation d'administration | **Partiel** : faits `delegate_namespace` bornes au namespace ; pas encore de publication transactionnelle de sous-politiques | **Complet** : `subconf` et `VREF/NAME` | **Complet** : organisations, equipes et permissions | P1 |
+| Migration | Import de configuration Gitolite | **Partiel avance** : groupes imbriques, depots exacts, `C/R/RW/RW+`, wild `CREATOR`, full refs exactes et VREF `NAME/COUNT/MAX_NEWBIN_SIZE`; refus ferme du reste | Sans objet | Sans objet | P1 : includes, subconf et refex choisies |
 | API | CLI normalise et decouvrable par un agent | **Complet** : enveloppe `agent-cli/v2`, catalogues JSON et plan/apply | **Partiel** : CLI et commandes SSH scriptables, sans contrat homogene equivalent | **Complet** : CLI, API HTTP et interface Web | Avantage Maelys pour l'automatisation locale |
 | API | Agent distant durable | **Complet** dans son perimetre : HTTPS long-poll, journal SQLite, idempotence et outbox | **Absent** comme protocole integre | **Complet** autrement via API, webhooks et services de la forge | P1 : annulation et observabilite |
 | Pull requests | Analyse de conflit et preparation FF/merge/squash | **Complet** dans un meme depot, deterministe et sans mutation pendant le plan | **Absent** | **Complet** | Acquis pour le noyau PR |
@@ -61,9 +61,10 @@ Git Core vise un noyau local de securite pilotable par une forge separee.
 Maelys Git Core a deja depasse le modele ACL classique sur les points ou son
 architecture Datalog apporte une vraie difference : composition de faits,
 renommages, inspection d'objets, quotas globaux au receive et preconditions de
-politique. Il ne depasse pas encore Gitolite comme outil d'exploitation : les
-wild repos, la delegation, le mirroring et surtout l'ecosysteme VREF restent
-des manques importants.
+politique. Il couvre maintenant le socle des groupes imbriques, refs exactes,
+wild repos avec `CREATOR`, VREF usuels et miroirs locaux. Gitolite reste devant
+pour les regex generales, `subconf`, la delegation publiee, la redirection de
+miroirs et l'ecosysteme d'extensions historiques.
 
 L'objectif raisonnable n'est pas la compatibilite syntaxique complete. Il faut
 fournir une bibliotheque de politiques typees couvrant les VREF utiles, puis
@@ -87,9 +88,10 @@ des PR, revues, checks et utilisateurs.
 1. **P0 - fermer le noyau PR** : quarantaine d'objets pour les forks,
    validation de joignabilite, quotas puis promotion atomique ; definir aussi
    la machine d'etats durable attendue de la forge.
-2. **P1 - depasser Gitolite en exploitation** : patrons de depots avec
-   proprietaire, delegation bornee, mirroring idempotent et bibliotheque de
-   politiques equivalentes aux VREF selectionnes.
+2. **P1 - terminer la parite Gitolite selectionnee** : publication
+   transactionnelle des sous-politiques deleguees, refex courantes, includes
+   confines et orchestration distante des miroirs. Continuer a refuser toute
+   construction dont la semantique ne peut pas etre preservee.
 3. **P1 - rendre les decisions transportables** : recu versionne contenant
    empreinte de politique, requete, racine de preuve et budgets du solveur ;
    propagation de l'annulation dans les processus Git.

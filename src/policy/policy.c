@@ -24,6 +24,10 @@ static const maelys_datalog_predicate_def_t k_git_domain[] = {
     {.name = "request", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "user", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "repository", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "repository_segment", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "repository_depth", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "repository_leaf", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "repository_owner_namespace", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "operation", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "ref", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "path", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
@@ -57,6 +61,8 @@ static const maelys_datalog_predicate_def_t k_git_domain[] = {
     {.name = "ssh_key", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "remote_address", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "group_member", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "group_in_group", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "effective_group_member", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
     {.name = "grant_read", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "grant_write", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "grant_push", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
@@ -67,6 +73,16 @@ static const maelys_datalog_predicate_def_t k_git_domain[] = {
     {.name = "group_grant_push", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "group_grant_force", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "group_grant_create", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "delegate_namespace", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "group_delegate_namespace", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "owned_repository", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
+    {.name = "namespace_creator", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "group_namespace_creator", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "can_create_namespace", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
+    {.name = "owner_namespace_grant_read", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "owner_namespace_grant_write", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "owner_namespace_grant_push", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "owner_namespace_grant_force", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "admin", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "protected_ref", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "protected_branch", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
@@ -74,6 +90,33 @@ static const maelys_datalog_predicate_def_t k_git_domain[] = {
     {.name = "require_signed_ref", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "allowed_commit_email", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "protected_path", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "vref_deny_name", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "group_vref_deny_name", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "vref_deny_count", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "group_vref_deny_count", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "vref_deny_new_count", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "group_vref_deny_new_count", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "vref_deny_max_new_binary", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "group_vref_deny_max_new_binary", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "ref_grant_push", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "group_ref_grant_push", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "ref_grant_force", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "group_ref_grant_force", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "ref_deny", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "group_ref_deny", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "effective_ref_grant_push", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
+    {.name = "effective_ref_grant_force", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
+    {.name = "effective_ref_deny", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
+    {.name = "push_request", .arity = 4, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
+    {.name = "has_ref_write", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
+    {.name = "has_push_access", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
+    {.name = "effective_vref_deny_name", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
+    {.name = "effective_vref_deny_count", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
+    {.name = "effective_vref_deny_new_count", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
+    {.name = "effective_vref_deny_max_new_binary", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
+    {.name = "vref_count_exceeded", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
+    {.name = "vref_new_count_exceeded", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
+    {.name = "vref_new_binary_exceeded", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
     {.name = "allow",
      .arity = 1,
      .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB | MAELYS_DATALOG_PRED_KIND_QUERY},
@@ -352,6 +395,46 @@ static maelys_result_t add_boolean_fact(maelys_datalog_edb_t *edb,
     return maelys_datalog_edb_add_fact(edb, predicate, &term, 1u);
 }
 
+static maelys_result_t add_repository_structure_facts(maelys_datalog_edb_t *edb,
+                                                       const char *repository) {
+    if (!repository || !maelys_git_repository_name_is_valid(repository))
+        return MAELYS_OK;
+    char copy[MAELYS_GIT_MAX_REPOSITORY];
+    if (!mg_copy_string(copy, sizeof(copy), repository))
+        return MAELYS_ERR_PAYLOAD_TOO_LARGE;
+    size_t depth = 0u;
+    maelys_datalog_symbol_id_t first = MAELYS_DATALOG_SYMBOL_ID_INVALID;
+    maelys_datalog_symbol_id_t second = MAELYS_DATALOG_SYMBOL_ID_INVALID;
+    char *save = NULL;
+    char *leaf = NULL;
+    for (char *segment = strtok_r(copy, "/", &save);
+         segment; segment = strtok_r(NULL, "/", &save)) {
+        if (depth > INT64_MAX) return MAELYS_ERR_PAYLOAD_TOO_LARGE;
+        maelys_datalog_symbol_id_t symbol = MAELYS_DATALOG_SYMBOL_ID_INVALID;
+        maelys_result_t rc = maelys_datalog_edb_intern_runtime_symbol(
+            edb, segment, &symbol);
+        if (rc != MAELYS_OK) return rc;
+        maelys_datalog_term_t terms[2] = {
+            {.kind = MAELYS_DATALOG_TERM_INT},
+            {.kind = MAELYS_DATALOG_TERM_SYMBOL},
+        };
+        terms[0].as.integer = (int64_t)depth;
+        terms[1].as.symbol = symbol;
+        rc = maelys_datalog_edb_add_fact(edb, "repository_segment", terms, 2u);
+        if (rc != MAELYS_OK) return rc;
+        leaf = segment;
+        if (depth == 0u) first = symbol;
+        else if (depth == 1u) second = symbol;
+        ++depth;
+    }
+    maelys_result_t rc = add_integer_fact(edb, "repository_depth", depth);
+    if (rc == MAELYS_OK) rc = add_optional_fact(edb, "repository_leaf", leaf);
+    if (rc == MAELYS_OK && depth >= 3u)
+        rc = maelys_datalog_edb_add_symbol_ids_fact(
+            edb, "repository_owner_namespace", first, second);
+    return rc;
+}
+
 static maelys_git_result_t solve_policy(const maelys_datalog_ruleset_t *source_ruleset,
                                         const maelys_git_policy_request_t *request,
                                         int *out_allow,
@@ -387,6 +470,7 @@ static maelys_git_result_t solve_policy(const maelys_datalog_ruleset_t *source_r
     if (rc == MAELYS_OK) rc = maelys_datalog_edb_add_symbol_id_fact(edb, "request", request_symbol);
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "user", request->principal);
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "repository", request->repository);
+    if (rc == MAELYS_OK) rc = add_repository_structure_facts(edb, request->repository);
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "operation", request->operation);
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "ref", request->ref_name);
     if (rc == MAELYS_OK) rc = add_optional_fact(edb, "ref_kind", request->ref_kind);

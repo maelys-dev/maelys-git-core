@@ -14,8 +14,9 @@
 #define REPO_LIST_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"root\",\"count\",\"repositories\"],\"properties\":{\"root\":{\"type\":\"string\"},\"count\":{\"type\":\"integer\",\"minimum\":0},\"repositories\":{\"type\":\"array\",\"items\":{\"type\":\"object\"}}}}"
 #define REPO_INSPECT_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"repository\",\"path\",\"identity\",\"headRef\",\"headOid\",\"refCount\",\"objectCount\",\"objectBytes\"],\"properties\":{\"repository\":{\"type\":\"string\"},\"path\":{\"type\":\"string\"},\"identity\":{\"type\":\"string\"},\"headRef\":{\"type\":\"string\"},\"headOid\":{\"type\":\"string\"},\"refCount\":{\"type\":\"integer\",\"minimum\":0},\"objectCount\":{\"type\":\"integer\",\"minimum\":0},\"objectBytes\":{\"type\":\"integer\",\"minimum\":0}}}"
 #define REPO_TRANSITION_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"mode\",\"changed\",\"action\",\"sourceRepository\",\"targetRepository\",\"sourceState\",\"targetState\",\"storageId\",\"sourcePath\",\"targetPath\",\"precondition\",\"event\"],\"properties\":{\"mode\":{\"enum\":[\"plan\",\"apply\"]},\"changed\":{\"type\":\"boolean\"},\"action\":{\"enum\":[\"rename\",\"archive\",\"delete\",\"restore\"]},\"sourceRepository\":{\"type\":\"string\"},\"targetRepository\":{\"type\":\"string\"},\"sourceState\":{\"enum\":[\"active\",\"archive\",\"trash\"]},\"targetState\":{\"enum\":[\"active\",\"archive\",\"trash\"]},\"storageId\":{\"type\":\"string\"},\"sourcePath\":{\"type\":\"string\"},\"targetPath\":{\"type\":\"string\"},\"precondition\":{\"type\":\"object\"},\"event\":{\"type\":\"object\"}}}"
+#define REPO_MIRROR_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"mode\",\"changed\",\"synchronizationRequired\",\"sourceRepository\",\"targetRepository\",\"sourcePath\",\"targetPath\",\"targetExists\",\"precondition\",\"event\"],\"properties\":{\"mode\":{\"enum\":[\"plan\",\"apply\"]},\"changed\":{\"type\":\"boolean\"},\"synchronizationRequired\":{\"type\":\"boolean\"},\"sourceRepository\":{\"type\":\"string\"},\"targetRepository\":{\"type\":\"string\"},\"sourcePath\":{\"type\":\"string\"},\"targetPath\":{\"type\":\"string\"},\"targetExists\":{\"type\":\"boolean\"},\"precondition\":{\"type\":\"object\"},\"event\":{\"type\":\"object\"}}}"
 #define KEYS_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"mode\",\"changed\",\"keyDirectory\",\"output\",\"keyCount\"],\"properties\":{\"mode\":{\"enum\":[\"plan\",\"apply\"]},\"changed\":{\"type\":\"boolean\"},\"keyDirectory\":{\"type\":\"string\"},\"output\":{\"type\":\"string\"},\"keyCount\":{\"type\":\"integer\",\"minimum\":0}}}"
-#define MIGRATE_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"mode\",\"changed\",\"input\",\"output\",\"groupCount\",\"repositoryCount\",\"ruleCount\",\"unsupported\",\"canApply\"],\"properties\":{\"mode\":{\"enum\":[\"plan\",\"apply\"]},\"changed\":{\"type\":\"boolean\"},\"input\":{\"type\":\"string\"},\"output\":{\"type\":\"string\"},\"groupCount\":{\"type\":\"integer\",\"minimum\":0},\"repositoryCount\":{\"type\":\"integer\",\"minimum\":0},\"ruleCount\":{\"type\":\"integer\",\"minimum\":0},\"unsupported\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"canApply\":{\"type\":\"boolean\"}}}"
+#define MIGRATE_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"mode\",\"changed\",\"input\",\"output\",\"groupCount\",\"repositoryCount\",\"ruleCount\",\"vrefCount\",\"unsupported\",\"canApply\"],\"properties\":{\"mode\":{\"enum\":[\"plan\",\"apply\"]},\"changed\":{\"type\":\"boolean\"},\"input\":{\"type\":\"string\"},\"output\":{\"type\":\"string\"},\"groupCount\":{\"type\":\"integer\",\"minimum\":0},\"repositoryCount\":{\"type\":\"integer\",\"minimum\":0},\"ruleCount\":{\"type\":\"integer\",\"minimum\":0},\"vrefCount\":{\"type\":\"integer\",\"minimum\":0},\"unsupported\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"canApply\":{\"type\":\"boolean\"}}}"
 #define PR_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"mode\",\"changed\",\"repository\",\"style\",\"mergeable\",\"empty\",\"mergeBaseOid\",\"mergeTreeOid\",\"preparedOid\",\"policyFingerprint\",\"prId\",\"prHeadRef\",\"prMergedRef\",\"conflicts\",\"changeSummary\",\"event\"],\"properties\":{\"mode\":{\"enum\":[\"check\",\"plan\",\"apply\"]},\"changed\":{\"type\":\"boolean\"},\"repository\":{\"type\":\"string\"},\"style\":{\"enum\":[\"ff\",\"merge\",\"squash\"]},\"mergeable\":{\"type\":\"boolean\"},\"empty\":{\"type\":\"boolean\"},\"mergeBaseOid\":{\"type\":\"string\"},\"mergeTreeOid\":{\"type\":\"string\"},\"preparedOid\":{\"type\":\"string\"},\"policyFingerprint\":{\"type\":\"string\"},\"prId\":{\"type\":\"string\"},\"prHeadRef\":{\"type\":\"string\"},\"prMergedRef\":{\"type\":\"string\"},\"conflicts\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"changeSummary\":{\"type\":\"object\"},\"event\":{\"type\":\"object\"}}}"
 #define PROVISION_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"mode\",\"changed\",\"config\",\"agentId\",\"authority\",\"database\",\"precondition\"],\"properties\":{\"mode\":{\"enum\":[\"plan\",\"apply\"]},\"changed\":{\"type\":\"boolean\"},\"config\":{\"type\":\"string\"},\"agentId\":{\"type\":\"string\"},\"authority\":{\"type\":\"string\"},\"database\":{\"type\":\"string\"},\"precondition\":{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"configAbsent\"],\"properties\":{\"configAbsent\":{\"const\":true}}}}}"
 #define RUN_SCHEMA "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"completed\",\"mode\"],\"properties\":{\"completed\":{\"const\":true},\"mode\":{\"enum\":[\"once\",\"continuous\"]}}}"
@@ -57,6 +58,11 @@ static const maelys_cli_operand_descriptor_t repo_store_operands[] = {
     {"ROOT", 1, 0, "Absolute repository root."},
     {"REPOSITORY", 1, 0, "Existing active repository name."},
     {"STORAGE_ID", 1, 0, "Stable archive or deletion identifier."},
+};
+static const maelys_cli_operand_descriptor_t repo_mirror_operands[] = {
+    {"SOURCE_ROOT", 1, 0, "Absolute root containing the source repository."},
+    {"REPOSITORY", 1, 0, "Existing source repository name."},
+    {"TARGET_ROOT", 1, 0, "Absolute root that will contain the mirror."},
 };
 static const maelys_cli_operand_descriptor_t repo_restore_operands[] = {
     {"ROOT", 1, 0, "Absolute repository root."},
@@ -130,6 +136,22 @@ static const maelys_cli_option_descriptor_t restore_options[] = {
      "Stored repository device/inode identity returned by the reviewed plan."},
     {"apply", MAELYS_CLI_VALUE_NONE, NULL, 0, 0, "expected-source-identity", NULL,
      "Apply the reviewed repository restoration."},
+};
+static const maelys_cli_option_descriptor_t mirror_options[] = {
+    {"as", MAELYS_CLI_VALUE_STRING, "REPOSITORY", 0, 0, NULL, NULL,
+     "Optional mirror repository name; defaults to the source name."},
+    {"git", MAELYS_CLI_VALUE_PATH, "FILE", 0, 0, NULL, NULL,
+     "Absolute Git executable path."},
+    {"expected-source-identity", MAELYS_CLI_VALUE_STRING, "IDENTITY", 0, 0, "apply", NULL,
+     "Source device/inode identity returned by the reviewed plan."},
+    {"expected-target-identity", MAELYS_CLI_VALUE_STRING, "IDENTITY|absent", 0, 0, "expected-source-identity", NULL,
+     "Target identity or absent marker returned by the reviewed plan."},
+    {"expected-source-fingerprint", MAELYS_CLI_VALUE_SHA256, "SHA256", 0, 0, "expected-target-identity", NULL,
+     "Source refs and HEAD fingerprint returned by the reviewed plan."},
+    {"expected-target-fingerprint", MAELYS_CLI_VALUE_SHA256, "SHA256", 0, 0, "expected-source-fingerprint", NULL,
+     "Target refs and HEAD fingerprint returned by the reviewed plan."},
+    {"apply", MAELYS_CLI_VALUE_NONE, NULL, 0, 0, "expected-target-fingerprint", NULL,
+     "Synchronize the mirror using the reviewed preconditions."},
 };
 static const maelys_cli_option_descriptor_t apply_option[] = {
     {"apply", MAELYS_CLI_VALUE_NONE, NULL, 0, 0, NULL, NULL,
@@ -214,6 +236,7 @@ static const maelys_cli_command_descriptor_t commands[] = {
     {"maelys-git", "repo.archive", "repo archive", "repo archive ROOT REPOSITORY STORAGE_ID [--apply --expected-source-identity IDENTITY]", "Plan or move a repository into recoverable archive storage.", "preview", "apply", "json-envelope", repo_store_operands, COUNT(repo_store_operands), lifecycle_options, COUNT(lifecycle_options), REPO_TRANSITION_SCHEMA},
     {"maelys-git", "repo.delete", "repo delete", "repo delete ROOT REPOSITORY STORAGE_ID [--apply --expected-source-identity IDENTITY]", "Plan or move a repository into recoverable trash without erasing objects.", "preview", "apply", "json-envelope", repo_store_operands, COUNT(repo_store_operands), lifecycle_options, COUNT(lifecycle_options), REPO_TRANSITION_SCHEMA},
     {"maelys-git", "repo.restore", "repo restore", "repo restore ROOT STORAGE_ID --from archive|trash [--as REPOSITORY] [--apply --expected-source-identity IDENTITY]", "Plan or restore an archived or deleted repository.", "preview", "apply", "json-envelope", repo_restore_operands, COUNT(repo_restore_operands), restore_options, COUNT(restore_options), REPO_TRANSITION_SCHEMA},
+    {"maelys-git", "repo.mirror", "repo mirror", "repo mirror SOURCE_ROOT REPOSITORY TARGET_ROOT [--as REPOSITORY] [--git FILE] [--apply --expected-source-identity IDENTITY --expected-target-identity IDENTITY|absent --expected-source-fingerprint SHA256 --expected-target-fingerprint SHA256]", "Plan or idempotently synchronize a complete local bare mirror.", "preview", "apply", "json-envelope", repo_mirror_operands, COUNT(repo_mirror_operands), mirror_options, COUNT(mirror_options), REPO_MIRROR_SCHEMA},
     {"maelys-git", "repo.diff", "repo diff", "repo diff ROOT REPOSITORY OLD_OID NEW_OID [--git FILE]", "List changed paths between Git objects.", "read", NULL, "json-envelope", diff_operands, COUNT(diff_operands), git_option, COUNT(git_option), REPO_DIFF_SCHEMA},
     {"maelys-git", "repo.update-ref", "repo update-ref", "repo update-ref ROOT REPOSITORY REF NEW_OID OLD_OID [--git FILE] [--apply]", "Plan or compare-and-swap a Git reference.", "preview", "apply", "json-envelope", update_operands, COUNT(update_operands), git_apply_options, COUNT(git_apply_options), UPDATE_REF_SCHEMA},
     {"maelys-git", "keys.compile", "keys compile", "keys compile KEY_DIRECTORY OUTPUT SHELL ROOT MANIFEST [--apply]", "Plan or atomically compile forced-command SSH keys.", "preview", "apply", "json-envelope", keys_operands, COUNT(keys_operands), apply_option, COUNT(apply_option), KEYS_SCHEMA},

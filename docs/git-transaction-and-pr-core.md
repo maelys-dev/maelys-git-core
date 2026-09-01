@@ -116,12 +116,16 @@ command that enforces both the repository restriction and read-only access
 before Datalog or Git execution.
 
 `maelys-git migrate gitolite INPUT OUTPUT` analyzes Gitolite configuration
-without writing by default. The safe initial subset covers flat groups, exact
-repository names, and `R`, `RW`, and `RW+`; `RW+` remains distinct for force
-and delete operations. `--apply` atomically writes a valid Datalog manifest
-only when no unsupported include, repository pattern, ref rule, negative rule,
-VREF, or nested group was encountered. Every incompatible source line is
-reported rather than silently weakened.
+without writing by default. The safe subset covers nested groups, exact
+repositories, `C`, `R`, `RW`, `RW+`, exact full-ref `RW`/`RW+` rules and exact
+full-ref denies. It also covers the common `NAMESPACE/CREATOR/..*` wild-repo
+shape and the deny VREFs `NAME`, `COUNT`, `COUNT/NEWFILES`, and
+`MAX_NEWBIN_SIZE`. `RW+` remains distinct for force and delete operations.
+`--apply` atomically writes a valid Datalog manifest only when every source
+line has a semantics-preserving mapping. Includes, `subconf`, regex ref rules,
+other repository patterns, positive VREFs and unknown VREFs remain explicit
+violations. Every incompatible source line is reported rather than silently
+weakened.
 
 All Git subprocess capture paths have a 120-second execution deadline and
 bounded output. Large tree, diff, commit, and blob-batch streams are spooled to

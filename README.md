@@ -14,6 +14,7 @@ The project is a security-oriented foundation. Its current capabilities are:
 - streamed multi-ref `pre-receive` authorization by update kind, commit, path
   operation and transaction summary;
 - bare repository creation and compare-and-swap `git update-ref` operations;
+- idempotent local bare mirroring with reviewed identity/ref preconditions;
 - a same-repository PR core for conflict checks, deterministic FF/merge/squash
   plans, policy-set preconditions, Datalog reauthorization and compare-and-swap;
 - deterministic, atomic compilation of forced-command `authorized_keys`;
@@ -57,6 +58,8 @@ Every request injects these runtime facts when the associated value exists:
 
 ```text
 request/1 user/1 repository/1 operation/1 ref/1 path/1 old_path/1
+repository_segment/2 repository_depth/1 repository_leaf/1
+repository_owner_namespace/2
 ssh_key/1 remote_address/1 ref_kind/1 update_kind/1 change_kind/1
 commit_email/1 commit_signed/1 commit_signature_status/1
 commit_signer_fingerprint/1 commit_signer_identity/1 commit_signature_trusted/1
@@ -113,8 +116,9 @@ tracked in `docs/gitolite-forgejo-gap.md`.
 
 Local lifecycle administration is available through `repo list`,
 `repo inspect`, `repo rename`, `repo archive`, `repo delete`, and
-`repo restore`. Destructive-looking delete is recoverable and never erases Git
-objects. See `docs/repository-lifecycle.md`.
+`repo restore`. `repo mirror` plans and synchronizes a complete local bare
+mirror with identity and ref/HEAD fingerprints. Destructive-looking delete is
+recoverable and never erases Git objects. See `docs/repository-lifecycle.md`.
 
 ## SSH forced command
 

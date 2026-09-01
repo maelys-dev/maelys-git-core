@@ -8,11 +8,7 @@
     "version",
     "type",
     "sourceRepository",
-    "targetRepository",
-    "storageId",
-    "sourceIdentity",
-    "sourceState",
-    "targetState"
+    "targetRepository"
   ],
   "properties": {
     "version": {"const": "1"},
@@ -25,7 +21,10 @@
         "repository_delete_planned",
         "repository_trashed",
         "repository_restore_planned",
-        "repository_restored"
+        "repository_restored",
+        "repository_mirror_planned",
+        "repository_mirrored",
+        "repository_mirror_unchanged"
       ]
     },
     "sourceRepository": {"type": "string", "minLength": 1, "maxLength": 511},
@@ -33,6 +32,44 @@
     "storageId": {"type": "string", "maxLength": 127},
     "sourceIdentity": {"type": "string", "pattern": "^[0-9a-f]+:[0-9a-f]+$"},
     "sourceState": {"enum": ["active", "archive", "trash"]},
-    "targetState": {"enum": ["active", "archive", "trash"]}
-  }
+    "targetState": {"enum": ["active", "archive", "trash"]},
+    "sourceFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "repository_rename_planned",
+              "repository_renamed",
+              "repository_archive_planned",
+              "repository_archived",
+              "repository_delete_planned",
+              "repository_trashed",
+              "repository_restore_planned",
+              "repository_restored"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": ["storageId", "sourceIdentity", "sourceState", "targetState"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "repository_mirror_planned",
+              "repository_mirrored",
+              "repository_mirror_unchanged"
+            ]
+          }
+        }
+      },
+      "then": {"required": ["sourceFingerprint"]}
+    }
+  ]
 }
