@@ -54,6 +54,13 @@ maelys_git_result_t mg_process_spool_status(const char *executable,
                                             size_t max_length,
                                             int *out_exit_status,
                                             maelys_git_error_t *error);
+maelys_git_result_t mg_process_filter_spool_status(const char *executable,
+                                                   char *const argv[],
+                                                   FILE *input,
+                                                   FILE *output,
+                                                   size_t max_length,
+                                                   int *out_exit_status,
+                                                   maelys_git_error_t *error);
 int mg_remove_tree(const char *path);
 
 #endif

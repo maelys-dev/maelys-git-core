@@ -18,8 +18,9 @@ Contrat commun : `agent-cli/v2`. Pour le détail machine, exécutez
 | repo.diff | repo diff ROOT REPOSITORY OLD_OID NEW_OID [--git FILE] | read | json-envelope | List changed paths between Git objects. |
 | repo.update-ref | repo update-ref ROOT REPOSITORY REF NEW_OID OLD_OID [--git FILE] [--apply] | preview → apply | json-envelope | Plan or compare-and-swap a Git reference. |
 | keys.compile | keys compile KEY_DIRECTORY OUTPUT SHELL ROOT MANIFEST [--apply] | preview → apply | json-envelope | Plan or atomically compile forced-command SSH keys. |
+| migrate.gitolite | migrate gitolite INPUT OUTPUT [--apply] | preview → apply | json-envelope | Compile the safe Gitolite ACL subset and report every incompatible entry. |
 | pr.check | pr check ROOT REPOSITORY BASE_OID HEAD_OID --style ff\|merge\|squash [--message TEXT] [--git FILE] | read | json-envelope | Compute merge-base, conflicts, emptiness and a prepared result without modifying the repository. |
-| pr.merge | pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff\|merge\|squash --approvals COUNT --required-approvals COUNT [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256] | preview → apply | json-envelope | Plan or execute a gated, reauthorized pull request merge with compare-and-swap. |
+| pr.merge | pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff\|merge\|squash --approvals COUNT --required-approvals COUNT [--pr-id ID] [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256] | preview → apply | json-envelope | Plan or execute a gated, reauthorized pull request merge with compare-and-swap and optional internal PR refs. |
 
 ## `maelys-git-agent`
 
@@ -48,7 +49,7 @@ Contrat commun : `agent-cli/v2`. Pour le détail machine, exécutez
 | help | help | read | json-envelope | Show the generated CLI guide. |
 | version | version \| --version | read | json-envelope | Return product identity. |
 | describe | describe [COMMAND_ID] [--summary] | read | json-envelope | Return executable command contracts. |
-| serve | serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE] | stream | git-smart-protocol-stream | Authorize SSH_ORIGINAL_COMMAND then replace the process with Git. |
+| serve | serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE] [--restrict-repository NAME [--read-only]] | stream | git-smart-protocol-stream | Authorize SSH_ORIGINAL_COMMAND then replace the process with Git. |
 
 ## `maelys-git-hook`
 
@@ -57,5 +58,5 @@ Contrat commun : `agent-cli/v2`. Pour le détail machine, exécutez
 | help | help | read | json-envelope | Show the generated CLI guide. |
 | version | version \| --version | read | json-envelope | Return product identity. |
 | describe | describe [COMMAND_ID] [--summary] | read | json-envelope | Return executable command contracts. |
-| pre-receive | pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] | stream | git-hook-stream | Authorize a Git receive transaction from stdin. |
+| pre-receive | pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES] | stream | git-hook-stream | Authorize a quota-bounded Git receive transaction from stdin. |
 | post-receive | post-receive --repository NAME [--user PRINCIPAL] [--events FILE] | stream | maelys-git-events-jsonl-stream | Convert received refs into JSONL events. |

@@ -56,19 +56,27 @@ plan=$(
   "$maelys_git_bin" pr merge "$test_root" example.git refs/heads/target \
     "$base_oid" "$head_oid" "$manifest" alice --style merge \
     --approvals 1 --required-approvals 1 --status-checks-passed \
+    --pr-id 42 \
     --format json --compact
 )
 printf '%s\n' "$plan" | grep -q '"mode":"plan"'
+printf '%s\n' "$plan" | grep -q '"type":"pr_planned"'
+printf '%s\n' "$plan" | grep -q '"prHeadRef":"refs/maelys/pulls/42/head"'
 planned_oid=$(printf '%s\n' "$plan" | sed -n 's/.*"preparedOid":"\([0-9a-f]*\)".*/\1/p')
 policy_fingerprint=$(printf '%s\n' "$plan" | sed -n 's/.*"policyFingerprint":"\([0-9a-f]*\)".*/\1/p')
 test -n "$planned_oid"
 test "${#policy_fingerprint}" -eq 64
 test "$(git --git-dir "$test_root/example.git" rev-parse refs/heads/target)" = "$base_oid"
+if git --git-dir "$test_root/example.git" show-ref --verify --quiet refs/maelys/pulls/42/head; then
+  printf 'PR plan unexpectedly wrote the internal head ref\n' >&2
+  exit 1
+fi
 
 # A mismatched reviewed policy must fail before changing the target ref.
 if "$maelys_git_bin" pr merge "$test_root" example.git refs/heads/target \
      "$base_oid" "$head_oid" "$manifest" alice --style merge \
      --approvals 1 --required-approvals 1 --status-checks-passed --apply \
+     --pr-id 42 \
      --expected-prepared-oid "$planned_oid" \
      --expected-policy-fingerprint 0000000000000000000000000000000000000000000000000000000000000000 \
      --format json --compact >/dev/null 2>/dev/null; then
@@ -83,19 +91,24 @@ applied=$(
   "$maelys_git_bin" pr merge "$test_root" example.git refs/heads/target \
     "$base_oid" "$head_oid" "$manifest" alice --style merge \
     --approvals 1 --required-approvals 1 --status-checks-passed --apply \
+    --pr-id 42 \
     --expected-prepared-oid "$planned_oid" \
     --expected-policy-fingerprint "$policy_fingerprint" \
     --format json --compact
 )
 printf '%s\n' "$applied" | grep -q '"mode":"apply"'
+printf '%s\n' "$applied" | grep -q '"type":"pr_merged"'
 applied_oid=$(printf '%s\n' "$applied" | sed -n 's/.*"preparedOid":"\([0-9a-f]*\)".*/\1/p')
 test "$applied_oid" = "$planned_oid"
-test "$(git --git-dir "$test_root/example.git" rev-parse refs/heads/target)" != "$base_oid"
+test "$(git --git-dir "$test_root/example.git" rev-parse refs/heads/target)" = "$planned_oid"
+test "$(git --git-dir "$test_root/example.git" rev-parse refs/maelys/pulls/42/head)" = "$head_oid"
+test "$(git --git-dir "$test_root/example.git" rev-parse refs/maelys/pulls/42/merged)" = "$planned_oid"
 
 # The stale expected base must never overwrite the already-updated target.
 if "$maelys_git_bin" pr merge "$test_root" example.git refs/heads/target \
      "$base_oid" "$head_oid" "$manifest" alice --style merge \
      --approvals 1 --required-approvals 1 --status-checks-passed --apply \
+     --pr-id 42 \
      --expected-prepared-oid "$planned_oid" \
      --expected-policy-fingerprint "$policy_fingerprint" \
      --format json --compact >/dev/null 2>/dev/null; then

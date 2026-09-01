@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #ifndef PATH_MAX
@@ -19,12 +20,15 @@
 typedef struct {
     char *principal;
     char *key;
+    char *repository;
+    int read_only;
 } key_entry_t;
 
 static void free_entries(key_entry_t *entries, size_t count) {
     for (size_t i = 0u; i < count; ++i) {
         free(entries[i].principal);
         free(entries[i].key);
+        free(entries[i].repository);
     }
     free(entries);
 }
@@ -33,7 +37,11 @@ static int compare_entries(const void *left, const void *right) {
     const key_entry_t *a = left;
     const key_entry_t *b = right;
     int principal = strcmp(a->principal, b->principal);
-    return principal ? principal : strcmp(a->key, b->key);
+    if (principal) return principal;
+    const char *a_repository = a->repository ? a->repository : "";
+    const char *b_repository = b->repository ? b->repository : "";
+    int repository = strcmp(a_repository, b_repository);
+    return repository ? repository : strcmp(a->key, b->key);
 }
 
 static int safe_word(const char *value) {
@@ -234,6 +242,150 @@ static char *read_key(const char *path, maelys_git_error_t *error) {
     return strdup(buffer);
 }
 
+static char *read_metadata_line(const char *directory,
+                                const char *name,
+                                int optional,
+                                maelys_git_error_t *error) {
+    char path[PATH_MAX];
+    int written = snprintf(path, sizeof(path), "%s/%s", directory, name);
+    if (written < 0 || (size_t)written >= sizeof(path)) return NULL;
+    FILE *file = fopen(path, "rb");
+    if (!file) {
+        if (optional && errno == ENOENT) return strdup("");
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "cannot read deploy-key metadata %s: %s", path, strerror(errno));
+        return NULL;
+    }
+    char line[1024];
+    if (!fgets(line, sizeof(line), file) || ferror(file)) {
+        fclose(file);
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
+                     "deploy-key metadata is empty: %s", path);
+        return NULL;
+    }
+    int extra = fgetc(file);
+    fclose(file);
+    if (extra != EOF) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
+                     "deploy-key metadata must contain one line: %s", path);
+        return NULL;
+    }
+    size_t length = strlen(line);
+    while (length && (line[length - 1u] == '\n' || line[length - 1u] == '\r'))
+        line[--length] = '\0';
+    return strdup(line);
+}
+
+static int append_entry(key_entry_t **entries,
+                        size_t *count,
+                        size_t *capacity,
+                        const char *principal,
+                        char *key,
+                        const char *repository,
+                        int read_only) {
+    if (*count == *capacity) {
+        size_t next = *capacity ? *capacity * 2u : 16u;
+        key_entry_t *grown = realloc(*entries, next * sizeof(*grown));
+        if (!grown) return 0;
+        *entries = grown;
+        *capacity = next;
+    }
+    key_entry_t *entry = &(*entries)[*count];
+    memset(entry, 0, sizeof(*entry));
+    entry->principal = strdup(principal);
+    entry->key = key;
+    entry->repository = repository ? strdup(repository) : NULL;
+    entry->read_only = read_only;
+    if (!entry->principal || (repository && !entry->repository)) {
+        free(entry->principal);
+        free(entry->repository);
+        return 0;
+    }
+    ++*count;
+    return 1;
+}
+
+static maelys_git_result_t load_deploy_entries(const char *key_directory,
+                                               key_entry_t **entries,
+                                               size_t *count,
+                                               size_t *capacity,
+                                               maelys_git_error_t *error) {
+    char deploy_directory[PATH_MAX];
+    int written = snprintf(deploy_directory, sizeof(deploy_directory),
+                           "%s/deploy", key_directory);
+    if (written < 0 || (size_t)written >= sizeof(deploy_directory))
+        return MAELYS_GIT_ERR_LIMIT;
+    DIR *directory = opendir(deploy_directory);
+    if (!directory) {
+        if (errno == ENOENT) return MAELYS_GIT_OK;
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "cannot open deploy-key directory: %s", strerror(errno));
+        return MAELYS_GIT_ERR_IO;
+    }
+    maelys_git_result_t result = MAELYS_GIT_OK;
+    struct dirent *item;
+    while ((item = readdir(directory)) != NULL) {
+        if (!strcmp(item->d_name, ".") || !strcmp(item->d_name, "..")) continue;
+        if (!safe_word(item->d_name)) {
+            mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
+                         "unsafe deploy-key identifier: %s", item->d_name);
+            result = MAELYS_GIT_ERR_PROTOCOL;
+            break;
+        }
+        char item_directory[PATH_MAX], key_path[PATH_MAX], principal[NAME_MAX + 16u];
+        int d = snprintf(item_directory, sizeof(item_directory), "%s/%s",
+                         deploy_directory, item->d_name);
+        int k = snprintf(key_path, sizeof(key_path), "%s/key.pub", item_directory);
+        int p = snprintf(principal, sizeof(principal), "deploy-%s", item->d_name);
+        if (d < 0 || k < 0 || p < 0 || (size_t)d >= sizeof(item_directory) ||
+            (size_t)k >= sizeof(key_path) || (size_t)p >= sizeof(principal)) {
+            result = MAELYS_GIT_ERR_LIMIT;
+            break;
+        }
+        struct stat status;
+        if (lstat(item_directory, &status) != 0 || !S_ISDIR(status.st_mode)) {
+            mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, errno,
+                         "deploy-key entry must be a directory: %s", item_directory);
+            result = MAELYS_GIT_ERR_PROTOCOL;
+            break;
+        }
+        char *repository = read_metadata_line(item_directory, "repository", 0, error);
+        char *access = repository ? read_metadata_line(item_directory, "access", 0, error) : NULL;
+        char *expires = access ? read_metadata_line(item_directory, "expires-at", 1, error) : NULL;
+        char *revoked = expires ? read_metadata_line(item_directory, "revoked", 1, error) : NULL;
+        if (!repository || !access || !expires || !revoked) {
+            free(repository); free(access); free(expires); free(revoked);
+            result = error->code ? error->code : MAELYS_GIT_ERR_IO;
+            break;
+        }
+        int valid = maelys_git_repository_name_is_valid(repository) &&
+                    (!strcmp(access, "read") || !strcmp(access, "write")) &&
+                    (!*revoked || !strcmp(revoked, "true") || !strcmp(revoked, "false"));
+        char *end = NULL;
+        errno = 0;
+        unsigned long long expires_at = *expires ? strtoull(expires, &end, 10) : 0u;
+        if (*expires && (*expires == '-' || errno || end == expires || *end)) valid = 0;
+        int inactive = !strcmp(revoked, "true") ||
+                       (expires_at && expires_at <= (unsigned long long)time(NULL));
+        if (!valid) {
+            mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
+                         "invalid deploy-key metadata: %s", item_directory);
+            result = MAELYS_GIT_ERR_PROTOCOL;
+        } else if (!inactive) {
+            char *key = read_key(key_path, error);
+            if (!key || !append_entry(entries, count, capacity, principal, key,
+                                      repository, !strcmp(access, "read"))) {
+                free(key);
+                result = error->code ? error->code : MAELYS_GIT_ERR_IO;
+            }
+        }
+        free(repository); free(access); free(expires); free(revoked);
+        if (result != MAELYS_GIT_OK) break;
+    }
+    closedir(directory);
+    return result;
+}
+
 static maelys_git_result_t load_entries(const char *directory,
                                         key_entry_t **out_entries,
                                         size_t *out_count,
@@ -270,19 +422,13 @@ static maelys_git_result_t load_entries(const char *directory,
         }
         char *key = read_key(path, error);
         if (!key) { result = error->code; break; }
-        if (count == capacity) {
-            size_t next = capacity ? capacity * 2u : 16u;
-            key_entry_t *grown = realloc(entries, next * sizeof(*grown));
-            if (!grown) { free(key); result = MAELYS_GIT_ERR_IO; break; }
-            entries = grown;
-            capacity = next;
+        if (!append_entry(&entries, &count, &capacity, principal, key, NULL, 0)) {
+            free(key); result = MAELYS_GIT_ERR_IO; break;
         }
-        entries[count].principal = strdup(principal);
-        entries[count].key = key;
-        if (!entries[count].principal) { free(key); result = MAELYS_GIT_ERR_IO; break; }
-        ++count;
     }
     closedir(dir);
+    if (result == MAELYS_GIT_OK)
+        result = load_deploy_entries(directory, &entries, &count, &capacity, error);
     if (result != MAELYS_GIT_OK) { free_entries(entries, count); return result; }
     qsort(entries, count, sizeof(*entries), compare_entries);
     *out_entries = entries;
@@ -325,10 +471,17 @@ maelys_git_result_t maelys_git_compile_authorized_keys(
     FILE *output = fdopen(descriptor, "w");
     if (!output) { close(descriptor); unlink(temporary); free_entries(entries, count); return MAELYS_GIT_ERR_IO; }
     for (size_t i = 0u; i < count; ++i) {
-        if (fprintf(output,
+        int written = entries[i].repository ?
+            fprintf(output,
+                    "restrict,command=\"%s serve --user %s --root %s --manifest %s --restrict-repository %s%s\" %s\n",
+                    shell_path, entries[i].principal, repository_root, manifest_path,
+                    entries[i].repository, entries[i].read_only ? " --read-only" : "",
+                    entries[i].key) :
+            fprintf(output,
                     "restrict,command=\"%s serve --user %s --root %s --manifest %s\" %s\n",
                     shell_path, entries[i].principal, repository_root, manifest_path,
-                    entries[i].key) < 0) {
+                    entries[i].key);
+        if (written < 0) {
             result = MAELYS_GIT_ERR_IO;
             break;
         }

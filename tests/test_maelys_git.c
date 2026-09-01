@@ -207,20 +207,37 @@ static int test_authorized_keys(void) {
     char template[] = "/tmp/maelys_git_keys_XXXXXX";
     char *root = mkdtemp(template);
     CHECK(root != NULL);
-    char keys[4096], key[4096], output[4096];
+    char keys[4096], key[4096], output[4096], deploy[4096], deploy_item[4096];
     CHECK(snprintf(keys, sizeof(keys), "%s/keys", root) > 0);
     CHECK(snprintf(key, sizeof(key), "%s/alice.pub", keys) > 0);
     CHECK(snprintf(output, sizeof(output), "%s/authorized_keys", root) > 0);
     CHECK(mkdir(keys, 0700) == 0);
+    CHECK(snprintf(deploy, sizeof(deploy), "%s/deploy", keys) > 0);
+    CHECK(snprintf(deploy_item, sizeof(deploy_item), "%s/ci", deploy) > 0);
+    CHECK(mkdir(deploy, 0700) == 0);
+    CHECK(mkdir(deploy_item, 0700) == 0);
     FILE *file = fopen(key, "w");
     CHECK(file != NULL);
     CHECK(fputs("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFqswLrSefGZt4InrGnicUN4CuDKKMoZbafXI4nFavMT alice@test\n", file) >= 0);
     CHECK(fclose(file) == 0);
+    const char *metadata_names[] = {"key.pub", "repository", "access"};
+    const char *metadata_values[] = {
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFqswLrSefGZt4InrGnicUN4CuDKKMoZbafXI4nFavMT ci@test\n",
+        "example.git\n", "read\n"};
+    for (size_t i = 0u; i < 3u; ++i) {
+        char metadata_path[4096];
+        CHECK(snprintf(metadata_path, sizeof(metadata_path), "%s/%s",
+                       deploy_item, metadata_names[i]) > 0);
+        file = fopen(metadata_path, "w");
+        CHECK(file != NULL);
+        CHECK(fputs(metadata_values[i], file) >= 0);
+        CHECK(fclose(file) == 0);
+    }
     size_t count = 0u;
     maelys_git_error_t error;
     CHECK(maelys_git_compile_authorized_keys(keys, output, "/usr/local/bin/maelys-git-shell",
         "/srv/git", "/etc/maelys/policy.json", 0, &count, &error) == MAELYS_GIT_OK);
-    CHECK(count == 1u && access(output, F_OK) != 0);
+    CHECK(count == 2u && access(output, F_OK) != 0);
     CHECK(maelys_git_compile_authorized_keys(keys, output, "/usr/local/bin/maelys-git-shell",
         "/srv/git", "/etc/maelys/policy.json", 1, &count, &error) == MAELYS_GIT_OK);
     file = fopen(output, "r");
@@ -229,6 +246,9 @@ static int test_authorized_keys(void) {
     CHECK(fgets(line, sizeof(line), file) != NULL);
     CHECK(strstr(line, "restrict,command=\"") != NULL);
     CHECK(strstr(line, "--user alice") != NULL);
+    CHECK(fgets(line, sizeof(line), file) != NULL);
+    CHECK(strstr(line, "--user deploy-ci") != NULL);
+    CHECK(strstr(line, "--restrict-repository example.git --read-only") != NULL);
     fclose(file);
     file = fopen(key, "w");
     CHECK(file != NULL);

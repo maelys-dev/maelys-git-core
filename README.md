@@ -229,15 +229,18 @@ Supported executor commands are:
 - `pr_check` for read-only merge analysis;
 - `pr_merge` for explicit plan/apply, forge-supplied gates, local Datalog
   reauthorization, reviewed prepared-OID/policy-fingerprint preconditions and
-  atomic target-ref CAS.
+  atomic target-ref CAS; optional `pr_id` also records the head and merged
+  result under forge-neutral internal Git refs in the same transaction.
 
 `update_ref` calculates changed paths first, authorizes the operation as a
 `push`, and only then invokes Git's compare-and-swap update. `pr_merge` uses the
 same invariant and repeats authorization immediately before its state change.
 Its plan returns a deterministic prepared OID and the Maelys Datalog policy-set
-fingerprint; apply requires both values and recomputes them locally.
-There is no arbitrary command execution field. Durable PR metadata, reviews and
-status-check production remain responsibilities of the forge.
+fingerprint; apply requires both values and recomputes them locally. Normalized
+PR events can be persisted by the forge without coupling the C core to its
+database.
+There is no arbitrary command execution field. Discussion threads, review
+history and status-check production remain responsibilities of the forge.
 
 For local protocol testing, run the executor-compatible mode:
 

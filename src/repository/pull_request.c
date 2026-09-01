@@ -40,6 +40,144 @@ static maelys_git_result_t capture_oid(const char *git,
     return MAELYS_GIT_OK;
 }
 
+static int pr_id_is_valid(const char *pr_id) {
+    if (!pr_id || !*pr_id || strlen(pr_id) >= 128u) return 0;
+    for (const unsigned char *p = (const unsigned char *)pr_id; *p; ++p)
+        if (!( (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+               (*p >= '0' && *p <= '9') || *p == '.' || *p == '_' || *p == '-'))
+            return 0;
+    return 1;
+}
+
+static maelys_git_result_t set_pr_refs(maelys_git_pr_check_result_t *result,
+                                       const char *pr_id,
+                                       maelys_git_error_t *error) {
+    if (!pr_id) return MAELYS_GIT_OK;
+    if (!pr_id_is_valid(pr_id)) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0,
+                     "PR ID must contain only letters, digits, '.', '_' or '-'");
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    int head_length = snprintf(result->pr_head_ref, sizeof(result->pr_head_ref),
+                               "refs/maelys/pulls/%s/head", pr_id);
+    int merged_length = snprintf(result->pr_merged_ref, sizeof(result->pr_merged_ref),
+                                 "refs/maelys/pulls/%s/merged", pr_id);
+    if (head_length < 0 || (size_t)head_length >= sizeof(result->pr_head_ref) ||
+        merged_length < 0 || (size_t)merged_length >= sizeof(result->pr_merged_ref) ||
+        !mg_copy_string(result->pr_id, sizeof(result->pr_id), pr_id)) {
+        mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0, "PR reference is too long");
+        return MAELYS_GIT_ERR_LIMIT;
+    }
+    if (!maelys_git_ref_name_is_valid(result->pr_head_ref) ||
+        !maelys_git_ref_name_is_valid(result->pr_merged_ref)) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0,
+                     "PR ID does not form a valid Git reference");
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    return MAELYS_GIT_OK;
+}
+
+static maelys_git_result_t optional_ref_oid(const char *git,
+                                            const char *repository,
+                                            const char *ref,
+                                            char out[65],
+                                            int *out_exists,
+                                            maelys_git_error_t *error) {
+    char *argv[] = {(char *)git, "--git-dir", (char *)repository,
+                    "rev-parse", "--verify", "--quiet", (char *)ref, NULL};
+    unsigned char *data = NULL;
+    size_t length = 0u;
+    int status = 0;
+    maelys_git_result_t result = mg_process_capture_status(
+        git, argv, &data, &length, 256u, &status, error);
+    if (result != MAELYS_GIT_OK) return result;
+    if (status == 1) {
+        free(data);
+        out[0] = '\0';
+        *out_exists = 0;
+        return MAELYS_GIT_OK;
+    }
+    if (status != 0) {
+        free(data);
+        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
+                     "git rev-parse failed with status %d", status);
+        return MAELYS_GIT_ERR_PROCESS;
+    }
+    trim_line(data, &length);
+    if (!mg_is_oid((char *)data)) {
+        free(data);
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
+                     "Git did not return an object identifier for PR ref");
+        return MAELYS_GIT_ERR_PROTOCOL;
+    }
+    memcpy(out, data, length + 1u);
+    free(data);
+    *out_exists = 1;
+    return MAELYS_GIT_OK;
+}
+
+static maelys_git_result_t update_pr_refs(const char *git,
+                                          const char *repository,
+                                          const char *base_ref,
+                                          const char *base_oid,
+                                          const char *head_oid,
+                                          const maelys_git_pr_check_result_t *result,
+                                          maelys_git_error_t *error) {
+    char old_head[65];
+    char old_merged[65];
+    int head_exists = 0;
+    int merged_exists = 0;
+    maelys_git_result_t rc = optional_ref_oid(
+        git, repository, result->pr_head_ref, old_head, &head_exists, error);
+    if (rc == MAELYS_GIT_OK)
+        rc = optional_ref_oid(git, repository, result->pr_merged_ref,
+                              old_merged, &merged_exists, error);
+    if (rc != MAELYS_GIT_OK) return rc;
+    size_t oid_length = strlen(base_oid);
+    if (!head_exists) { memset(old_head, '0', oid_length); old_head[oid_length] = '\0'; }
+    if (!merged_exists) { memset(old_merged, '0', oid_length); old_merged[oid_length] = '\0'; }
+
+    FILE *input = tmpfile();
+    FILE *output = tmpfile();
+    if (!input || !output) {
+        if (input) fclose(input);
+        if (output) fclose(output);
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "cannot create Git reference transaction stream: %s", strerror(errno));
+        return MAELYS_GIT_ERR_IO;
+    }
+    int failed = fprintf(input,
+        "start\n"
+        "update %s %s %s\n"
+        "update %s %s %s\n"
+        "update %s %s %s\n"
+        "prepare\ncommit\n",
+        base_ref, result->prepared_oid, base_oid,
+        result->pr_head_ref, head_oid, old_head,
+        result->pr_merged_ref, result->prepared_oid, old_merged) < 0;
+    if (failed) {
+        fclose(input);
+        fclose(output);
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "cannot write Git reference transaction");
+        return MAELYS_GIT_ERR_IO;
+    }
+    char *argv[] = {(char *)git, "--git-dir", (char *)repository,
+                    "update-ref", "--stdin", NULL};
+    int status = 0;
+    rc = mg_process_filter_spool_status(
+        git, argv, input, output, 4096u, &status, error);
+    fclose(input);
+    fclose(output);
+    if (rc != MAELYS_GIT_OK) return rc;
+    if (status != 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
+                     "atomic PR reference transaction failed with status %d", status);
+        return MAELYS_GIT_ERR_PROCESS;
+    }
+    return MAELYS_GIT_OK;
+}
+
 static maelys_git_result_t capture_commit_epoch(const char *git,
                                                 const char *repository,
                                                 const char *oid,
@@ -323,6 +461,14 @@ static maelys_git_result_t authorize_pr_request(pr_auth_context_t *context,
         .old_path = change && change->old_path[0] ? change->old_path : NULL,
         .paths = change ? paths : NULL,
         .path_count = change ? (change->old_path[0] ? 2u : 1u) : 0u,
+        .has_change_details = change != NULL,
+        .change_blob_size = change ? change->new_blob_size : 0u,
+        .old_mode = change ? change->old_mode : 0u,
+        .new_mode = change ? change->new_mode : 0u,
+        .change_binary = change ? change->binary : 0,
+        .change_symlink = change ? change->symlink : 0,
+        .change_submodule = change ? change->submodule : 0,
+        .change_lfs_pointer = change ? change->lfs_pointer : 0,
         .has_summary = summary != NULL,
     };
     if (summary) {
@@ -332,6 +478,7 @@ static maelys_git_result_t authorize_pr_request(pr_auth_context_t *context,
         request.deleted_count = summary->deleted_count;
         request.renamed_count = summary->renamed_count;
         request.max_new_blob_size = summary->max_new_blob_size;
+        request.total_new_blob_size = summary->total_new_blob_size;
         request.has_binary = summary->has_binary;
     }
     maelys_git_policy_decision_t decision;
@@ -368,7 +515,7 @@ maelys_git_result_t maelys_git_pr_merge(
     const char *git, const char *repository_path, const char *repository_name,
     const char *base_ref, const char *base_oid, const char *head_oid,
     maelys_git_merge_style_t style, const char *message, const char *principal,
-    const maelys_git_pr_gates_t *gates, maelys_git_policy_t *policy,
+    const maelys_git_pr_gates_t *gates, maelys_git_policy_t *policy, const char *pr_id,
     const char *expected_prepared_oid, const char *expected_policy_fingerprint, int apply,
     maelys_git_pr_check_result_t *out_result, maelys_git_error_t *error) {
     maelys_git_error_clear(error);
@@ -388,6 +535,11 @@ maelys_git_result_t maelys_git_pr_merge(
     if (result != MAELYS_GIT_OK) return result;
     result = maelys_git_policy_fingerprint(policy, prepared.result.policy_fingerprint,
                                            error);
+    if (result != MAELYS_GIT_OK) {
+        prepared_clear(&prepared);
+        return result;
+    }
+    result = set_pr_refs(&prepared.result, pr_id, error);
     if (result != MAELYS_GIT_OK) {
         prepared_clear(&prepared);
         return result;
@@ -444,10 +596,15 @@ maelys_git_result_t maelys_git_pr_merge(
                                   "refs/maelys/prepared", NULL};
             result = mg_process_run(git, fetch_argv, NULL, error);
         }
-        if (result == MAELYS_GIT_OK)
-            result = maelys_git_repository_update_ref(git, repository_path, base_ref,
-                                                       prepared.result.prepared_oid,
-                                                       base_oid, error);
+        if (result == MAELYS_GIT_OK) {
+            if (prepared.result.pr_id[0])
+                result = update_pr_refs(git, repository_path, base_ref, base_oid,
+                                        head_oid, &prepared.result, error);
+            else
+                result = maelys_git_repository_update_ref(git, repository_path, base_ref,
+                                                           prepared.result.prepared_oid,
+                                                           base_oid, error);
+        }
     }
     if (result == MAELYS_GIT_OK) {
         *out_result = prepared.result;

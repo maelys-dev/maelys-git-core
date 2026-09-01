@@ -268,14 +268,18 @@ maelys_git_result_t mg_process_to_file(const char *executable,
                                    out_exit_status, error);
 }
 
-maelys_git_result_t mg_process_spool_status(const char *executable,
-                                            char *const argv[],
-                                            FILE *output,
-                                            size_t max_length,
-                                            int *out_exit_status,
-                                            maelys_git_error_t *error) {
+static maelys_git_result_t process_filter_spool_status(
+    const char *executable,
+    char *const argv[],
+    FILE *input,
+    FILE *output,
+    size_t max_length,
+    int *out_exit_status,
+    maelys_git_error_t *error) {
     if (!executable || !argv || !output || !out_exit_status || max_length == 0u)
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    int input_fd = input ? fileno(input) : -1;
+    if (input && input_fd < 0) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     int pipe_fds[2];
     if (pipe(pipe_fds) != 0) {
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
@@ -284,6 +288,8 @@ maelys_git_result_t mg_process_spool_status(const char *executable,
     }
     posix_spawn_file_actions_t actions;
     int rc = posix_spawn_file_actions_init(&actions);
+    if (rc == 0 && input)
+        rc = posix_spawn_file_actions_adddup2(&actions, input_fd, STDIN_FILENO);
     if (rc == 0) rc = posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDOUT_FILENO);
     if (rc == 0) rc = posix_spawn_file_actions_addclose(&actions, pipe_fds[0]);
     if (rc == 0) rc = posix_spawn_file_actions_addclose(&actions, pipe_fds[1]);
@@ -369,6 +375,33 @@ maelys_git_result_t mg_process_spool_status(const char *executable,
         return MAELYS_GIT_ERR_IO;
     }
     return result;
+}
+
+maelys_git_result_t mg_process_spool_status(const char *executable,
+                                            char *const argv[],
+                                            FILE *output,
+                                            size_t max_length,
+                                            int *out_exit_status,
+                                            maelys_git_error_t *error) {
+    return process_filter_spool_status(executable, argv, NULL, output,
+                                       max_length, out_exit_status, error);
+}
+
+maelys_git_result_t mg_process_filter_spool_status(const char *executable,
+                                                   char *const argv[],
+                                                   FILE *input,
+                                                   FILE *output,
+                                                   size_t max_length,
+                                                   int *out_exit_status,
+                                                   maelys_git_error_t *error) {
+    if (!input) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    if (fflush(input) != 0 || fseek(input, 0L, SEEK_SET) != 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "cannot rewind child input: %s", strerror(errno));
+        return MAELYS_GIT_ERR_IO;
+    }
+    return process_filter_spool_status(executable, argv, input, output,
+                                       max_length, out_exit_status, error);
 }
 
 int mg_remove_tree(const char *path) {

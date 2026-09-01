@@ -25,6 +25,24 @@ static int serve(const maelys_cli_invocation_t *invocation) {
     maelys_git_error_t error = {0};
     maelys_git_ssh_command_t command;
     maelys_git_result_t result = maelys_git_parse_ssh_command(original, &command, &error);
+    const char *restricted_repository =
+        maelys_cli_option(invocation, "restrict-repository");
+    if (result == MAELYS_GIT_OK && restricted_repository &&
+        (!maelys_git_repository_name_is_valid(restricted_repository) ||
+         strcmp(restricted_repository, command.repository) != 0)) {
+        result = MAELYS_GIT_ERR_DENIED;
+        error.code = result;
+        (void)snprintf(error.message, sizeof(error.message),
+                       "deploy key is restricted to repository %s",
+                       restricted_repository);
+    }
+    if (result == MAELYS_GIT_OK && maelys_cli_flag(invocation, "read-only") &&
+        command.service == MAELYS_GIT_SERVICE_RECEIVE_PACK) {
+        result = MAELYS_GIT_ERR_DENIED;
+        error.code = result;
+        (void)snprintf(error.message, sizeof(error.message),
+                       "deploy key is read-only");
+    }
     char repository_path[4096];
     if (result == MAELYS_GIT_OK)
         result = maelys_git_resolve_repository(root, command.repository, repository_path,

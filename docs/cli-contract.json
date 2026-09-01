@@ -704,6 +704,106 @@
           "usage": "keys compile KEY_DIRECTORY OUTPUT SHELL ROOT MANIFEST [--apply]"
         },
         {
+          "effect": {
+            "apply": "apply",
+            "plan": "preview"
+          },
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "id": "migrate.gitolite",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "INPUT",
+                "required": true,
+                "summary": "Gitolite conf file to analyze.",
+                "variadic": false
+              },
+              {
+                "name": "OUTPUT",
+                "required": true,
+                "summary": "New directory for generated Datalog policy and manifest.",
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "conflictsWith": [],
+                "long": "--apply",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Apply the reviewed transaction; omission returns a read-only plan."
+              }
+            ],
+            "synopsis": "migrate gitolite INPUT OUTPUT [--apply]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "canApply": {
+                "type": "boolean"
+              },
+              "changed": {
+                "type": "boolean"
+              },
+              "groupCount": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "input": {
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "plan",
+                  "apply"
+                ]
+              },
+              "output": {
+                "type": "string"
+              },
+              "repositoryCount": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "ruleCount": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "unsupported": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "mode",
+              "changed",
+              "input",
+              "output",
+              "groupCount",
+              "repositoryCount",
+              "ruleCount",
+              "unsupported",
+              "canApply"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "migrate",
+            "gitolite"
+          ],
+          "purpose": "Compile the safe Gitolite ACL subset and report every incompatible entry.",
+          "usage": "migrate gitolite INPUT OUTPUT [--apply]"
+        },
+        {
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
@@ -798,6 +898,9 @@
               "empty": {
                 "type": "boolean"
               },
+              "event": {
+                "type": "object"
+              },
               "mergeBaseOid": {
                 "type": "string"
               },
@@ -815,6 +918,15 @@
                 ]
               },
               "policyFingerprint": {
+                "type": "string"
+              },
+              "prHeadRef": {
+                "type": "string"
+              },
+              "prId": {
+                "type": "string"
+              },
+              "prMergedRef": {
                 "type": "string"
               },
               "preparedOid": {
@@ -842,8 +954,12 @@
               "mergeTreeOid",
               "preparedOid",
               "policyFingerprint",
+              "prId",
+              "prHeadRef",
+              "prMergedRef",
               "conflicts",
-              "changeSummary"
+              "changeSummary",
+              "event"
             ],
             "type": "object"
           },
@@ -1012,6 +1128,18 @@
               },
               {
                 "argument": {
+                  "name": "ID",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--pr-id",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Stable forge PR identifier used for internal head and merged refs."
+              },
+              {
+                "argument": {
                   "name": "OID",
                   "type": "oid"
                 },
@@ -1049,7 +1177,7 @@
                 "summary": "Reauthorize and update the target ref with CAS."
               }
             ],
-            "synopsis": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256]"
+            "synopsis": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--pr-id ID] [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -1070,6 +1198,9 @@
               "empty": {
                 "type": "boolean"
               },
+              "event": {
+                "type": "object"
+              },
               "mergeBaseOid": {
                 "type": "string"
               },
@@ -1087,6 +1218,15 @@
                 ]
               },
               "policyFingerprint": {
+                "type": "string"
+              },
+              "prHeadRef": {
+                "type": "string"
+              },
+              "prId": {
+                "type": "string"
+              },
+              "prMergedRef": {
                 "type": "string"
               },
               "preparedOid": {
@@ -1114,8 +1254,12 @@
               "mergeTreeOid",
               "preparedOid",
               "policyFingerprint",
+              "prId",
+              "prHeadRef",
+              "prMergedRef",
               "conflicts",
-              "changeSummary"
+              "changeSummary",
+              "event"
             ],
             "type": "object"
           },
@@ -1123,8 +1267,8 @@
             "pr",
             "merge"
           ],
-          "purpose": "Plan or execute a gated, reauthorized pull request merge with compare-and-swap.",
-          "usage": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256]"
+          "purpose": "Plan or execute a gated, reauthorized pull request merge with compare-and-swap and optional internal PR refs.",
+          "usage": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--pr-id ID] [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256]"
         }
       ],
       "globalOptions": {
@@ -1981,9 +2125,57 @@
                 "required": false,
                 "requires": [],
                 "summary": "Bare Git directory."
+              },
+              {
+                "argument": {
+                  "name": "COUNT",
+                  "type": "integer"
+                },
+                "conflictsWith": [],
+                "long": "--max-commits",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Maximum commits inspected across the receive transaction."
+              },
+              {
+                "argument": {
+                  "name": "COUNT",
+                  "type": "integer"
+                },
+                "conflictsWith": [],
+                "long": "--max-changes",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Maximum changed paths across the receive transaction."
+              },
+              {
+                "argument": {
+                  "name": "BYTES",
+                  "type": "integer"
+                },
+                "conflictsWith": [],
+                "long": "--max-total-blob-bytes",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Maximum total size of new blobs across the receive transaction."
+              },
+              {
+                "argument": {
+                  "name": "BYTES",
+                  "type": "integer"
+                },
+                "conflictsWith": [],
+                "long": "--max-inspected-blob-bytes",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Maximum blob content consumed across the receive transaction."
               }
             ],
-            "synopsis": "pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR]"
+            "synopsis": "pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES]"
           },
           "outputMode": "git-hook-stream",
           "outputSchema": {
@@ -1994,8 +2186,8 @@
           "pattern": [
             "pre-receive"
           ],
-          "purpose": "Authorize a Git receive transaction from stdin.",
-          "usage": "pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR]"
+          "purpose": "Authorize a quota-bounded Git receive transaction from stdin.",
+          "usage": "pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES]"
         },
         {
           "effect": "stream",
@@ -2205,7 +2397,15 @@
           },
           "id": "serve",
           "input": {
-            "constraints": [],
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--read-only",
+                  "--restrict-repository"
+                ]
+              }
+            ],
             "operands": [],
             "options": [
               {
@@ -2255,9 +2455,31 @@
                 "required": false,
                 "requires": [],
                 "summary": "Absolute Git executable path."
+              },
+              {
+                "argument": {
+                  "name": "NAME",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--restrict-repository",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Restrict a deploy key to one exact repository."
+              },
+              {
+                "conflictsWith": [],
+                "long": "--read-only",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--restrict-repository"
+                ],
+                "summary": "Reject receive-pack for this deploy key."
               }
             ],
-            "synopsis": "serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE]"
+            "synopsis": "serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE] [--restrict-repository NAME [--read-only]]"
           },
           "outputMode": "git-smart-protocol-stream",
           "outputSchema": {
@@ -2269,7 +2491,7 @@
             "serve"
           ],
           "purpose": "Authorize SSH_ORIGINAL_COMMAND then replace the process with Git.",
-          "usage": "serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE]"
+          "usage": "serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE] [--restrict-repository NAME [--read-only]]"
         }
       ],
       "globalOptions": {

@@ -43,6 +43,7 @@ add_library(maelys_git_core STATIC
     src/repository/transaction.c
     src/repository/pull_request.c
     src/repository/keys.c
+    src/repository/gitolite.c
     src/hooks/pre_receive.c)
 
 target_include_directories(maelys_git_core
@@ -189,6 +190,10 @@ if(MAELYS_GIT_BUILD_TESTS)
     add_test(NAME maelys-git-hook-integration
         COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hook_cli.sh
             $<TARGET_FILE:maelys-git-hook>)
+
+    add_test(NAME maelys-git-gitolite-integration
+        COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gitolite_cli.sh
+            $<TARGET_FILE:maelys-git>)
 
     if(Python3_Interpreter_FOUND)
         add_test(NAME maelys-git-cli-docs

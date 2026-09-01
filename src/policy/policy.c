@@ -37,7 +37,17 @@ static const maelys_datalog_predicate_def_t k_git_domain[] = {
     {.name = "deleted_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "renamed_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "max_new_blob_size", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "total_new_blob_size", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "commit_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "merge_commit_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "has_binary", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "change_blob_size", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "old_mode", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "new_mode", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "change_binary", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "change_symlink", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "change_submodule", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
+    {.name = "change_lfs_pointer", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "commit_email", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "commit_signed", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
     {.name = "commit_signature_status", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
@@ -50,10 +60,12 @@ static const maelys_datalog_predicate_def_t k_git_domain[] = {
     {.name = "grant_read", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "grant_write", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "grant_push", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "grant_force", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "grant_create", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "group_grant_read", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "group_grant_write", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "group_grant_push", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
+    {.name = "group_grant_force", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "group_grant_create", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "admin", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
     {.name = "protected_ref", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
@@ -404,7 +416,27 @@ static maelys_git_result_t solve_policy(const maelys_datalog_ruleset_t *source_r
     if (rc == MAELYS_OK && request->has_summary)
         rc = add_integer_fact(edb, "max_new_blob_size", request->max_new_blob_size);
     if (rc == MAELYS_OK && request->has_summary)
+        rc = add_integer_fact(edb, "total_new_blob_size", request->total_new_blob_size);
+    if (rc == MAELYS_OK && request->has_summary)
+        rc = add_integer_fact(edb, "commit_count", request->commit_count);
+    if (rc == MAELYS_OK && request->has_summary)
+        rc = add_integer_fact(edb, "merge_commit_count", request->merge_commit_count);
+    if (rc == MAELYS_OK && request->has_summary)
         rc = add_boolean_fact(edb, "has_binary", request->has_binary);
+    if (rc == MAELYS_OK && request->has_change_details)
+        rc = add_integer_fact(edb, "change_blob_size", request->change_blob_size);
+    if (rc == MAELYS_OK && request->has_change_details)
+        rc = add_integer_fact(edb, "old_mode", request->old_mode);
+    if (rc == MAELYS_OK && request->has_change_details)
+        rc = add_integer_fact(edb, "new_mode", request->new_mode);
+    if (rc == MAELYS_OK && request->has_change_details)
+        rc = add_boolean_fact(edb, "change_binary", request->change_binary);
+    if (rc == MAELYS_OK && request->has_change_details)
+        rc = add_boolean_fact(edb, "change_symlink", request->change_symlink);
+    if (rc == MAELYS_OK && request->has_change_details)
+        rc = add_boolean_fact(edb, "change_submodule", request->change_submodule);
+    if (rc == MAELYS_OK && request->has_change_details)
+        rc = add_boolean_fact(edb, "change_lfs_pointer", request->change_lfs_pointer);
     if (request->path_count > MAELYS_DATALOG_MAX_FACTS_PER_PRED) rc = MAELYS_ERR_PAYLOAD_TOO_LARGE;
     for (size_t i = 0u; rc == MAELYS_OK && i < request->path_count; ++i) {
         rc = add_optional_fact(edb, "path", request->paths[i]);

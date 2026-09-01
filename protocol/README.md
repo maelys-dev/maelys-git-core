@@ -33,4 +33,6 @@ cannot be accidentally nested or mixed on stdout.
 Pull-request orchestration uses `pr_check` for read-only merge analysis and
 `pr_merge` for gated execution. The latter requires an explicit `apply`
 boolean, validates the target OID, re-evaluates local Datalog policy, and uses
-Git compare-and-swap before changing the target reference.
+Git compare-and-swap before changing the target reference. An optional
+`pr_id` creates forge-neutral `refs/maelys/pulls/<id>/head` and `merged`
+references in the same atomic Git reference transaction as the target branch.

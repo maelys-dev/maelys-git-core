@@ -233,22 +233,32 @@ static int emit_pr_result(const maelys_cli_invocation_t *invocation,
     json_t *conflicts = json_array();
     for (size_t i = 0u; i < result->conflict_paths.count; ++i)
         json_array_append_new(conflicts, json_string(result->conflict_paths.items[i]));
-    json_t *summary = json_pack("{s:I,s:I,s:I,s:I,s:I,s:I,s:b}",
+    json_t *summary = json_pack("{s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:b}",
         "changed", (json_int_t)result->changes.changed_count,
         "added", (json_int_t)result->changes.added_count,
         "modified", (json_int_t)result->changes.modified_count,
         "deleted", (json_int_t)result->changes.deleted_count,
         "renamed", (json_int_t)result->changes.renamed_count,
         "maxNewBlobSize", (json_int_t)result->changes.max_new_blob_size,
+        "totalNewBlobSize", (json_int_t)result->changes.total_new_blob_size,
+        "inspectedBlobBytes", (json_int_t)result->changes.inspected_blob_bytes,
         "hasBinary", result->changes.has_binary);
-    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:b,s:b,s:s,s:s,s:s,s:s,s:o,s:o}",
+    const char *event_type = !strcmp(mode, "apply") ? "pr_merged" :
+                             !strcmp(mode, "plan") ? "pr_planned" : "pr_checked";
+    json_t *event = json_pack("{s:s,s:s,s:s,s:s,s:s}",
+        "version", "1", "type", event_type, "prId", result->pr_id,
+        "preparedOid", result->prepared_oid,
+        "policyFingerprint", result->policy_fingerprint);
+    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:b,s:b,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:o,s:o,s:o}",
         "mode", mode, "changed", changed,
         "repository", maelys_cli_operand(invocation, 1u), "style", style_name,
         "mergeable", result->mergeable, "empty", result->empty,
         "mergeBaseOid", result->merge_base_oid, "mergeTreeOid", result->merge_tree_oid,
         "preparedOid", result->prepared_oid,
-        "policyFingerprint", result->policy_fingerprint, "conflicts", conflicts,
-        "changeSummary", summary);
+        "policyFingerprint", result->policy_fingerprint,
+        "prId", result->pr_id, "prHeadRef", result->pr_head_ref,
+        "prMergedRef", result->pr_merged_ref, "conflicts", conflicts,
+        "changeSummary", summary, "event", event);
     int emitted = maelys_cli_emit_success(invocation, data, NULL, 0);
     json_decref(data);
     maelys_git_pr_check_result_clear(result);
@@ -271,6 +281,43 @@ static int command_keys_compile(const maelys_cli_invocation_t *invocation) {
         "keyCount", (json_int_t)key_count);
     int emitted = maelys_cli_emit_success(invocation, data,
         apply ? "authorized_keys replaced atomically." : "Plan only; add --apply to replace authorized_keys.", 0);
+    json_decref(data);
+    return emitted;
+}
+
+static int command_migrate_gitolite(const maelys_cli_invocation_t *invocation) {
+    int apply = maelys_cli_flag(invocation, "apply");
+    maelys_git_error_t error = {0};
+    maelys_git_gitolite_migration_result_t migration;
+    maelys_git_result_t result = maelys_git_migrate_gitolite(
+        maelys_cli_operand(invocation, 0u), maelys_cli_operand(invocation, 1u),
+        apply, &migration, &error);
+    if (result != MAELYS_GIT_OK) {
+        maelys_git_gitolite_migration_result_clear(&migration);
+        return maelys_cli_emit_maelys_error(invocation, result, &error);
+    }
+    json_t *unsupported = json_array();
+    if (!unsupported) {
+        maelys_git_gitolite_migration_result_clear(&migration);
+        return 1;
+    }
+    for (size_t i = 0u; i < migration.unsupported_count; ++i)
+        json_array_append_new(unsupported, json_string(migration.unsupported[i]));
+    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:I,s:I,s:I,s:o,s:b}",
+        "mode", apply ? "apply" : "plan", "changed", apply,
+        "input", maelys_cli_operand(invocation, 0u),
+        "output", maelys_cli_operand(invocation, 1u),
+        "groupCount", (json_int_t)migration.group_count,
+        "repositoryCount", (json_int_t)migration.repository_count,
+        "ruleCount", (json_int_t)migration.rule_count,
+        "unsupported", unsupported,
+        "canApply", migration.unsupported_count == 0u);
+    maelys_git_gitolite_migration_result_clear(&migration);
+    int emitted = maelys_cli_emit_success(
+        invocation, data,
+        apply ? "Gitolite policy migration written atomically." :
+                "Migration plan complete; review unsupported entries before apply.",
+        0);
     json_decref(data);
     return emitted;
 }
@@ -346,6 +393,7 @@ static int command_pr_merge(const maelys_cli_invocation_t *invocation) {
         maelys_cli_operand(invocation, 2u), maelys_cli_operand(invocation, 3u),
         maelys_cli_operand(invocation, 4u), style, maelys_cli_option(invocation, "message"),
         maelys_cli_operand(invocation, 6u), &gates, policy,
+        maelys_cli_option(invocation, "pr-id"),
         expected_prepared_oid, expected_policy_fingerprint, apply, &check, &error);
     maelys_git_policy_close(policy);
     if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
@@ -368,6 +416,7 @@ int main(int argc, char **argv) {
     if (!strcmp(command, "repo.diff")) return command_repo_diff(&invocation);
     if (!strcmp(command, "repo.update-ref")) return command_repo_update(&invocation);
     if (!strcmp(command, "keys.compile")) return command_keys_compile(&invocation);
+    if (!strcmp(command, "migrate.gitolite")) return command_migrate_gitolite(&invocation);
     if (!strcmp(command, "pr.check")) return command_pr_check(&invocation);
     if (!strcmp(command, "pr.merge")) return command_pr_merge(&invocation);
     return 1;

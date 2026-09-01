@@ -10,22 +10,34 @@ policy.
 authorizes any update. Each update is classified as `create`, `fast_forward`,
 `force`, or `delete`, and each reference as `branch`, `tag`, or `other`.
 
-Changed files are streamed from Git through a temporary file. They are not
-stored in a fixed 64-item array. Datalog is evaluated for:
+Changed files are streamed from Git through bounded temporary files. They are
+not stored in a fixed 64-item array. Blob metadata and prefixes are obtained
+with one `git cat-file --batch` process per ref update instead of one process
+per path. Datalog is evaluated for:
 
 1. the reference update;
 2. every new commit, with its author email and signature-verification result;
 3. every changed path, with `added`, `modified`, `deleted`, `renamed`, or
    `type_changed`; a rename exposes both its old and new path;
-4. a final summary containing counters and the largest new blob size.
+4. a final summary containing path and commit counters, the largest new blob,
+   and the total size of new blobs.
 
 The policy domain exposes `ref_kind`, `update_kind`, `change_kind`,
 `commit_email`, `commit_signed`, `commit_signature_status`,
 `commit_signer_fingerprint`, `commit_signer_identity`,
 `commit_signature_trusted`, `old_path`, `changed_count`, `added_count`,
-`modified_count`, `deleted_count`, `renamed_count`, `max_new_blob_size`, and
-`has_binary`. Git's binary diff classification is evaluated for modifications;
-added and deleted blobs are classified from their first 8,000 bytes.
+`modified_count`, `deleted_count`, `renamed_count`, `max_new_blob_size`,
+`total_new_blob_size`, `commit_count`, `merge_commit_count`, `has_binary`,
+`change_blob_size`, `old_mode`, `new_mode`, `change_binary`,
+`change_symlink`, `change_submodule`, and `change_lfs_pointer`. Binary and Git
+LFS classifications use only a bounded blob prefix.
+
+`maelys_git_pre_receive_with_limits()` and the hook options
+`--max-commits`, `--max-changes`, `--max-total-blob-bytes`, and
+`--max-inspected-blob-bytes` bound CPU, memory-independent iteration, and blob
+I/O. The default limits are 10,000 commits, 100,000 paths, 10 GiB of new blob
+metadata, and 512 MiB of inspected blob content for the complete receive
+transaction.
 
 Custom C inspectors can be composed with `maelys_git_run_inspectors()`. An
 inspector returns an error to reject or abort the transaction.
@@ -47,9 +59,16 @@ write objects, refs, or `FETCH_HEAD` in the target repository. It computes:
 `maelys_git_pr_merge()` additionally validates approvals, status checks, and
 blocking reviews supplied by the forge. It authorizes the reference, every
 path, and the summary through Datalog. On `apply`, it repeats that complete
-authorization immediately before importing the prepared object and calls
-`git update-ref <ref> <new> <expected-old>`. That last argument is the atomic
-compare-and-swap guard: a concurrent update cannot be overwritten.
+authorization immediately before importing the prepared object and updates
+the target through Git compare-and-swap: a concurrent update cannot be
+overwritten.
+
+When `--pr-id ID` is present, plan returns the internal references
+`refs/maelys/pulls/ID/head` and `refs/maelys/pulls/ID/merged`. Apply updates
+those two references and the target branch in one `git update-ref --stdin`
+transaction. It also returns a versioned `pr_planned` or `pr_merged` event
+object for storage or publication by a future forge. Omitting `--pr-id`
+preserves the lightweight single-target-ref mode.
 
 The plan returns `preparedOid` and `policyFingerprint`. An apply must echo both
 through `--expected-prepared-oid` and `--expected-policy-fingerprint`. The local
@@ -60,8 +79,9 @@ plan: approvals and checks may advance between plan and apply, but they must be
 satisfied at apply time.
 
 The first implementation operates on two commits already present in the same
-repository. Cross-fork object transfer and durable PR metadata belong to the
-forge layer.
+repository. Cross-fork object transfer, discussion threads, review history,
+status-check production, and their database indexes still belong to the forge
+layer.
 
 ## Normalized interfaces
 
@@ -89,6 +109,20 @@ the target atomically. Dynamic bare repository creation remains provided by
 `repo init` / `create_repository` and is policy-gated by the `create`
 operation.
 
+Repository-scoped deploy keys live below `keys/deploy/ID/` with `key.pub`,
+`repository`, and `access` (`read` or `write`), plus optional `expires-at` and
+`revoked` metadata. Compilation omits inactive keys and emits a forced shell
+command that enforces both the repository restriction and read-only access
+before Datalog or Git execution.
+
+`maelys-git migrate gitolite INPUT OUTPUT` analyzes Gitolite configuration
+without writing by default. The safe initial subset covers flat groups, exact
+repository names, and `R`, `RW`, and `RW+`; `RW+` remains distinct for force
+and delete operations. `--apply` atomically writes a valid Datalog manifest
+only when no unsupported include, repository pattern, ref rule, negative rule,
+VREF, or nested group was encountered. Every incompatible source line is
+reported rather than silently weakened.
+
 All Git subprocess capture paths have a 120-second execution deadline and
-bounded output. Large tree, diff, and commit streams are spooled to temporary
-files with explicit 64 MiB or 256 MiB quotas rather than accumulated in RAM.
+bounded output. Large tree, diff, commit, and blob-batch streams are spooled to
+temporary files with explicit quotas rather than accumulated in RAM.

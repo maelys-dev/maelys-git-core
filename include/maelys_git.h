@@ -87,8 +87,19 @@ typedef struct {
     size_t deleted_count;
     size_t renamed_count;
     unsigned long long max_new_blob_size;
+    unsigned long long total_new_blob_size;
+    size_t commit_count;
+    size_t merge_commit_count;
     int has_binary;
     int has_summary;
+    unsigned long long change_blob_size;
+    unsigned int old_mode;
+    unsigned int new_mode;
+    int change_binary;
+    int change_symlink;
+    int change_submodule;
+    int change_lfs_pointer;
+    int has_change_details;
     const char *commit_email;
     int commit_signed;
     int has_commit_signed;
@@ -167,6 +178,9 @@ typedef struct {
     unsigned int new_mode;
     unsigned long long new_blob_size;
     int binary;
+    int symlink;
+    int submodule;
+    int lfs_pointer;
 } maelys_git_change_t;
 
 typedef struct {
@@ -176,8 +190,19 @@ typedef struct {
     size_t deleted_count;
     size_t renamed_count;
     unsigned long long max_new_blob_size;
+    unsigned long long total_new_blob_size;
+    size_t inspected_blob_bytes;
     int has_binary;
 } maelys_git_change_summary_t;
+
+typedef struct {
+    size_t max_commits;
+    size_t max_changes;
+    unsigned long long max_total_new_blob_size;
+    size_t max_inspected_blob_bytes;
+} maelys_git_inspection_limits_t;
+
+void maelys_git_inspection_limits_default(maelys_git_inspection_limits_t *limits);
 
 typedef maelys_git_result_t (*maelys_git_change_visitor_t)(
     const maelys_git_change_t *change,
@@ -204,6 +229,16 @@ maelys_git_result_t maelys_git_repository_visit_changes(
     void *visitor_context,
     maelys_git_change_summary_t *out_summary,
     maelys_git_error_t *error);
+maelys_git_result_t maelys_git_repository_visit_changes_ex(
+    const char *git_executable,
+    const char *repository_path,
+    const char *old_oid,
+    const char *new_oid,
+    const maelys_git_inspection_limits_t *limits,
+    maelys_git_change_visitor_t visitor,
+    void *visitor_context,
+    maelys_git_change_summary_t *out_summary,
+    maelys_git_error_t *error);
 
 typedef struct {
     char old_oid[65];
@@ -211,6 +246,8 @@ typedef struct {
     char ref_name[MAELYS_GIT_MAX_REF];
     maelys_git_ref_kind_t ref_kind;
     maelys_git_update_kind_t update_kind;
+    size_t commit_count;
+    size_t merge_commit_count;
     maelys_git_change_summary_t changes;
 } maelys_git_receive_update_t;
 
@@ -253,6 +290,9 @@ typedef struct {
     char merge_tree_oid[65];
     char prepared_oid[65];
     char policy_fingerprint[65];
+    char pr_id[128];
+    char pr_head_ref[MAELYS_GIT_MAX_REF];
+    char pr_merged_ref[MAELYS_GIT_MAX_REF];
     maelys_git_path_list_t conflict_paths;
     maelys_git_change_summary_t changes;
 } maelys_git_pr_check_result_t;
@@ -286,6 +326,7 @@ maelys_git_result_t maelys_git_pr_merge(
     const char *principal,
     const maelys_git_pr_gates_t *gates,
     maelys_git_policy_t *policy,
+    const char *pr_id,
     const char *expected_prepared_oid,
     const char *expected_policy_fingerprint,
     int apply,
@@ -321,6 +362,23 @@ maelys_git_result_t maelys_git_compile_authorized_keys(
     size_t *out_key_count,
     maelys_git_error_t *error);
 
+typedef struct {
+    size_t group_count;
+    size_t repository_count;
+    size_t rule_count;
+    char **unsupported;
+    size_t unsupported_count;
+} maelys_git_gitolite_migration_result_t;
+
+void maelys_git_gitolite_migration_result_clear(
+    maelys_git_gitolite_migration_result_t *result);
+maelys_git_result_t maelys_git_migrate_gitolite(
+    const char *input_path,
+    const char *output_directory,
+    int apply,
+    maelys_git_gitolite_migration_result_t *out_result,
+    maelys_git_error_t *error);
+
 maelys_git_result_t maelys_git_exec_service(
     const char *git_executable,
     maelys_git_service_t service,
@@ -343,6 +401,18 @@ maelys_git_result_t maelys_git_pre_receive_ex(
     const char *repository_path,
     const char *repository_name,
     const char *principal,
+    const maelys_git_inspector_t *inspectors,
+    size_t inspector_count,
+    FILE *input,
+    FILE *diagnostics,
+    maelys_git_error_t *error);
+maelys_git_result_t maelys_git_pre_receive_with_limits(
+    maelys_git_policy_t *policy,
+    const char *git_executable,
+    const char *repository_path,
+    const char *repository_name,
+    const char *principal,
+    const maelys_git_inspection_limits_t *limits,
     const maelys_git_inspector_t *inspectors,
     size_t inspector_count,
     FILE *input,

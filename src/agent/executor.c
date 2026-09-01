@@ -229,17 +229,25 @@ static json_t *pr_payload(maelys_git_pr_check_result_t *result, int applied) {
             json_decref(conflicts);
             return NULL;
         }
-    return json_pack("{s:b,s:b,s:b,s:s,s:s,s:s,s:s,s:o,s:I,s:I,s:I,s:I,s:I,s:I}",
+    const char *event_type = applied ? "pr_merged" :
+                             (result->pr_id[0] ? "pr_planned" : "pr_checked");
+    return json_pack("{s:b,s:b,s:b,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:o,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:b}",
         "applied", applied, "mergeable", result->mergeable, "empty", result->empty,
         "merge_base_oid", result->merge_base_oid, "merge_tree_oid", result->merge_tree_oid,
         "prepared_oid", result->prepared_oid,
-        "policy_fingerprint", result->policy_fingerprint, "conflicts", conflicts,
+        "policy_fingerprint", result->policy_fingerprint,
+        "pr_id", result->pr_id, "pr_head_ref", result->pr_head_ref,
+        "pr_merged_ref", result->pr_merged_ref, "event_type", event_type,
+        "conflicts", conflicts,
         "changed_count", (json_int_t)result->changes.changed_count,
         "added_count", (json_int_t)result->changes.added_count,
         "modified_count", (json_int_t)result->changes.modified_count,
         "deleted_count", (json_int_t)result->changes.deleted_count,
         "renamed_count", (json_int_t)result->changes.renamed_count,
-        "max_new_blob_size", (json_int_t)result->changes.max_new_blob_size);
+        "max_new_blob_size", (json_int_t)result->changes.max_new_blob_size,
+        "total_new_blob_size", (json_int_t)result->changes.total_new_blob_size,
+        "inspected_blob_bytes", (json_int_t)result->changes.inspected_blob_bytes,
+        "has_binary", result->changes.has_binary);
 }
 
 static char *execute_pr_check(maelys_git_policy_t *policy,
@@ -285,7 +293,7 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
     static const char *const allowed[] = {
         "base_ref", "base_oid", "head_oid", "style", "message", "approvals",
         "required_approvals", "status_checks_passed", "blocking_review", "apply",
-        "expected_prepared_oid", "expected_policy_fingerprint", NULL};
+        "expected_prepared_oid", "expected_policy_fingerprint", "pr_id", NULL};
     const char *base_ref = required_string(message->payload, "base_ref");
     const char *base = required_string(message->payload, "base_oid");
     const char *head = required_string(message->payload, "head_oid");
@@ -299,12 +307,15 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
         required_string(message->payload, "expected_prepared_oid");
     const char *expected_policy_fingerprint =
         required_string(message->payload, "expected_policy_fingerprint");
+    json_t *pr_id_json = json_object_get(message->payload, "pr_id");
+    const char *pr_id = json_is_string(pr_id_json) ? json_string_value(pr_id_json) : NULL;
     json_t *message_json = json_object_get(message->payload, "message");
     if (!object_has_only(message->payload, allowed) || !base_ref || !base || !head || !style ||
         !json_is_integer(approvals) || json_integer_value(approvals) < 0 ||
         !json_is_integer(required) || json_integer_value(required) < 0 ||
         !json_is_boolean(checks) || !json_is_boolean(blocking) || !json_is_boolean(apply) ||
         (json_is_true(apply) && (!expected_prepared_oid || !expected_policy_fingerprint)) ||
+        (pr_id_json && (!json_is_string(pr_id_json) || json_string_length(pr_id_json) == 0u)) ||
         (message_json && !json_is_string(message_json)))
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid pr_merge payload", error);
     char repository_path[4096];
@@ -321,7 +332,7 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
     result = maelys_git_pr_merge(
         git, repository_path, message->repository, base_ref, base, head, style,
         json_is_string(message_json) ? json_string_value(message_json) : NULL,
-        message->principal, &gates, policy, expected_prepared_oid,
+        message->principal, &gates, policy, pr_id, expected_prepared_oid,
         expected_policy_fingerprint, json_is_true(apply), &merge, error);
     if (result == MAELYS_GIT_ERR_DENIED)
         return failure(message, "denied", result, error->message, error);

@@ -12,27 +12,31 @@ future Cloudflare forge UI as part of the core.
 | Branch and tag protection | Ref kind, update kind and protected-ref facts | Covered |
 | Path-sensitive authorization | Every change is streamed and authorized | Covered |
 | Rename-sensitive authorization | Both old and new path are facts | Beyond basic path checks |
-| Transaction-wide limits | Counts, maximum blob size and binary-content fact | Beyond Gitolite's basic ACL model |
+| Transaction-wide limits | Commit/path/blob/inspection quotas across all refs in one receive | Beyond Gitolite's basic ACL model |
+| Object-aware policy | Size, mode, symlink, submodule, binary and LFS-pointer facts | Beyond Gitolite's basic ACL model |
 | Commit identity policy | Email plus detailed signature/trust facts | Beyond the basic ACL model |
 | Multi-ref receive transaction | Fully read and fail-closed before acceptance | Covered |
-| Key administration | Deterministic atomic compiler with structural key validation | Covered for flat principal keys |
-| Groups, repository patterns and rule precedence | Expressible in Datalog, but no Gitolite-compatible config compiler | Partial |
+| Key administration | Atomic compiler, structural validation, scoped read/write deploy keys, expiry and revocation | Beyond flat principal keys |
+| Flat groups and exact repository ACL migration | Plan/apply compiler for `R`, `RW`, and `RW+` with no silent fallback | Covered common subset |
+| Repository patterns, ref rules and rule precedence | Reported source line by source line by the migration compiler | Missing compatibility |
 | VREF ecosystem and custom triggers | Native facts and C inspectors exist; no compatibility layer | Partial |
 | Delegated administration, mirroring and legacy extensions | Not implemented | Missing |
 
-Maelys should not pursue source compatibility with Gitolite. A small migration
-compiler can translate the useful ACL subset into versioned Datalog policies;
-special VREFs should become named, typed facts or inspectors with tests.
+Maelys does not pursue source compatibility with Gitolite. The migration
+compiler translates the useful ACL subset into versioned Datalog policies and
+refuses apply if any source rule would be weakened or lost. Special VREFs
+should become named, typed facts or inspectors with tests.
 
 ## Compared with Forgejo
 
 The core now provides repository confinement, push authorization, repository
 creation, deterministic PR merge preparation, conflict detection, FF/merge/
 squash, approval/check gates supplied by a forge, local reauthorization,
-reviewed-plan preconditions and atomic ref updates.
+reviewed-plan preconditions, normalized PR events, and atomic target/head/
+merged reference transactions.
 
 It is not a forge product. Durable users and organizations, PR metadata,
-reviews and comments, issues, wiki, releases, LFS, webhooks, notifications,
+reviews and comments, issues, wiki, releases, LFS object storage, webhooks, notifications,
 search, OAuth/SSO, billing, Actions runners and the Web UI remain outside this
 repository. They belong in the proprietary forge/Worker layer or in separate
 services communicating through the versioned agent protocol.
@@ -46,21 +50,24 @@ services communicating through the versioned agent protocol.
 - Apply recomputes the prepared OID and complete Datalog policy-set fingerprint.
 - Current forge gates are re-evaluated at apply; they are deliberately live.
 - SSH public keys are decoded and structurally validated before publication.
+- Blob inspection is batched, bounded, and shared by push and PR authorization.
+- A PR apply can commit its target, head, and merged refs as one Git transaction.
 
 ## Next work
 
-1. Add a migration compiler for the common Gitolite `repo`, group and `RW+`
-   syntax, with an explicit unsupported-VREF report.
-2. Add batch Git object inspection (`cat-file --batch`) to remove the remaining
-   per-blob subprocesses on very large pushes.
-3. Return bounded Datalog proof/receipt data with authorization decisions so an
-   operator can identify the exact matching rule, not only the policy ID.
-4. Add configurable repository quotas, maximum commits/changes per transaction,
-   and cancellation propagated from the agent.
-5. Add first-class deploy keys, expiry/revocation metadata and hardware-key
-   attestation policy.
-6. Add cross-fork PR object import only after defining an object quarantine and
-   reachability contract.
+1. Add repository lifecycle administration: list, inspect, archive, rename and
+   recoverable delete, all with plan/apply and audit events.
+2. Define cross-fork PR object quarantine, reachability validation, object-size
+   quotas, and promotion before enabling fork imports.
+3. Add a durable forge-side PR record and map its state transitions to the
+   normalized local events without coupling the C core to a database.
+4. Extend Gitolite migration with an explicit library of selected ref/VREF
+   mappings; continue refusing unknown behavior.
+5. Add cancellation propagation from the Cloud agent into long Git processes.
+6. Add hardware-key attestation metadata and rotation workflows for deploy
+   keys.
+7. When Datalog work resumes, return bounded proof/receipt data with decisions
+   and reuse a compiled request session across changed paths.
 
 ## Maelys Datalog opportunities
 
