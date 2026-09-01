@@ -49,11 +49,12 @@ static maelys_git_result_t authorize_change(const maelys_git_change_t *change,
     maelys_git_result_t inspected = maelys_git_run_inspectors(
         context->inspectors, context->inspector_count, context->update, change, error);
     if (inspected != MAELYS_GIT_OK) return inspected;
-    const char *path = change->path;
+    const char *paths[2] = {change->path, change->old_path};
     maelys_git_policy_request_t request = update_request(context);
-    request.paths = &path;
-    request.path_count = 1u;
+    request.paths = paths;
+    request.path_count = change->old_path[0] ? 2u : 1u;
     request.change_kind = maelys_git_change_kind_name(change->kind);
+    request.old_path = change->old_path[0] ? change->old_path : NULL;
     request.max_new_blob_size = change->new_blob_size;
     return authorize_request(context->policy, &request, context->diagnostics, error);
 }
@@ -72,9 +73,9 @@ static maelys_git_result_t authorize_commits(const char *git,
     char *update_argv[] = {(char *)git, "--git-dir", (char *)repository_path,
                            "rev-list", (char *)context->update->new_oid, excluded, NULL};
     int status = 0;
-    maelys_git_result_t result = mg_process_to_file(
+    maelys_git_result_t result = mg_process_spool_status(
         git, mg_is_zero_oid(context->update->old_oid) ? create_argv : update_argv,
-        commits, &status, error);
+        commits, 64u * 1024u * 1024u, &status, error);
     if (result != MAELYS_GIT_OK || status != 0) {
         fclose(commits);
         return result == MAELYS_GIT_OK ? MAELYS_GIT_ERR_PROCESS : result;
@@ -86,30 +87,45 @@ static maelys_git_result_t authorize_commits(const char *git,
         while (oid_length && (oid[oid_length - 1u] == '\n' || oid[oid_length - 1u] == '\r'))
             oid[--oid_length] = '\0';
         if (!mg_is_oid(oid)) { result = MAELYS_GIT_ERR_PROTOCOL; break; }
-        char *email_argv[] = {(char *)git, "--git-dir", (char *)repository_path,
-                              "show", "-s", "--format=%ae", oid, NULL};
-        unsigned char *email_data = NULL;
-        size_t email_length = 0u;
-        result = mg_process_capture(git, email_argv, &email_data, &email_length, 1024u, error);
+        char *signature_argv[] = {
+            (char *)git, "--git-dir", (char *)repository_path,
+            "show", "-s", "--format=%ae%x00%G?%x00%GF%x00%GS", oid, NULL};
+        unsigned char *signature_data = NULL;
+        size_t signature_length = 0u;
+        result = mg_process_capture(git, signature_argv, &signature_data,
+                                    &signature_length, 4096u, error);
         if (result != MAELYS_GIT_OK) break;
-        while (email_length && (email_data[email_length - 1u] == '\n' ||
-                                email_data[email_length - 1u] == '\r'))
-            email_data[--email_length] = '\0';
-        if (!email_length || memchr(email_data, '\n', email_length)) {
-            free(email_data); result = MAELYS_GIT_ERR_PROTOCOL; break;
+        while (signature_length && (signature_data[signature_length - 1u] == '\n' ||
+                                    signature_data[signature_length - 1u] == '\r'))
+            signature_data[--signature_length] = '\0';
+        unsigned char *fields[4] = {signature_data, NULL, NULL, NULL};
+        size_t field = 1u;
+        for (size_t j = 0u; j < signature_length && field < 4u; ++j)
+            if (signature_data[j] == '\0') fields[field++] = signature_data + j + 1u;
+        if (field != 4u || !fields[0][0] || !fields[1][0] || fields[1][1] != '\0') {
+            free(signature_data); result = MAELYS_GIT_ERR_PROTOCOL; break;
         }
-        char *verify_argv[] = {(char *)git, "--git-dir", (char *)repository_path,
-                               "verify-commit", "--raw", oid, NULL};
-        int verify_status = 0;
-        result = mg_process_run_status(git, verify_argv, &verify_status, error);
-        if (result != MAELYS_GIT_OK) { free(email_data); break; }
+        const char *signature_status =
+            fields[1][0] == 'G' ? "good" :
+            fields[1][0] == 'U' ? "good_untrusted" :
+            fields[1][0] == 'B' ? "bad" :
+            fields[1][0] == 'X' ? "expired" :
+            fields[1][0] == 'Y' ? "expired_key" :
+            fields[1][0] == 'R' ? "revoked_key" :
+            fields[1][0] == 'E' ? "verification_error" :
+            fields[1][0] == 'N' ? "unsigned" : "unknown";
         maelys_git_policy_request_t request = update_request(context);
         request.request_id = oid;
-        request.commit_email = (char *)email_data;
+        request.commit_email = (char *)fields[0];
         request.has_commit_signed = 1;
-        request.commit_signed = verify_status == 0;
+        request.commit_signed = fields[1][0] == 'G' || fields[1][0] == 'U';
+        request.commit_signature_status = signature_status;
+        request.commit_signer_fingerprint = fields[2][0] ? (char *)fields[2] : NULL;
+        request.commit_signer_identity = fields[3][0] ? (char *)fields[3] : NULL;
+        request.has_commit_signature_trusted = 1;
+        request.commit_signature_trusted = fields[1][0] == 'G';
         result = authorize_request(context->policy, &request, context->diagnostics, error);
-        free(email_data);
+        free(signature_data);
         if (result != MAELYS_GIT_OK) break;
     }
     if (ferror(commits) && result == MAELYS_GIT_OK) result = MAELYS_GIT_ERR_IO;

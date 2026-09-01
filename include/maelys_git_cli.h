@@ -21,7 +21,8 @@ typedef enum {
     MAELYS_CLI_VALUE_STRING,
     MAELYS_CLI_VALUE_INTEGER,
     MAELYS_CLI_VALUE_PATH,
-    MAELYS_CLI_VALUE_OID
+    MAELYS_CLI_VALUE_OID,
+    MAELYS_CLI_VALUE_SHA256
 } maelys_cli_value_kind_t;
 
 typedef struct {

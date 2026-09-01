@@ -109,6 +109,11 @@ static int value_matches_kind(maelys_cli_value_kind_t kind, const char *value) {
         if (length != 40u && length != 64u) return 0;
         for (const char *p = value; *p; ++p) if (!isxdigit((unsigned char)*p)) return 0;
     }
+    if (kind == MAELYS_CLI_VALUE_SHA256) {
+        if (strlen(value) != 64u) return 0;
+        for (const char *p = value; *p; ++p)
+            if (!isdigit((unsigned char)*p) && (*p < 'a' || *p > 'f')) return 0;
+    }
     return 1;
 }
 
@@ -306,6 +311,7 @@ static const char *kind_name(maelys_cli_value_kind_t kind) {
         case MAELYS_CLI_VALUE_INTEGER: return "integer";
         case MAELYS_CLI_VALUE_PATH: return "path";
         case MAELYS_CLI_VALUE_OID: return "oid";
+        case MAELYS_CLI_VALUE_SHA256: return "sha256";
         case MAELYS_CLI_VALUE_STRING: return "string";
         default: return "boolean";
     }

@@ -90,6 +90,9 @@ static int test_policy(void) {
     maelys_git_error_t error;
     maelys_git_policy_t *policy = NULL;
     CHECK(maelys_git_policy_open(TEST_MANIFEST_FILE, &policy, &error) == MAELYS_GIT_OK);
+    char policy_fingerprint[65];
+    CHECK(maelys_git_policy_fingerprint(policy, policy_fingerprint, &error) == MAELYS_GIT_OK);
+    CHECK(strlen(policy_fingerprint) == 64u);
     maelys_git_policy_decision_t decision;
     CHECK(authorize(policy, "alice", "read", NULL, NULL, &decision));
     CHECK(decision.allowed);
@@ -211,7 +214,7 @@ static int test_authorized_keys(void) {
     CHECK(mkdir(keys, 0700) == 0);
     FILE *file = fopen(key, "w");
     CHECK(file != NULL);
-    CHECK(fputs("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey alice@test\n", file) >= 0);
+    CHECK(fputs("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFqswLrSefGZt4InrGnicUN4CuDKKMoZbafXI4nFavMT alice@test\n", file) >= 0);
     CHECK(fclose(file) == 0);
     size_t count = 0u;
     maelys_git_error_t error;
@@ -227,6 +230,13 @@ static int test_authorized_keys(void) {
     CHECK(strstr(line, "restrict,command=\"") != NULL);
     CHECK(strstr(line, "--user alice") != NULL);
     fclose(file);
+    file = fopen(key, "w");
+    CHECK(file != NULL);
+    CHECK(fputs("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINotARealKey alice@test\n", file) >= 0);
+    CHECK(fclose(file) == 0);
+    CHECK(maelys_git_compile_authorized_keys(keys, output, "/usr/local/bin/maelys-git-shell",
+        "/srv/git", "/etc/maelys/policy.json", 0, &count, &error) ==
+        MAELYS_GIT_ERR_PROTOCOL);
     CHECK(remove_tree(root));
     return 1;
 }

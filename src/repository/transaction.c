@@ -102,6 +102,43 @@ static maelys_git_result_t blob_size(const char *git,
     return MAELYS_GIT_OK;
 }
 
+static maelys_git_result_t detect_binary(const char *git,
+                                         const char *repository,
+                                         const char *old_oid,
+                                         const char *new_oid,
+                                         int *out_binary,
+                                         maelys_git_error_t *error) {
+    if (mg_is_zero_oid(old_oid) || mg_is_zero_oid(new_oid)) {
+        const char *blob = mg_is_zero_oid(new_oid) ? old_oid : new_oid;
+        char *argv[] = {(char *)git, "--git-dir", (char *)repository,
+                        "cat-file", "blob", (char *)blob, NULL};
+        unsigned char *data = NULL;
+        size_t length = 0u;
+        int status = 0;
+        maelys_git_result_t result = mg_process_capture_prefix(
+            git, argv, &data, &length, 8000u, &status, error);
+        if (result != MAELYS_GIT_OK) return result;
+        if (status != 0) {
+            free(data);
+            mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
+                         "git cat-file failed with status %d", status);
+            return MAELYS_GIT_ERR_PROCESS;
+        }
+        *out_binary = memchr(data, '\0', length) != NULL;
+        free(data);
+        return MAELYS_GIT_OK;
+    }
+    char *argv[] = {(char *)git, "--git-dir", (char *)repository,
+                    "diff", "--numstat", (char *)old_oid, (char *)new_oid, NULL};
+    unsigned char *data = NULL;
+    size_t length = 0u;
+    maelys_git_result_t result = mg_process_capture(git, argv, &data, &length, 4096u, error);
+    if (result != MAELYS_GIT_OK) return result;
+    *out_binary = length >= 3u && data[0] == '-' && data[1] == '\t' && data[2] == '-';
+    free(data);
+    return MAELYS_GIT_OK;
+}
+
 static maelys_git_result_t emit_change(const char *git,
                                        const char *repository,
                                        maelys_git_change_t *change,
@@ -112,6 +149,12 @@ static maelys_git_result_t emit_change(const char *git,
     if (!mg_is_zero_oid(change->new_oid) && change->new_mode != 0160000u) {
         maelys_git_result_t result = blob_size(git, repository, change->new_oid,
                                                &change->new_blob_size, error);
+        if (result != MAELYS_GIT_OK) return result;
+    }
+    if (change->old_mode != 0160000u && change->new_mode != 0160000u) {
+        maelys_git_result_t result = detect_binary(
+            git, repository, change->old_oid, change->new_oid,
+            &change->binary, error);
         if (result != MAELYS_GIT_OK) return result;
     }
     summary->changed_count++;
@@ -152,7 +195,8 @@ static maelys_git_result_t visit_tree(const char *git,
     char *argv[] = {(char *)git, "--git-dir", (char *)repository,
                     "ls-tree", "-r", "-z", "--full-tree", (char *)oid, NULL};
     int status = 0;
-    maelys_git_result_t result = mg_process_to_file(git, argv, stream, &status, error);
+    maelys_git_result_t result = mg_process_spool_status(
+        git, argv, stream, 256u * 1024u * 1024u, &status, error);
     if (result != MAELYS_GIT_OK || status != 0) {
         if (result == MAELYS_GIT_OK)
             mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0, "git ls-tree failed with status %d", status);
@@ -206,10 +250,11 @@ static maelys_git_result_t visit_diff(const char *git,
     FILE *stream = tmpfile();
     if (!stream) return MAELYS_GIT_ERR_IO;
     char *argv[] = {(char *)git, "--git-dir", (char *)repository,
-                    "diff-tree", "--raw", "-r", "-z", "--no-renames",
+                    "diff-tree", "--raw", "-r", "-z", "-M",
                     (char *)old_oid, (char *)new_oid, "--", NULL};
     int status = 0;
-    maelys_git_result_t result = mg_process_to_file(git, argv, stream, &status, error);
+    maelys_git_result_t result = mg_process_spool_status(
+        git, argv, stream, 256u * 1024u * 1024u, &status, error);
     if (result != MAELYS_GIT_OK || status != 0) {
         if (result == MAELYS_GIT_OK)
             mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0, "git diff-tree failed with status %d", status);
@@ -236,6 +281,7 @@ static maelys_git_result_t visit_diff(const char *git,
         memset(&change, 0, sizeof(change));
         change.kind = status_text[0] == 'A' ? MAELYS_GIT_CHANGE_ADD :
                       status_text[0] == 'D' ? MAELYS_GIT_CHANGE_DELETE :
+                      status_text[0] == 'R' ? MAELYS_GIT_CHANGE_RENAME :
                       status_text[0] == 'T' ? MAELYS_GIT_CHANGE_TYPE : MAELYS_GIT_CHANGE_MODIFY;
         if (!parse_mode(old_mode, &change.old_mode) || !parse_mode(new_mode, &change.new_mode) ||
             !mg_copy_string(change.old_oid, sizeof(change.old_oid), old_object) ||
@@ -243,6 +289,19 @@ static maelys_git_result_t visit_diff(const char *git,
             !mg_copy_string(change.path, sizeof(change.path), path)) {
             result = MAELYS_GIT_ERR_PROTOCOL;
             break;
+        }
+        if (change.kind == MAELYS_GIT_CHANGE_RENAME) {
+            if (!mg_copy_string(change.old_path, sizeof(change.old_path), path)) {
+                result = MAELYS_GIT_ERR_PROTOCOL;
+                break;
+            }
+            path_length = getdelim(&path, &path_capacity, '\0', stream);
+            if (path_length <= 0) { result = MAELYS_GIT_ERR_PROTOCOL; break; }
+            if (path[path_length - 1] == '\0') path[path_length - 1] = '\0';
+            if (!mg_copy_string(change.path, sizeof(change.path), path)) {
+                result = MAELYS_GIT_ERR_PROTOCOL;
+                break;
+            }
         }
         result = emit_change(git, repository, &change, visitor, context, summary, error);
         if (result != MAELYS_GIT_OK) break;

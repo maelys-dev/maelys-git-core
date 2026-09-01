@@ -80,6 +80,7 @@ typedef struct {
     const char *ref_kind;
     const char *update_kind;
     const char *change_kind;
+    const char *old_path;
     size_t changed_count;
     size_t added_count;
     size_t modified_count;
@@ -91,6 +92,11 @@ typedef struct {
     const char *commit_email;
     int commit_signed;
     int has_commit_signed;
+    const char *commit_signature_status;
+    const char *commit_signer_fingerprint;
+    const char *commit_signer_identity;
+    int commit_signature_trusted;
+    int has_commit_signature_trusted;
 } maelys_git_policy_request_t;
 
 typedef struct {
@@ -105,6 +111,10 @@ maelys_git_result_t maelys_git_policy_open(
     maelys_git_policy_t **out_policy,
     maelys_git_error_t *error);
 void maelys_git_policy_close(maelys_git_policy_t *policy);
+maelys_git_result_t maelys_git_policy_fingerprint(
+    const maelys_git_policy_t *policy,
+    char out_hex[65],
+    maelys_git_error_t *error);
 maelys_git_result_t maelys_git_policy_authorize(
     maelys_git_policy_t *policy,
     const maelys_git_policy_request_t *request,
@@ -242,6 +252,7 @@ typedef struct {
     char merge_base_oid[65];
     char merge_tree_oid[65];
     char prepared_oid[65];
+    char policy_fingerprint[65];
     maelys_git_path_list_t conflict_paths;
     maelys_git_change_summary_t changes;
 } maelys_git_pr_check_result_t;
@@ -275,6 +286,8 @@ maelys_git_result_t maelys_git_pr_merge(
     const char *principal,
     const maelys_git_pr_gates_t *gates,
     maelys_git_policy_t *policy,
+    const char *expected_prepared_oid,
+    const char *expected_policy_fingerprint,
     int apply,
     maelys_git_pr_check_result_t *out_result,
     maelys_git_error_t *error);

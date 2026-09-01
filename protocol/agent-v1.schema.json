@@ -135,8 +135,14 @@
             "required_approvals": {"type": "integer", "minimum": 0},
             "status_checks_passed": {"type": "boolean"},
             "blocking_review": {"type": "boolean"},
+            "expected_prepared_oid": {"type": "string", "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$"},
+            "expected_policy_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             "apply": {"type": "boolean"}
-          }
+          },
+          "allOf": [{
+            "if": {"properties": {"apply": {"const": true}}},
+            "then": {"required": ["expected_prepared_oid", "expected_policy_fingerprint"]}
+          }]
         }
       }
     }
