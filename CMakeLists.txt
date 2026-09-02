@@ -175,6 +175,32 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_compile_options(test-maelys-git-cli PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME maelys-git-cli COMMAND test-maelys-git-cli)
 
+    add_executable(test-maelys-git-process tests/test_process.c)
+    target_include_directories(test-maelys-git-process PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-maelys-git-process PRIVATE maelys_git_core)
+    target_compile_definitions(test-maelys-git-process PRIVATE _POSIX_C_SOURCE=200809L)
+    if(APPLE)
+        target_compile_definitions(test-maelys-git-process PRIVATE _DARWIN_C_SOURCE)
+    endif()
+    target_compile_options(test-maelys-git-process PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME maelys-git-process-isolation COMMAND test-maelys-git-process)
+
+    if(MAELYS_GIT_ENABLE_CLOUD_AGENT)
+        add_executable(test-maelys-git-supervisor tests/test_supervisor.c)
+        target_include_directories(test-maelys-git-supervisor PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        target_link_libraries(test-maelys-git-supervisor PRIVATE
+            maelys_git_agent_http PkgConfig::JANSSON SQLite::SQLite3)
+        target_compile_definitions(test-maelys-git-supervisor PRIVATE
+            _POSIX_C_SOURCE=200809L MAELYS_GIT_ENABLE_CLOUD_AGENT=1)
+        if(APPLE)
+            target_compile_definitions(test-maelys-git-supervisor PRIVATE _DARWIN_C_SOURCE)
+        endif()
+        target_compile_options(test-maelys-git-supervisor PRIVATE -Wall -Wextra -Wpedantic)
+        add_test(NAME maelys-git-supervisor-isolation COMMAND test-maelys-git-supervisor)
+    endif()
+
     add_test(NAME maelys-git-cli-integration
         COMMAND ${CMAKE_COMMAND}
             -DMAELYS_GIT_BIN=$<TARGET_FILE:maelys-git>

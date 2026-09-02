@@ -1,5 +1,6 @@
 #include "internal.h"
 
+#include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -76,6 +77,156 @@ static int repository_identity(const char *path, char out[128], struct stat *out
     return 1;
 }
 
+static maelys_git_result_t verify_repository_identity(
+    const char *path,
+    const char *expected,
+    const char *role,
+    maelys_git_error_t *error) {
+    char current[128];
+    if (!expected || !*expected || !repository_identity(path, current, NULL)) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_REPOSITORY, errno,
+                     "%s repository identity is unavailable", role);
+        return MAELYS_GIT_ERR_INVALID_REPOSITORY;
+    }
+    if (strcmp(current, expected) != 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
+                     "%s repository identity changed; run a new pull request plan",
+                     role);
+        return MAELYS_GIT_ERR_PROCESS;
+    }
+    return MAELYS_GIT_OK;
+}
+
+static int config_key_has_prefix(const char *key, const char *prefix) {
+    return strncmp(key, prefix, strlen(prefix)) == 0;
+}
+
+static int config_key_has_suffix(const char *key, const char *suffix) {
+    size_t key_length = strlen(key);
+    size_t suffix_length = strlen(suffix);
+    return key_length >= suffix_length &&
+           strcmp(key + key_length - suffix_length, suffix) == 0;
+}
+
+static int config_key_can_execute(const char *key) {
+    return config_key_has_prefix(key, "include.") ||
+           config_key_has_prefix(key, "includeif.") ||
+           config_key_has_prefix(key, "alias.") ||
+           config_key_has_prefix(key, "credential.") ||
+           config_key_has_prefix(key, "filter.") ||
+           config_key_has_prefix(key, "url.") ||
+           config_key_has_prefix(key, "protocol.") ||
+           config_key_has_prefix(key, "fsck.") ||
+           strcmp(key, "core.hookspath") == 0 ||
+           strcmp(key, "core.sshcommand") == 0 ||
+           strcmp(key, "core.askpass") == 0 ||
+           strcmp(key, "core.editor") == 0 ||
+           strcmp(key, "core.pager") == 0 ||
+           strcmp(key, "core.fsmonitor") == 0 ||
+           strcmp(key, "core.gitproxy") == 0 ||
+           strcmp(key, "core.worktree") == 0 ||
+           strcmp(key, "core.alternaterefscommand") == 0 ||
+           strcmp(key, "diff.external") == 0 ||
+           strcmp(key, "gpg.program") == 0 ||
+           strcmp(key, "gpg.ssh.defaultkeycommand") == 0 ||
+           strcmp(key, "interactive.difffilter") == 0 ||
+           strcmp(key, "uploadpack.packobjectshook") == 0 ||
+           (config_key_has_prefix(key, "diff.") &&
+            (config_key_has_suffix(key, ".command") ||
+             config_key_has_suffix(key, ".textconv"))) ||
+           (config_key_has_prefix(key, "remote.") &&
+            (config_key_has_suffix(key, ".uploadpack") ||
+             config_key_has_suffix(key, ".receivepack") ||
+             config_key_has_suffix(key, ".proxy")));
+}
+
+static maelys_git_result_t require_direct_entry(
+    const char *repository,
+    const char *relative,
+    int require_directory,
+    const char *role,
+    maelys_git_error_t *error) {
+    char path[PATH_MAX];
+    int written = snprintf(path, sizeof(path), "%s/%s", repository, relative);
+    if (written < 0 || (size_t)written >= sizeof(path)) return MAELYS_GIT_ERR_LIMIT;
+    struct stat status;
+    if (lstat(path, &status) != 0 || S_ISLNK(status.st_mode) ||
+        (require_directory ? !S_ISDIR(status.st_mode) : !S_ISREG(status.st_mode))) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_REPOSITORY, errno,
+                     "%s repository %s must be a direct %s", role, relative,
+                     require_directory ? "directory" : "regular file");
+        return MAELYS_GIT_ERR_INVALID_REPOSITORY;
+    }
+    return MAELYS_GIT_OK;
+}
+
+static maelys_git_result_t reject_repository_entry(
+    const char *repository,
+    const char *relative,
+    const char *role,
+    maelys_git_error_t *error) {
+    char path[PATH_MAX];
+    int written = snprintf(path, sizeof(path), "%s/%s", repository, relative);
+    if (written < 0 || (size_t)written >= sizeof(path)) return MAELYS_GIT_ERR_LIMIT;
+    struct stat status;
+    if (lstat(path, &status) == 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_DENIED, 0,
+                     "%s repository uses forbidden Git object alternates", role);
+        return MAELYS_GIT_ERR_DENIED;
+    }
+    if (errno != ENOENT) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "cannot inspect %s repository alternates: %s", role,
+                     strerror(errno));
+        return MAELYS_GIT_ERR_IO;
+    }
+    return MAELYS_GIT_OK;
+}
+
+static maelys_git_result_t validate_pr_repository(
+    const char *git,
+    const char *repository,
+    const char *role,
+    maelys_git_error_t *error) {
+    maelys_git_result_t result = require_direct_entry(
+        repository, "config", 0, role, error);
+    if (result == MAELYS_GIT_OK)
+        result = require_direct_entry(repository, "objects", 1, role, error);
+    if (result == MAELYS_GIT_OK)
+        result = reject_repository_entry(
+            repository, "objects/info/alternates", role, error);
+    if (result == MAELYS_GIT_OK)
+        result = reject_repository_entry(
+            repository, "objects/info/http-alternates", role, error);
+    if (result != MAELYS_GIT_OK) return result;
+
+    char *argv[] = {(char *)git, "--git-dir", (char *)repository, "config",
+                    "--local", "--no-includes", "--name-only", "--list", NULL};
+    unsigned char *keys = NULL;
+    size_t length = 0u;
+    result = mg_process_capture(git, argv, &keys, &length, 64u * 1024u, error);
+    if (result != MAELYS_GIT_OK) return result;
+    for (size_t offset = 0u; offset < length;) {
+        size_t end = offset;
+        while (end < length && keys[end] != '\n' && keys[end] != '\r') ++end;
+        keys[end] = '\0';
+        for (size_t i = offset; i < end; ++i)
+            keys[i] = (unsigned char)tolower(keys[i]);
+        if (end > offset && config_key_can_execute((char *)keys + offset)) {
+            mg_error_set(error, MAELYS_GIT_ERR_DENIED, 0,
+                         "%s repository contains forbidden active Git configuration: %s",
+                         role, keys + offset);
+            free(keys);
+            return MAELYS_GIT_ERR_DENIED;
+        }
+        offset = end + 1u;
+        while (offset < length && (keys[offset] == '\n' || keys[offset] == '\r'))
+            ++offset;
+    }
+    free(keys);
+    return MAELYS_GIT_OK;
+}
+
 static maelys_git_result_t inspect_pr_source(
     const char *git,
     const char *target_repository,
@@ -92,6 +243,9 @@ static maelys_git_result_t inspect_pr_source(
                      "cross-repository PR requires a valid source repository and branch ref");
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     }
+    maelys_git_result_t validation = validate_pr_repository(
+        git, source->repository_path, "source", error);
+    if (validation != MAELYS_GIT_OK) return validation;
     struct stat source_status, target_status;
     if (!repository_identity(source->repository_path, result->source_identity,
                              &source_status) ||
@@ -179,9 +333,13 @@ static maelys_git_result_t fetch_pr_source(const char *git,
     }
     char *fsck_argv[] = {
         (char *)git, "--git-dir", prepared->temporary_repository,
-        "fsck", "--strict", "--connectivity-only", "--no-dangling",
+        "fsck", "--strict", "--connectivity-only", "--no-dangling", "--no-progress",
         prepared->result.source_oid, NULL};
-    return mg_process_run(git, fsck_argv, NULL, error);
+    rc = mg_process_run(git, fsck_argv, NULL, error);
+    if (rc != MAELYS_GIT_OK) return rc;
+    return verify_repository_identity(source->repository_path,
+                                      prepared->result.source_identity,
+                                      "source", error);
 }
 
 static int pr_id_is_valid(const char *pr_id) {
@@ -471,6 +629,14 @@ static maelys_git_result_t prepare_pr(const char *git,
         mg_is_zero_oid(base_oid) || mg_is_zero_oid(head_oid) ||
         style < MAELYS_GIT_MERGE_FAST_FORWARD || style > MAELYS_GIT_MERGE_SQUASH)
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    if (!repository_identity(repository, prepared->result.target_identity, NULL)) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_REPOSITORY, errno,
+                     "target repository identity is unavailable");
+        return MAELYS_GIT_ERR_INVALID_REPOSITORY;
+    }
+    maelys_git_result_t validation = validate_pr_repository(
+        git, repository, "target", error);
+    if (validation != MAELYS_GIT_OK) return validation;
     char template[] = "/tmp/maelys-git-pr-XXXXXX";
     int temporary_fd = mkstemp(template);
     if (temporary_fd < 0) return MAELYS_GIT_ERR_IO;
@@ -594,6 +760,13 @@ maelys_git_result_t maelys_git_pr_check_with_source(
                                             head_oid, style, message, source,
                                             &prepared, error);
     if (result != MAELYS_GIT_OK) return result;
+    result = verify_repository_identity(repository_path,
+                                        prepared.result.target_identity,
+                                        "target", error);
+    if (result != MAELYS_GIT_OK) {
+        prepared_clear(&prepared);
+        return result;
+    }
     *out_result = prepared.result;
     memset(&prepared.result, 0, sizeof(prepared.result));
     prepared_clear(&prepared);
@@ -725,12 +898,14 @@ maelys_git_result_t maelys_git_pr_merge(
     const char *base_ref, const char *base_oid, const char *head_oid,
     maelys_git_merge_style_t style, const char *message, const char *principal,
     const maelys_git_pr_gates_t *gates, maelys_git_policy_t *policy, const char *pr_id,
-    const char *expected_prepared_oid, const char *expected_policy_fingerprint, int apply,
+    const char *expected_target_identity, const char *expected_prepared_oid,
+    const char *expected_policy_fingerprint, int apply,
     maelys_git_pr_check_result_t *out_result, maelys_git_error_t *error) {
     return maelys_git_pr_merge_with_source(
         git, repository_path, repository_name, base_ref, base_oid, head_oid,
         style, message, principal, gates, policy, pr_id, NULL,
-        expected_prepared_oid, expected_policy_fingerprint, apply, out_result, error);
+        expected_target_identity, expected_prepared_oid, expected_policy_fingerprint,
+        apply, out_result, error);
 }
 
 maelys_git_result_t maelys_git_pr_merge_with_source(
@@ -739,7 +914,8 @@ maelys_git_result_t maelys_git_pr_merge_with_source(
     maelys_git_merge_style_t style, const char *message, const char *principal,
     const maelys_git_pr_gates_t *gates, maelys_git_policy_t *policy, const char *pr_id,
     const maelys_git_pr_source_t *source,
-    const char *expected_prepared_oid, const char *expected_policy_fingerprint, int apply,
+    const char *expected_target_identity, const char *expected_prepared_oid,
+    const char *expected_policy_fingerprint, int apply,
     maelys_git_pr_check_result_t *out_result, maelys_git_error_t *error) {
     maelys_git_error_clear(error);
     if (!repository_name || !base_ref || !maelys_git_ref_name_is_valid(base_ref) ||
@@ -756,6 +932,26 @@ maelys_git_result_t maelys_git_pr_merge_with_source(
     maelys_git_result_t result = prepare_pr(git, repository_path, base_oid, head_oid,
                                             style, message, source, &prepared, error);
     if (result != MAELYS_GIT_OK) return result;
+    result = verify_repository_identity(repository_path,
+                                        prepared.result.target_identity,
+                                        "target", error);
+    if (result != MAELYS_GIT_OK) {
+        prepared_clear(&prepared);
+        return result;
+    }
+    if (apply && (!expected_target_identity || !*expected_target_identity ||
+                  strcmp(expected_target_identity,
+                         prepared.result.target_identity) != 0)) {
+        maelys_git_result_t identity_error =
+            expected_target_identity && *expected_target_identity ?
+            MAELYS_GIT_ERR_PROCESS : MAELYS_GIT_ERR_INVALID_ARGUMENT;
+        mg_error_set(error, identity_error, 0,
+                     expected_target_identity && *expected_target_identity ?
+                     "target repository identity changed; run a new pull request plan" :
+                     "apply requires the target repository identity returned by plan");
+        prepared_clear(&prepared);
+        return identity_error;
+    }
     if (source && apply &&
         (!source->expected_identity || !*source->expected_identity ||
          strcmp(source->expected_identity, prepared.result.source_identity) != 0)) {
@@ -827,6 +1023,20 @@ maelys_git_result_t maelys_git_pr_merge_with_source(
         result = authorize_pr(git, prepared.temporary_repository,
                               prepared.result.merge_base_oid, head_oid,
                               &prepared.result.changes, &auth, error);
+        if (result == MAELYS_GIT_OK)
+            result = verify_repository_identity(repository_path,
+                                                prepared.result.target_identity,
+                                                "target", error);
+        if (result == MAELYS_GIT_OK)
+            result = validate_pr_repository(git, repository_path,
+                                            "target", error);
+        if (result == MAELYS_GIT_OK && source)
+            result = verify_repository_identity(source->repository_path,
+                                                prepared.result.source_identity,
+                                                "source", error);
+        if (result == MAELYS_GIT_OK && source)
+            result = validate_pr_repository(git, source->repository_path,
+                                            "source", error);
         if (result == MAELYS_GIT_OK)
             result = promote_pr_objects(git, repository_path, &prepared, style, error);
         if (result == MAELYS_GIT_OK) {

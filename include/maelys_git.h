@@ -411,6 +411,7 @@ typedef struct {
     char merge_tree_oid[65];
     char prepared_oid[65];
     char policy_fingerprint[65];
+    char target_identity[128];
     char source_repository[MAELYS_GIT_MAX_REPOSITORY];
     char source_ref[MAELYS_GIT_MAX_REF];
     char source_oid[65];
@@ -464,6 +465,7 @@ maelys_git_result_t maelys_git_pr_merge(
     const maelys_git_pr_gates_t *gates,
     maelys_git_policy_t *policy,
     const char *pr_id,
+    const char *expected_target_identity,
     const char *expected_prepared_oid,
     const char *expected_policy_fingerprint,
     int apply,
@@ -483,6 +485,7 @@ maelys_git_result_t maelys_git_pr_merge_with_source(
     maelys_git_policy_t *policy,
     const char *pr_id,
     const maelys_git_pr_source_t *source,
+    const char *expected_target_identity,
     const char *expected_prepared_oid,
     const char *expected_policy_fingerprint,
     int apply,

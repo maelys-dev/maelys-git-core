@@ -3,7 +3,10 @@
 
 #include "maelys_git.h"
 
+#include <spawn.h>
 #include <stddef.h>
+#include <stdint.h>
+#include <sys/types.h>
 
 void mg_error_set(maelys_git_error_t *error,
                   maelys_git_result_t code,
@@ -14,6 +17,22 @@ int mg_copy_string(char *out, size_t capacity, const char *value);
 int mg_is_oid(const char *value);
 int mg_is_zero_oid(const char *value);
 int mg_json_write_string(FILE *output, const char *value);
+
+int64_t mg_monotonic_ms(void);
+int mg_pipe_cloexec(int pipe_fds[2]);
+maelys_git_result_t mg_spawn_isolated(
+    pid_t *out_pid,
+    const char *executable,
+    const posix_spawn_file_actions_t *actions,
+    char *const argv[],
+    maelys_git_error_t *error);
+void mg_terminate_process_group(pid_t pid);
+maelys_git_result_t mg_process_run_with_timeout(
+    const char *executable,
+    char *const argv[],
+    uint64_t timeout_ms,
+    int *out_exit_status,
+    maelys_git_error_t *error);
 
 maelys_git_result_t mg_process_run(const char *executable,
                                    char *const argv[],

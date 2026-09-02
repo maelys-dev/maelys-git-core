@@ -430,15 +430,16 @@ static int emit_pr_result(const maelys_cli_invocation_t *invocation,
         "hasBinary", result->changes.has_binary);
     const char *event_type = !strcmp(mode, "apply") ? "pr_merged" :
                              !strcmp(mode, "plan") ? "pr_planned" : "pr_checked";
-    json_t *event = json_pack("{s:s,s:s,s:s,s:s,s:s,s:b,s:s,s:s,s:s}",
+    json_t *event = json_pack("{s:s,s:s,s:s,s:s,s:s,s:s,s:b,s:s,s:s,s:s}",
         "version", "1", "type", event_type, "prId", result->pr_id,
         "preparedOid", result->prepared_oid,
         "policyFingerprint", result->policy_fingerprint,
+        "targetIdentity", result->target_identity,
         "crossRepository", result->cross_repository,
         "sourceRepository", result->source_repository,
         "sourceRef", result->source_ref,
         "sourceOid", result->source_oid);
-    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:b,s:b,s:b,s:s,s:s,s:s,s:s,s:I,s:I,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:o,s:o,s:o}",
+    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:b,s:b,s:b,s:s,s:s,s:s,s:s,s:I,s:I,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:o,s:o,s:o}",
         "mode", mode, "changed", changed,
         "repository", maelys_cli_operand(invocation, 1u), "style", style_name,
         "mergeable", result->mergeable, "empty", result->empty,
@@ -449,6 +450,7 @@ static int emit_pr_result(const maelys_cli_invocation_t *invocation,
         "sourceIdentity", result->source_identity,
         "sourceObjectCount", (json_int_t)result->source_object_count,
         "sourceObjectBytes", (json_int_t)result->source_object_bytes,
+        "targetIdentity", result->target_identity,
         "mergeBaseOid", result->merge_base_oid, "mergeTreeOid", result->merge_tree_oid,
         "preparedOid", result->prepared_oid,
         "policyFingerprint", result->policy_fingerprint,
@@ -649,12 +651,15 @@ static int command_pr_merge(const maelys_cli_invocation_t *invocation) {
         maelys_cli_option(invocation, "expected-prepared-oid");
     const char *expected_policy_fingerprint =
         maelys_cli_option(invocation, "expected-policy-fingerprint");
-    if (apply && (!expected_prepared_oid || !expected_policy_fingerprint)) {
+    const char *expected_target_identity =
+        maelys_cli_option(invocation, "expected-target-identity");
+    if (apply && (!expected_target_identity || !expected_prepared_oid ||
+                  !expected_policy_fingerprint)) {
         maelys_git_policy_close(policy);
         maelys_cli_error_t cli_error = {
             "VALIDATION_FAILED",
             "Apply requires the reviewed plan preconditions.",
-            "Pass --expected-prepared-oid and --expected-policy-fingerprint from the plan output."};
+            "Pass --expected-target-identity, --expected-prepared-oid and --expected-policy-fingerprint from the plan output."};
         return maelys_cli_emit_error(invocation, &cli_error, 1);
     }
     maelys_git_pr_check_result_t check;
@@ -665,7 +670,8 @@ static int command_pr_merge(const maelys_cli_invocation_t *invocation) {
         maelys_cli_operand(invocation, 6u), &gates, policy,
         maelys_cli_option(invocation, "pr-id"),
         source,
-        expected_prepared_oid, expected_policy_fingerprint, apply, &check, &error);
+        expected_target_identity, expected_prepared_oid,
+        expected_policy_fingerprint, apply, &check, &error);
     maelys_git_policy_close(policy);
     if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
     return emit_pr_result(invocation, apply ? "apply" : "plan", apply, style, &check);

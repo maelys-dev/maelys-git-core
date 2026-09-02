@@ -2071,6 +2071,9 @@
                   "merge",
                   "squash"
                 ]
+              },
+              "targetIdentity": {
+                "type": "string"
               }
             },
             "required": [
@@ -2081,6 +2084,7 @@
               "mergeable",
               "empty",
               "crossRepository",
+              "targetIdentity",
               "sourceRepository",
               "sourceRef",
               "sourceOid",
@@ -2158,8 +2162,15 @@
               {
                 "kind": "requires",
                 "options": [
-                  "--expected-prepared-oid",
+                  "--expected-target-identity",
                   "--apply"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-prepared-oid",
+                  "--expected-target-identity"
                 ]
               },
               {
@@ -2382,6 +2393,20 @@
               },
               {
                 "argument": {
+                  "name": "IDENTITY",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--expected-target-identity",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--apply"
+                ],
+                "summary": "Target device/inode identity returned by the reviewed plan; required with --apply."
+              },
+              {
+                "argument": {
                   "name": "OID",
                   "type": "oid"
                 },
@@ -2390,7 +2415,7 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [
-                  "--apply"
+                  "--expected-target-identity"
                 ],
                 "summary": "Prepared OID returned by the reviewed plan; required with --apply."
               },
@@ -2419,7 +2444,7 @@
                 "summary": "Reauthorize and update the target ref with CAS."
               }
             ],
-            "synopsis": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--source-repository REPOSITORY --source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--pr-id ID] [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256 --expected-source-identity IDENTITY]"
+            "synopsis": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--source-repository REPOSITORY --source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--pr-id ID] [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-target-identity IDENTITY --expected-prepared-oid OID --expected-policy-fingerprint SHA256 --expected-source-identity IDENTITY]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -2506,6 +2531,9 @@
                   "merge",
                   "squash"
                 ]
+              },
+              "targetIdentity": {
+                "type": "string"
               }
             },
             "required": [
@@ -2516,6 +2544,7 @@
               "mergeable",
               "empty",
               "crossRepository",
+              "targetIdentity",
               "sourceRepository",
               "sourceRef",
               "sourceOid",
@@ -2539,8 +2568,8 @@
             "pr",
             "merge"
           ],
-          "purpose": "Plan or execute a gated, reauthorized pull request merge with cross-repository quarantine and compare-and-swap.",
-          "usage": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--source-repository REPOSITORY --source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--pr-id ID] [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256 --expected-source-identity IDENTITY]"
+          "purpose": "Plan or execute a gated, reauthorized pull request merge with reviewed repository identities and compare-and-swap.",
+          "usage": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--source-repository REPOSITORY --source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--pr-id ID] [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-target-identity IDENTITY --expected-prepared-oid OID --expected-policy-fingerprint SHA256 --expected-source-identity IDENTITY]"
         }
       ],
       "globalOptions": {

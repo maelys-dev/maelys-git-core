@@ -145,6 +145,7 @@
             "max_source_objects": {"type": "integer", "minimum": 1},
             "max_source_bytes": {"type": "integer", "minimum": 1},
             "expected_source_identity": {"type": "string", "pattern": "^[0-9a-f]+:[0-9a-f]+$"},
+            "expected_target_identity": {"type": "string", "pattern": "^[0-9a-f]+:[0-9a-f]+$"},
             "approvals": {"type": "integer", "minimum": 0},
             "required_approvals": {"type": "integer", "minimum": 0},
             "status_checks_passed": {"type": "boolean"},
@@ -160,7 +161,7 @@
           "allOf": [
             {
               "if": {"properties": {"apply": {"const": true}}},
-              "then": {"required": ["expected_prepared_oid", "expected_policy_fingerprint"]}
+              "then": {"required": ["expected_target_identity", "expected_prepared_oid", "expected_policy_fingerprint"]}
             },
             {
               "if": {

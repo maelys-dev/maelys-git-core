@@ -307,6 +307,8 @@ static json_t *pr_payload(maelys_git_pr_check_result_t *result, int applied) {
                             json_integer((json_int_t)result->source_object_count)) != 0 ||
         json_object_set_new(payload, "source_object_bytes",
                             json_integer((json_int_t)result->source_object_bytes)) != 0 ||
+        json_object_set_new(payload, "target_identity",
+                            json_string(result->target_identity)) != 0 ||
         json_object_set_new(payload, "merge_base_oid", json_string(result->merge_base_oid)) != 0 ||
         json_object_set_new(payload, "merge_tree_oid", json_string(result->merge_tree_oid)) != 0 ||
         json_object_set_new(payload, "prepared_oid", json_string(result->prepared_oid)) != 0 ||
@@ -392,7 +394,7 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
         "required_approvals", "status_checks_passed", "blocking_review", "apply",
         "expected_prepared_oid", "expected_policy_fingerprint", "pr_id",
         "source_repository", "source_ref", "max_source_objects", "max_source_bytes",
-        "expected_source_identity", NULL};
+        "expected_source_identity", "expected_target_identity", NULL};
     const char *base_ref = required_string(message->payload, "base_ref");
     const char *base = required_string(message->payload, "base_oid");
     const char *head = required_string(message->payload, "head_oid");
@@ -406,6 +408,8 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
         required_string(message->payload, "expected_prepared_oid");
     const char *expected_policy_fingerprint =
         required_string(message->payload, "expected_policy_fingerprint");
+    const char *expected_target_identity =
+        required_string(message->payload, "expected_target_identity");
     json_t *pr_id_json = json_object_get(message->payload, "pr_id");
     const char *pr_id = json_is_string(pr_id_json) ? json_string_value(pr_id_json) : NULL;
     json_t *message_json = json_object_get(message->payload, "message");
@@ -413,7 +417,9 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
         !json_is_integer(approvals) || json_integer_value(approvals) < 0 ||
         !json_is_integer(required) || json_integer_value(required) < 0 ||
         !json_is_boolean(checks) || !json_is_boolean(blocking) || !json_is_boolean(apply) ||
-        (json_is_true(apply) && (!expected_prepared_oid || !expected_policy_fingerprint)) ||
+        (json_is_true(apply) && (!expected_target_identity ||
+                                 !expected_prepared_oid ||
+                                 !expected_policy_fingerprint)) ||
         (pr_id_json && (!json_is_string(pr_id_json) || json_string_length(pr_id_json) == 0u)) ||
         (message_json && !json_is_string(message_json)))
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid pr_merge payload", error);
@@ -441,7 +447,8 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
     result = maelys_git_pr_merge_with_source(
         git, repository_path, message->repository, base_ref, base, head, style,
         json_is_string(message_json) ? json_string_value(message_json) : NULL,
-        message->principal, &gates, policy, pr_id, source, expected_prepared_oid,
+        message->principal, &gates, policy, pr_id, source,
+        expected_target_identity, expected_prepared_oid,
         expected_policy_fingerprint, json_is_true(apply), &merge, error);
     if (result == MAELYS_GIT_ERR_DENIED)
         return failure(message, "denied", result, error->message, error);

@@ -189,7 +189,7 @@ maelys-git-agent        network, token, retry, SQLite journal
         | one bounded JSON command over pipes
         v
 maelys-git-executor     Datalog authorization, repository confinement
-        | argv through posix_spawn/execve; never a shell
+        | absolute argv, minimal environment, isolated process group; never a shell
         v
 Git
 ```
@@ -246,14 +246,18 @@ Supported executor commands are:
 `update_ref` calculates changed paths first, authorizes the operation as a
 `push`, and only then invokes Git's compare-and-swap update. `pr_merge` uses the
 same invariant and repeats authorization immediately before its state change.
-Its plan returns a deterministic prepared OID and the Maelys Datalog policy-set
-fingerprint; apply requires both values and recomputes them locally. Normalized
+Its plan returns a deterministic prepared OID, the Maelys Datalog policy-set
+fingerprint and the target repository device/inode identity; apply requires all
+three values and recomputes them locally. Normalized
 PR events can be persisted by the forge without coupling the C core to its
 database. A cross-repository plan also returns the source repository identity;
 apply requires it, verifies that the source ref still names the reviewed head,
 then promotes only the quarantined source/prepared objects before the atomic
 reference transaction. Source traversal defaults to 100,000 reachable objects
 and 512 MiB of reachable on-disk object data and can be tightened per command.
+PR repositories must have direct `config` and `objects` entries. Object
+alternates and repository-local Git settings capable of launching commands or
+loading external configuration are rejected before Git reads PR objects.
 There is no arbitrary command execution field. Discussion threads, review
 history and status-check production remain responsibilities of the forge.
 
@@ -306,6 +310,13 @@ The SSH shell and hook should run under a dedicated Unix account that owns only
 the intended repositories. The agent should use a separate service account when
 possible. Filesystem permissions remain a second line of defence behind Datalog
 authorization.
+
+All core Git subprocesses and each supervised executor receive a minimal
+allowlisted environment: only the absolute service-account `HOME` is retained
+for signature trust stores; global/system Git configuration, credential prompts
+and askpass helpers are disabled. They run in a new process group, so deadlines
+terminate descendants as well as the direct child. Executable paths at this
+boundary must be absolute.
 
 This code has not received an external security audit. Before production use,
 run the network agent and executor under distinct least-privilege service

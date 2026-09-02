@@ -65,7 +65,9 @@ printf '%s\n' "$plan" | grep -q '"type":"pr_planned"'
 printf '%s\n' "$plan" | grep -q '"prHeadRef":"refs/maelys/pulls/42/head"'
 planned_oid=$(printf '%s\n' "$plan" | sed -n 's/.*"preparedOid":"\([0-9a-f]*\)".*/\1/p')
 policy_fingerprint=$(printf '%s\n' "$plan" | sed -n 's/.*"policyFingerprint":"\([0-9a-f]*\)".*/\1/p')
+target_identity=$(printf '%s\n' "$plan" | sed -n 's/.*"targetIdentity":"\([^"]*\)".*/\1/p')
 test -n "$planned_oid"
+test -n "$target_identity"
 test "${#policy_fingerprint}" -eq 64
 test "$(git --git-dir "$test_root/example.git" rev-parse refs/heads/target)" = "$base_oid"
 if git --git-dir "$test_root/example.git" show-ref --verify --quiet refs/maelys/pulls/42/head; then
@@ -78,6 +80,7 @@ if "$maelys_git_bin" pr merge "$test_root" example.git refs/heads/target \
      "$base_oid" "$head_oid" "$manifest" alice --style merge \
      --approvals 1 --required-approvals 1 --status-checks-passed --apply \
      --pr-id 42 \
+     --expected-target-identity "$target_identity" \
      --expected-prepared-oid "$planned_oid" \
      --expected-policy-fingerprint 0000000000000000000000000000000000000000000000000000000000000000 \
      --format json --compact >/dev/null 2>/dev/null; then
@@ -144,6 +147,28 @@ printf '%s\n' "$executor_check" | grep -q '"cross_repository":true'
 printf '%s\n' "$executor_check" | grep -q '"command":"pr_merge"'
 printf '%s\n' "$executor_check" | grep -q '"event_type":"pr_planned"'
 
+# Repository-local configuration capable of executing commands, as well as
+# object alternates escaping the quarantine boundary, must be rejected.
+git --git-dir "$test_root/cross-root/fork.git" config core.hooksPath /tmp/forbidden-hooks
+if "$maelys_git_bin" pr check "$test_root/cross-root" example.git \
+     "$cross_base_oid" "$cross_head_oid" --style merge \
+     --source-repository fork.git --source-ref refs/heads/feature \
+     --format json --compact >/dev/null 2>/dev/null; then
+  printf 'cross-repository check accepted active source Git configuration\n' >&2
+  exit 1
+fi
+git --git-dir "$test_root/cross-root/fork.git" config --unset core.hooksPath
+printf '%s\n' "$test_root/cross-root/example.git/objects" > \
+  "$test_root/cross-root/fork.git/objects/info/alternates"
+if "$maelys_git_bin" pr check "$test_root/cross-root" example.git \
+     "$cross_base_oid" "$cross_head_oid" --style merge \
+     --source-repository fork.git --source-ref refs/heads/feature \
+     --format json --compact >/dev/null 2>/dev/null; then
+  printf 'cross-repository check accepted source object alternates\n' >&2
+  exit 1
+fi
+rm "$test_root/cross-root/fork.git/objects/info/alternates"
+
 if "$maelys_git_bin" pr check "$test_root/cross-root" example.git \
      "$cross_base_oid" "$cross_head_oid" --style merge \
      --source-repository fork.git --source-ref refs/heads/feature \
@@ -162,14 +187,35 @@ cross_plan=$(
 cross_prepared_oid=$(printf '%s\n' "$cross_plan" | sed -n 's/.*"preparedOid":"\([0-9a-f]*\)".*/\1/p')
 cross_policy_fingerprint=$(printf '%s\n' "$cross_plan" | sed -n 's/.*"policyFingerprint":"\([0-9a-f]*\)".*/\1/p')
 cross_source_identity=$(printf '%s\n' "$cross_plan" | sed -n 's/.*"sourceIdentity":"\([^"]*\)".*/\1/p')
+cross_target_identity=$(printf '%s\n' "$cross_plan" | sed -n 's/.*"targetIdentity":"\([^"]*\)".*/\1/p')
 test -n "$cross_prepared_oid"
 test -n "$cross_source_identity"
+test -n "$cross_target_identity"
+
+if "$maelys_git_bin" pr merge "$test_root/cross-root" example.git refs/heads/main \
+     "$cross_base_oid" "$cross_head_oid" "$manifest" alice --style merge \
+     --approvals 1 --required-approvals 1 --status-checks-passed --pr-id fork-7 \
+     --source-repository fork.git --source-ref refs/heads/feature \
+     --expected-source-identity "$cross_source_identity" \
+     --expected-target-identity 0:0 \
+     --expected-prepared-oid "$cross_prepared_oid" \
+     --expected-policy-fingerprint "$cross_policy_fingerprint" --apply \
+     --format json --compact >/dev/null 2>/dev/null; then
+  printf 'cross-repository apply accepted a stale target identity\n' >&2
+  exit 1
+fi
+if git --git-dir "$test_root/cross-root/example.git" cat-file -e \
+     "$cross_head_oid^{commit}" 2>/dev/null; then
+  printf 'stale target identity check leaked fork objects into target\n' >&2
+  exit 1
+fi
 
 if "$maelys_git_bin" pr merge "$test_root/cross-root" example.git refs/heads/main \
      "$cross_base_oid" "$cross_head_oid" "$manifest" alice --style merge \
      --approvals 1 --required-approvals 1 --status-checks-passed --pr-id fork-7 \
      --source-repository fork.git --source-ref refs/heads/feature \
      --expected-source-identity 0:0 \
+     --expected-target-identity "$cross_target_identity" \
      --expected-prepared-oid "$cross_prepared_oid" \
      --expected-policy-fingerprint "$cross_policy_fingerprint" --apply \
      --format json --compact >/dev/null 2>/dev/null; then
@@ -194,6 +240,7 @@ if "$maelys_git_bin" pr merge "$test_root/cross-root" example.git refs/heads/mai
      --approvals 1 --required-approvals 1 --status-checks-passed --pr-id fork-7 \
      --source-repository fork.git --source-ref refs/heads/feature \
      --expected-source-identity "$cross_source_identity" \
+     --expected-target-identity "$cross_target_identity" \
      --expected-prepared-oid "$cross_prepared_oid" \
      --expected-policy-fingerprint "$cross_policy_fingerprint" --apply \
      --format json --compact >/dev/null 2>/dev/null; then
@@ -214,6 +261,7 @@ cross_applied=$(
     --approvals 1 --required-approvals 1 --status-checks-passed --pr-id fork-7 \
     --source-repository fork.git --source-ref refs/heads/feature \
     --expected-source-identity "$cross_source_identity" \
+    --expected-target-identity "$cross_target_identity" \
     --expected-prepared-oid "$cross_prepared_oid" \
     --expected-policy-fingerprint "$cross_policy_fingerprint" --apply \
     --format json --compact
@@ -243,12 +291,14 @@ ff_plan=$(
 )
 ff_policy_fingerprint=$(printf '%s\n' "$ff_plan" | sed -n 's/.*"policyFingerprint":"\([0-9a-f]*\)".*/\1/p')
 ff_source_identity=$(printf '%s\n' "$ff_plan" | sed -n 's/.*"sourceIdentity":"\([^"]*\)".*/\1/p')
+ff_target_identity=$(printf '%s\n' "$ff_plan" | sed -n 's/.*"targetIdentity":"\([^"]*\)".*/\1/p')
 printf '%s\n' "$ff_plan" | grep -q '"preparedOid":"'"$cross_head_oid"'"'
 "$maelys_git_bin" pr merge "$test_root/ff-root" example.git refs/heads/main \
   "$cross_base_oid" "$cross_head_oid" "$manifest" alice --style ff \
   --approvals 1 --required-approvals 1 --status-checks-passed \
   --source-repository fork.git --source-ref refs/heads/feature \
   --expected-source-identity "$ff_source_identity" \
+  --expected-target-identity "$ff_target_identity" \
   --expected-prepared-oid "$cross_head_oid" \
   --expected-policy-fingerprint "$ff_policy_fingerprint" --apply \
   --format json --compact >/dev/null
@@ -268,6 +318,7 @@ applied=$(
     "$base_oid" "$head_oid" "$manifest" alice --style merge \
     --approvals 1 --required-approvals 1 --status-checks-passed --apply \
     --pr-id 42 \
+    --expected-target-identity "$target_identity" \
     --expected-prepared-oid "$planned_oid" \
     --expected-policy-fingerprint "$policy_fingerprint" \
     --format json --compact
@@ -285,6 +336,7 @@ if "$maelys_git_bin" pr merge "$test_root" example.git refs/heads/target \
      "$base_oid" "$head_oid" "$manifest" alice --style merge \
      --approvals 1 --required-approvals 1 --status-checks-passed --apply \
      --pr-id 42 \
+     --expected-target-identity "$target_identity" \
      --expected-prepared-oid "$planned_oid" \
      --expected-policy-fingerprint "$policy_fingerprint" \
      --format json --compact >/dev/null 2>/dev/null; then

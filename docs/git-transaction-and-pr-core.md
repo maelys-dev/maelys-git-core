@@ -66,6 +66,15 @@ clone, then runs strict connectivity checking. The defaults are 100,000 objects
 and 512 MiB; callers may tighten both. Plan/check deletion of the temporary
 clone discards the fetched objects, so the target remains unchanged.
 
+Before reading either repository, the core requires direct, non-symlink
+`config` files and `objects` directories. It rejects filesystem/HTTP object
+alternates and repository-local configuration families that can execute a
+program, load external configuration, redirect transport or weaken object
+verification. Every Git child receives a minimal allowlisted environment. The
+absolute service-account `HOME` remains available for signature trust stores;
+global and system Git configuration, prompts, askpass and credential-manager
+interaction are disabled.
+
 `maelys_git_pr_merge()` and its `with_source` variant additionally validate
 approvals, status checks, and blocking reviews supplied by the forge. They
 authorize the reference, every path, and the summary through Datalog. On
@@ -80,12 +89,14 @@ transaction. It also returns a versioned `pr_planned` or `pr_merged` event
 object for storage or publication by a future forge. Omitting `--pr-id`
 preserves the lightweight single-target-ref mode.
 
-The plan returns `preparedOid` and `policyFingerprint`. An apply must echo both
-through `--expected-prepared-oid` and `--expected-policy-fingerprint`. A fork
+The plan returns `targetIdentity`, `preparedOid` and `policyFingerprint`. An
+apply must echo all three through `--expected-target-identity`,
+`--expected-prepared-oid` and `--expected-policy-fingerprint`. A fork
 plan additionally returns `sourceIdentity`, which apply must echo through
 `--expected-source-identity`. The local core recomputes all preconditions before
-any target-repository mutation and refuses a replaced repository, moved source
-branch, stale content, or changed policy bundle. It then evaluates the current
+any target-repository mutation and refuses a replaced target or source
+repository, moved source branch, stale content, or changed policy bundle. It
+then evaluates the current
 forge gates and reauthorizes. Gate state is intentionally live rather than
 hashed into the plan: approvals and checks may advance between plan and apply,
 but they must be satisfied at apply time.
@@ -109,7 +120,7 @@ The process CLI follows `agent-cli/v2`:
 The agent protocol exposes equivalent `pr_check` and `pr_merge` commands,
 including source repository/ref and quarantine budgets. A `pr_merge` payload
 must include the boolean `apply` field so the remote caller cannot accidentally
-turn a check into a mutation. When it is true, the two reviewed-plan
+turn a check into a mutation. When it is true, the three reviewed-plan
 preconditions are mandatory; `expected_source_identity` is additionally
 mandatory for a cross-repository apply in the versioned JSON schema.
 
@@ -145,3 +156,8 @@ weakened.
 All Git subprocess capture paths have a 120-second execution deadline and
 bounded output. Large tree, diff, commit, and blob-batch streams are spooled to
 temporary files with explicit quotas rather than accumulated in RAM.
+Subprocesses receive only a minimal allowlisted environment and start in their
+own process group; a deadline terminates the whole group so a helper cannot
+leave a descendant running. The network agent applies the same boundary to
+each one-request executor process and uses one monotonic deadline across
+partial response reads.

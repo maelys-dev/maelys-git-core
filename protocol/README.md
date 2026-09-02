@@ -39,8 +39,10 @@ references in the same atomic Git reference transaction as the target branch.
 For a fork PR, `source_repository` and `source_ref` are supplied together.
 Checks fetch the exact branch into a disposable quarantine, verify its head and
 connectivity, and leave the target object database untouched. Plans return
-`source_identity`; applies must echo it as `expected_source_identity` and fail
-if either the repository identity or the reviewed source OID changed. Optional
+`target_identity`; applies must echo it as `expected_target_identity`. Fork
+plans also return `source_identity`, which applies must echo as
+`expected_source_identity`. Apply fails if either repository identity or the
+reviewed source OID changed. Optional
 `max_source_objects` and `max_source_bytes` tighten the default traversal
 budgets of 100,000 reachable objects and 512 MiB of reachable on-disk data.
 
