@@ -1834,7 +1834,36 @@
           },
           "id": "pr.check",
           "input": {
-            "constraints": [],
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--source-repository",
+                  "--source-ref"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--source-ref",
+                  "--source-repository"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--max-source-objects",
+                  "--source-repository"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--max-source-bytes",
+                  "--source-repository"
+                ]
+              }
+            ],
             "operands": [
               {
                 "name": "ROOT",
@@ -1897,9 +1926,65 @@
                 "required": false,
                 "requires": [],
                 "summary": "Prepared merge commit message."
+              },
+              {
+                "argument": {
+                  "name": "REPOSITORY",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--source-repository",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--source-ref"
+                ],
+                "summary": "Optional fork repository below ROOT."
+              },
+              {
+                "argument": {
+                  "name": "REF",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--source-ref",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--source-repository"
+                ],
+                "summary": "Full branch ref whose commit must equal HEAD_OID."
+              },
+              {
+                "argument": {
+                  "name": "COUNT",
+                  "type": "integer"
+                },
+                "conflictsWith": [],
+                "long": "--max-source-objects",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--source-repository"
+                ],
+                "summary": "Maximum objects reachable from a quarantined fork head."
+              },
+              {
+                "argument": {
+                  "name": "BYTES",
+                  "type": "integer"
+                },
+                "conflictsWith": [],
+                "long": "--max-source-bytes",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--source-repository"
+                ],
+                "summary": "Maximum on-disk bytes reachable from a quarantined fork head."
               }
             ],
-            "synopsis": "pr check ROOT REPOSITORY BASE_OID HEAD_OID --style ff|merge|squash [--message TEXT] [--git FILE]"
+            "synopsis": "pr check ROOT REPOSITORY BASE_OID HEAD_OID --style ff|merge|squash [--source-repository REPOSITORY --source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--message TEXT] [--git FILE]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -1916,6 +2001,9 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "crossRepository": {
+                "type": "boolean"
               },
               "empty": {
                 "type": "boolean"
@@ -1957,6 +2045,26 @@
               "repository": {
                 "type": "string"
               },
+              "sourceIdentity": {
+                "type": "string"
+              },
+              "sourceObjectBytes": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sourceObjectCount": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sourceOid": {
+                "type": "string"
+              },
+              "sourceRef": {
+                "type": "string"
+              },
+              "sourceRepository": {
+                "type": "string"
+              },
               "style": {
                 "enum": [
                   "ff",
@@ -1972,6 +2080,13 @@
               "style",
               "mergeable",
               "empty",
+              "crossRepository",
+              "sourceRepository",
+              "sourceRef",
+              "sourceOid",
+              "sourceIdentity",
+              "sourceObjectCount",
+              "sourceObjectBytes",
               "mergeBaseOid",
               "mergeTreeOid",
               "preparedOid",
@@ -1989,8 +2104,8 @@
             "pr",
             "check"
           ],
-          "purpose": "Compute merge-base, conflicts, emptiness and a prepared result without modifying the repository.",
-          "usage": "pr check ROOT REPOSITORY BASE_OID HEAD_OID --style ff|merge|squash [--message TEXT] [--git FILE]"
+          "purpose": "Compute merge-base, conflicts, emptiness and a prepared result in an isolated quarantine.",
+          "usage": "pr check ROOT REPOSITORY BASE_OID HEAD_OID --style ff|merge|squash [--source-repository REPOSITORY --source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--message TEXT] [--git FILE]"
         },
         {
           "effect": {
@@ -2005,6 +2120,41 @@
           "id": "pr.merge",
           "input": {
             "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--source-repository",
+                  "--source-ref"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--source-ref",
+                  "--source-repository"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--max-source-objects",
+                  "--source-repository"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--max-source-bytes",
+                  "--source-repository"
+                ]
+              },
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-source-identity",
+                  "--source-repository"
+                ]
+              },
               {
                 "kind": "requires",
                 "options": [
@@ -2162,6 +2312,76 @@
               },
               {
                 "argument": {
+                  "name": "REPOSITORY",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--source-repository",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--source-ref"
+                ],
+                "summary": "Optional fork repository below ROOT."
+              },
+              {
+                "argument": {
+                  "name": "REF",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--source-ref",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--source-repository"
+                ],
+                "summary": "Full branch ref whose commit must equal HEAD_OID."
+              },
+              {
+                "argument": {
+                  "name": "COUNT",
+                  "type": "integer"
+                },
+                "conflictsWith": [],
+                "long": "--max-source-objects",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--source-repository"
+                ],
+                "summary": "Maximum objects reachable from a quarantined fork head."
+              },
+              {
+                "argument": {
+                  "name": "BYTES",
+                  "type": "integer"
+                },
+                "conflictsWith": [],
+                "long": "--max-source-bytes",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--source-repository"
+                ],
+                "summary": "Maximum on-disk bytes reachable from a quarantined fork head."
+              },
+              {
+                "argument": {
+                  "name": "IDENTITY",
+                  "type": "string"
+                },
+                "conflictsWith": [],
+                "long": "--expected-source-identity",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--source-repository"
+                ],
+                "summary": "Fork device/inode identity returned by plan; required for cross-repository apply."
+              },
+              {
+                "argument": {
                   "name": "OID",
                   "type": "oid"
                 },
@@ -2199,7 +2419,7 @@
                 "summary": "Reauthorize and update the target ref with CAS."
               }
             ],
-            "synopsis": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--pr-id ID] [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256]"
+            "synopsis": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--source-repository REPOSITORY --source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--pr-id ID] [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256 --expected-source-identity IDENTITY]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -2216,6 +2436,9 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "crossRepository": {
+                "type": "boolean"
               },
               "empty": {
                 "type": "boolean"
@@ -2257,6 +2480,26 @@
               "repository": {
                 "type": "string"
               },
+              "sourceIdentity": {
+                "type": "string"
+              },
+              "sourceObjectBytes": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sourceObjectCount": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sourceOid": {
+                "type": "string"
+              },
+              "sourceRef": {
+                "type": "string"
+              },
+              "sourceRepository": {
+                "type": "string"
+              },
               "style": {
                 "enum": [
                   "ff",
@@ -2272,6 +2515,13 @@
               "style",
               "mergeable",
               "empty",
+              "crossRepository",
+              "sourceRepository",
+              "sourceRef",
+              "sourceOid",
+              "sourceIdentity",
+              "sourceObjectCount",
+              "sourceObjectBytes",
               "mergeBaseOid",
               "mergeTreeOid",
               "preparedOid",
@@ -2289,8 +2539,8 @@
             "pr",
             "merge"
           ],
-          "purpose": "Plan or execute a gated, reauthorized pull request merge with compare-and-swap and optional internal PR refs.",
-          "usage": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--pr-id ID] [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256]"
+          "purpose": "Plan or execute a gated, reauthorized pull request merge with cross-repository quarantine and compare-and-swap.",
+          "usage": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--source-repository REPOSITORY --source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--pr-id ID] [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-prepared-oid OID --expected-policy-fingerprint SHA256 --expected-source-identity IDENTITY]"
         }
       ],
       "globalOptions": {

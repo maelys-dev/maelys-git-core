@@ -1,6 +1,6 @@
 # Matrice concurrentielle : Maelys Git Core, Gitolite et Forgejo
 
-Etat verifie le 1er septembre 2026. La comparaison porte sur le code present
+Etat verifie le 2 septembre 2026. La comparaison porte sur le code present
 et teste dans ce depot. Elle ne credite pas a Maelys Git Core les fonctions
 prevues pour une future forge Cloudflare.
 
@@ -41,10 +41,10 @@ Git Core vise un noyau local de securite pilotable par une forge separee.
 | Migration | Import de configuration Gitolite | **Partiel avance** : groupes imbriques, depots exacts, `C/R/RW/RW+`, wild `CREATOR`, full refs exactes et VREF `NAME/COUNT/MAX_NEWBIN_SIZE`; refus ferme du reste | Sans objet | Sans objet | P1 : includes, subconf et refex choisies |
 | API | CLI normalise et decouvrable par un agent | **Complet** : enveloppe `agent-cli/v2`, catalogues JSON et plan/apply | **Partiel** : CLI et commandes SSH scriptables, sans contrat homogene equivalent | **Complet** : CLI, API HTTP et interface Web | Avantage Maelys pour l'automatisation locale |
 | API | Agent distant durable | **Complet** dans son perimetre : HTTPS long-poll, journal SQLite, idempotence et outbox | **Absent** comme protocole integre | **Complet** autrement via API, webhooks et services de la forge | P1 : annulation et observabilite |
-| Pull requests | Analyse de conflit et preparation FF/merge/squash | **Complet** dans un meme depot, deterministe et sans mutation pendant le plan | **Absent** | **Complet** | Acquis pour le noyau PR |
+| Pull requests | Analyse de conflit et preparation FF/merge/squash | **Complet** dans un meme depot ou entre forks, deterministe et sans mutation du depot cible pendant le plan | **Absent** | **Complet** | Acquis pour le noyau PR |
 | Pull requests | Application atomique et reautorisee | **Complet** : CAS, empreinte de politique et transaction refs target/head/resultat | **Absent** | **Complet** dans le workflow de la forge | Avantage de surete a conserver |
 | Pull requests | Approbations et checks obligatoires | **Partiel** : gates fournis par la forge et verifies localement, sans stockage durable | **Absent** | **Complet** | P0 : modele durable cote forge |
-| Pull requests | PR entre forks et quarantaine d'objets | **Absent** | **Absent** | **Complet** | P0 avant forks |
+| Pull requests | PR entre forks et quarantaine d'objets | **Complet pour le noyau local** : source/ref exacts, quotas, `fsck`, identite/OID revus et promotion sans ref de quarantaine visible | **Absent** | **Complet** | Acquis ; etat durable cote forge restant |
 | Collaboration | PR persistantes, revues, commentaires et historique | **Absent** | **Absent** | **Complet** | P0 cote forge |
 | Collaboration | Issues, labels, projets et wiki | **Absent** | **Absent** | **Complet** | P2 cote forge |
 | Distribution | Releases et stockage d'objets Git LFS | **Absent** : detection des pointeurs LFS seulement | **Absent** comme services integres | **Complet** | P2 |
@@ -85,9 +85,10 @@ des PR, revues, checks et utilisateurs.
 
 ## Ordre recommande
 
-1. **P0 - fermer le noyau PR** : quarantaine d'objets pour les forks,
-   validation de joignabilite, quotas puis promotion atomique ; definir aussi
-   la machine d'etats durable attendue de la forge.
+1. **P0 - definir l'etat durable de PR cote forge** : le noyau local sait
+   maintenant mettre en quarantaine, verifier et promouvoir les objets d'un
+   fork ; il reste a modeliser ouverture, synchronisation, revue, checks,
+   fermeture et fusion dans le service de forge.
 2. **P1 - terminer la parite Gitolite selectionnee** : publication
    transactionnelle des sous-politiques deleguees, refex courantes, includes
    confines et orchestration distante des miroirs. Continuer a refuser toute
@@ -115,6 +116,8 @@ des PR, revues, checks et utilisateurs.
 - L'inspection des blobs est groupee, bornee et partagee entre push et PR.
 - Une application de PR peut mettre a jour target, head et resultat dans une
   seule transaction Git.
+- Une PR de fork est inspectee dans une quarantaine jetable ; son identite, son
+  OID de branche et ses budgets sont reverifies avant promotion.
 
 ## Pistes Maelys Datalog reportees
 

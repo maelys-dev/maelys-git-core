@@ -15,8 +15,9 @@ The project is a security-oriented foundation. Its current capabilities are:
   operation and transaction summary;
 - bare repository creation and compare-and-swap `git update-ref` operations;
 - idempotent local bare mirroring with reviewed identity/ref preconditions;
-- a same-repository PR core for conflict checks, deterministic FF/merge/squash
-  plans, policy-set preconditions, Datalog reauthorization and compare-and-swap;
+- a same- or cross-repository PR core with isolated object quarantine, bounded
+  source imports, deterministic FF/merge/squash plans, Datalog reauthorization
+  and compare-and-swap;
 - deterministic, atomic compilation of forced-command `authorized_keys`;
 - a strict, versioned JSON protocol implemented with Jansson;
 - a durable SQLite command journal, idempotency table, audit log and outbox;
@@ -239,7 +240,8 @@ Supported executor commands are:
 - `pr_merge` for explicit plan/apply, forge-supplied gates, local Datalog
   reauthorization, reviewed prepared-OID/policy-fingerprint preconditions and
   atomic target-ref CAS; optional `pr_id` also records the head and merged
-  result under forge-neutral internal Git refs in the same transaction.
+  result under forge-neutral internal Git refs in the same transaction. Both
+  commands accept an optional source repository and branch for fork PRs.
 
 `update_ref` calculates changed paths first, authorizes the operation as a
 `push`, and only then invokes Git's compare-and-swap update. `pr_merge` uses the
@@ -247,7 +249,11 @@ same invariant and repeats authorization immediately before its state change.
 Its plan returns a deterministic prepared OID and the Maelys Datalog policy-set
 fingerprint; apply requires both values and recomputes them locally. Normalized
 PR events can be persisted by the forge without coupling the C core to its
-database.
+database. A cross-repository plan also returns the source repository identity;
+apply requires it, verifies that the source ref still names the reviewed head,
+then promotes only the quarantined source/prepared objects before the atomic
+reference transaction. Source traversal defaults to 100,000 reachable objects
+and 512 MiB of reachable on-disk object data and can be tightened per command.
 There is no arbitrary command execution field. Discussion threads, review
 history and status-check production remain responsibilities of the forge.
 

@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <ctype.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -429,14 +430,25 @@ static int emit_pr_result(const maelys_cli_invocation_t *invocation,
         "hasBinary", result->changes.has_binary);
     const char *event_type = !strcmp(mode, "apply") ? "pr_merged" :
                              !strcmp(mode, "plan") ? "pr_planned" : "pr_checked";
-    json_t *event = json_pack("{s:s,s:s,s:s,s:s,s:s}",
+    json_t *event = json_pack("{s:s,s:s,s:s,s:s,s:s,s:b,s:s,s:s,s:s}",
         "version", "1", "type", event_type, "prId", result->pr_id,
         "preparedOid", result->prepared_oid,
-        "policyFingerprint", result->policy_fingerprint);
-    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:b,s:b,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:o,s:o,s:o}",
+        "policyFingerprint", result->policy_fingerprint,
+        "crossRepository", result->cross_repository,
+        "sourceRepository", result->source_repository,
+        "sourceRef", result->source_ref,
+        "sourceOid", result->source_oid);
+    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:b,s:b,s:b,s:s,s:s,s:s,s:s,s:I,s:I,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:o,s:o,s:o}",
         "mode", mode, "changed", changed,
         "repository", maelys_cli_operand(invocation, 1u), "style", style_name,
         "mergeable", result->mergeable, "empty", result->empty,
+        "crossRepository", result->cross_repository,
+        "sourceRepository", result->source_repository,
+        "sourceRef", result->source_ref,
+        "sourceOid", result->source_oid,
+        "sourceIdentity", result->source_identity,
+        "sourceObjectCount", (json_int_t)result->source_object_count,
+        "sourceObjectBytes", (json_int_t)result->source_object_bytes,
         "mergeBaseOid", result->merge_base_oid, "mergeTreeOid", result->merge_tree_oid,
         "preparedOid", result->prepared_oid,
         "policyFingerprint", result->policy_fingerprint,
@@ -447,6 +459,65 @@ static int emit_pr_result(const maelys_cli_invocation_t *invocation,
     json_decref(data);
     maelys_git_pr_check_result_clear(result);
     return emitted;
+}
+
+static maelys_git_result_t pr_source_options(
+    const maelys_cli_invocation_t *invocation,
+    char source_path[4096],
+    maelys_git_pr_source_t *source,
+    const maelys_git_pr_source_t **out_source,
+    maelys_git_error_t *error) {
+    const char *repository = maelys_cli_option(invocation, "source-repository");
+    const char *ref = maelys_cli_option(invocation, "source-ref");
+    const char *objects = maelys_cli_option(invocation, "max-source-objects");
+    const char *bytes = maelys_cli_option(invocation, "max-source-bytes");
+    const char *identity = maelys_cli_option(invocation, "expected-source-identity");
+    *out_source = NULL;
+    memset(source, 0, sizeof(*source));
+    if (!repository && !ref) {
+        if (objects || bytes || identity) {
+            error->code = MAELYS_GIT_ERR_INVALID_ARGUMENT;
+            (void)snprintf(error->message, sizeof(error->message),
+                           "source quotas or identity require --source-repository and --source-ref");
+            return error->code;
+        }
+        return MAELYS_GIT_OK;
+    }
+    if (!repository || !ref) {
+        error->code = MAELYS_GIT_ERR_INVALID_ARGUMENT;
+        (void)snprintf(error->message, sizeof(error->message),
+                       "--source-repository and --source-ref must be supplied together");
+        return error->code;
+    }
+    maelys_git_result_t rc = maelys_git_resolve_repository(
+        maelys_cli_operand(invocation, 0u), repository, source_path, 4096u, error);
+    if (rc != MAELYS_GIT_OK) return rc;
+    source->repository_path = source_path;
+    source->repository_name = repository;
+    source->ref_name = ref;
+    source->expected_identity = identity;
+    source->max_objects = MAELYS_GIT_PR_DEFAULT_MAX_SOURCE_OBJECTS;
+    source->max_bytes = MAELYS_GIT_PR_DEFAULT_MAX_SOURCE_BYTES;
+    const char *values[2] = {objects, bytes};
+    uint64_t parsed[2] = {source->max_objects, source->max_bytes};
+    for (size_t i = 0u; i < 2u; ++i) {
+        if (!values[i]) continue;
+        char *end = NULL;
+        errno = 0;
+        uintmax_t value = strtoumax(values[i], &end, 10);
+        if (errno || end == values[i] || *end || value == 0u || value > INT64_MAX ||
+            (i == 0u && value > SIZE_MAX)) {
+            error->code = MAELYS_GIT_ERR_INVALID_ARGUMENT;
+            (void)snprintf(error->message, sizeof(error->message),
+                           "source quarantine quotas must be positive bounded integers");
+            return error->code;
+        }
+        parsed[i] = (uint64_t)value;
+    }
+    source->max_objects = (size_t)parsed[0];
+    source->max_bytes = parsed[1];
+    *out_source = source;
+    return MAELYS_GIT_OK;
 }
 
 static int command_keys_compile(const maelys_cli_invocation_t *invocation) {
@@ -518,11 +589,18 @@ static int command_pr_check(const maelys_cli_invocation_t *invocation) {
                                          "Use ff, merge, or squash."};
         return maelys_cli_emit_error(invocation, &cli_error, 1);
     }
+    char source_path[4096];
+    maelys_git_pr_source_t source_storage;
+    const maelys_git_pr_source_t *source = NULL;
+    maelys_git_result_t result = pr_source_options(
+        invocation, source_path, &source_storage, &source, &error);
+    if (result != MAELYS_GIT_OK)
+        return maelys_cli_emit_maelys_error(invocation, result, &error);
     maelys_git_pr_check_result_t check;
-    maelys_git_result_t result = maelys_git_pr_check(
+    result = maelys_git_pr_check_with_source(
         git_executable(invocation), repository_path,
         maelys_cli_operand(invocation, 2u), maelys_cli_operand(invocation, 3u),
-        style, maelys_cli_option(invocation, "message"), &check, &error);
+        style, maelys_cli_option(invocation, "message"), source, &check, &error);
     if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
     return emit_pr_result(invocation, "check", 0, style, &check);
 }
@@ -555,8 +633,15 @@ static int command_pr_merge(const maelys_cli_invocation_t *invocation) {
                                          "Use a supported style and non-negative gate counts."};
         return maelys_cli_emit_error(invocation, &cli_error, 1);
     }
+    char source_path[4096];
+    maelys_git_pr_source_t source_storage;
+    const maelys_git_pr_source_t *source = NULL;
+    maelys_git_result_t result = pr_source_options(
+        invocation, source_path, &source_storage, &source, &error);
+    if (result != MAELYS_GIT_OK)
+        return maelys_cli_emit_maelys_error(invocation, result, &error);
     maelys_git_policy_t *policy = NULL;
-    maelys_git_result_t result = maelys_git_policy_open(
+    result = maelys_git_policy_open(
         maelys_cli_operand(invocation, 5u), &policy, &error);
     if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);
     int apply = maelys_cli_flag(invocation, "apply");
@@ -573,12 +658,13 @@ static int command_pr_merge(const maelys_cli_invocation_t *invocation) {
         return maelys_cli_emit_error(invocation, &cli_error, 1);
     }
     maelys_git_pr_check_result_t check;
-    result = maelys_git_pr_merge(
+    result = maelys_git_pr_merge_with_source(
         git_executable(invocation), repository_path, maelys_cli_operand(invocation, 1u),
         maelys_cli_operand(invocation, 2u), maelys_cli_operand(invocation, 3u),
         maelys_cli_operand(invocation, 4u), style, maelys_cli_option(invocation, "message"),
         maelys_cli_operand(invocation, 6u), &gates, policy,
         maelys_cli_option(invocation, "pr-id"),
+        source,
         expected_prepared_oid, expected_policy_fingerprint, apply, &check, &error);
     maelys_git_policy_close(policy);
     if (result != MAELYS_GIT_OK) return maelys_cli_emit_maelys_error(invocation, result, &error);

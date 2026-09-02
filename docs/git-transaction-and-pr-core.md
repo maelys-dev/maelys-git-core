@@ -44,8 +44,10 @@ inspector returns an error to reject or abort the transaction.
 
 ## Pull requests
 
-`maelys_git_pr_check()` works in a temporary shared bare clone. A check does not
-write objects, refs, or `FETCH_HEAD` in the target repository. It computes:
+`maelys_git_pr_check()` works in a temporary shared bare clone. Its
+`maelys_git_pr_check_with_source()` variant accepts a distinct source
+repository and full branch ref for fork PRs. A check does not write objects,
+refs, or `FETCH_HEAD` in the target repository. It computes:
 
 - the merge base;
 - changed-file counters;
@@ -56,12 +58,20 @@ write objects, refs, or `FETCH_HEAD` in the target repository. It computes:
   creation is canonical and deterministic, so the same inputs produce the same
   prepared object ID across separate plan and apply processes.
 
-`maelys_git_pr_merge()` additionally validates approvals, status checks, and
-blocking reviews supplied by the forge. It authorizes the reference, every
-path, and the summary through Datalog. On `apply`, it repeats that complete
-authorization immediately before importing the prepared object and updates
-the target through Git compare-and-swap: a concurrent update cannot be
-overwritten.
+For a fork PR, the source directory is required to differ from the target. The
+core resolves the requested source branch to the reviewed head OID, records
+the source directory's device/inode identity, bounds its reachable object count
+and reachable on-disk object bytes, fetches only that branch into the temporary
+clone, then runs strict connectivity checking. The defaults are 100,000 objects
+and 512 MiB; callers may tighten both. Plan/check deletion of the temporary
+clone discards the fetched objects, so the target remains unchanged.
+
+`maelys_git_pr_merge()` and its `with_source` variant additionally validate
+approvals, status checks, and blocking reviews supplied by the forge. They
+authorize the reference, every path, and the summary through Datalog. On
+`apply`, the core repeats that complete authorization immediately before
+promoting the quarantined source and prepared objects, then updates the target
+through Git compare-and-swap: a concurrent update cannot be overwritten.
 
 When `--pr-id ID` is present, plan returns the internal references
 `refs/maelys/pulls/ID/head` and `refs/maelys/pulls/ID/merged`. Apply updates
@@ -71,17 +81,20 @@ object for storage or publication by a future forge. Omitting `--pr-id`
 preserves the lightweight single-target-ref mode.
 
 The plan returns `preparedOid` and `policyFingerprint`. An apply must echo both
-through `--expected-prepared-oid` and `--expected-policy-fingerprint`. The local
-core recomputes them before any target-repository mutation, refuses stale
-content or a changed policy bundle, then evaluates the current forge gates and
-reauthorizes. Gate state is intentionally live rather than hashed into the
-plan: approvals and checks may advance between plan and apply, but they must be
-satisfied at apply time.
+through `--expected-prepared-oid` and `--expected-policy-fingerprint`. A fork
+plan additionally returns `sourceIdentity`, which apply must echo through
+`--expected-source-identity`. The local core recomputes all preconditions before
+any target-repository mutation and refuses a replaced repository, moved source
+branch, stale content, or changed policy bundle. It then evaluates the current
+forge gates and reauthorizes. Gate state is intentionally live rather than
+hashed into the plan: approvals and checks may advance between plan and apply,
+but they must be satisfied at apply time.
 
-The first implementation operates on two commits already present in the same
-repository. Cross-fork object transfer, discussion threads, review history,
-status-check production, and their database indexes still belong to the forge
-layer.
+Object promotion necessarily precedes the reference transaction. A failed
+compare-and-swap can therefore leave unreachable imported objects, but never a
+visible target or internal PR ref; normal Git garbage collection can reclaim
+them. Discussion threads, review history, status-check production, and their
+database indexes remain responsibilities of the forge layer.
 
 ## Normalized interfaces
 
@@ -93,10 +106,12 @@ The process CLI follows `agent-cli/v2`:
 - `describe` is the source used to generate `cli-contract.json` and the CLI
   reference.
 
-The agent protocol exposes equivalent `pr_check` and `pr_merge` commands. A
-`pr_merge` payload must include the boolean `apply` field so the remote caller
-cannot accidentally turn a check into a mutation. When it is true, the two
-reviewed-plan preconditions are mandatory in the versioned JSON schema.
+The agent protocol exposes equivalent `pr_check` and `pr_merge` commands,
+including source repository/ref and quarantine budgets. A `pr_merge` payload
+must include the boolean `apply` field so the remote caller cannot accidentally
+turn a check into a mutation. When it is true, the two reviewed-plan
+preconditions are mandatory; `expected_source_identity` is additionally
+mandatory for a cross-repository apply in the versioned JSON schema.
 
 ## SSH key and repository administration
 

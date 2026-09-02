@@ -2,6 +2,7 @@
 #define MAELYS_GIT_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 
 #ifdef __cplusplus
@@ -17,6 +18,8 @@ extern "C" {
 #define MAELYS_GIT_MAX_RECEIVE_UPDATES 1024u
 #define MAELYS_GIT_MAX_CONFLICT_PATHS 128u
 #define MAELYS_GIT_MAX_LIFECYCLE_ID 128u
+#define MAELYS_GIT_PR_DEFAULT_MAX_SOURCE_OBJECTS 100000u
+#define MAELYS_GIT_PR_DEFAULT_MAX_SOURCE_BYTES (512u * 1024u * 1024u)
 
 typedef enum {
     MAELYS_GIT_OK = 0,
@@ -392,12 +395,28 @@ typedef enum {
 } maelys_git_merge_style_t;
 
 typedef struct {
+    const char *repository_path;
+    const char *repository_name;
+    const char *ref_name;
+    const char *expected_identity;
+    size_t max_objects;
+    uint64_t max_bytes;
+} maelys_git_pr_source_t;
+
+typedef struct {
     int mergeable;
     int empty;
+    int cross_repository;
     char merge_base_oid[65];
     char merge_tree_oid[65];
     char prepared_oid[65];
     char policy_fingerprint[65];
+    char source_repository[MAELYS_GIT_MAX_REPOSITORY];
+    char source_ref[MAELYS_GIT_MAX_REF];
+    char source_oid[65];
+    char source_identity[128];
+    size_t source_object_count;
+    uint64_t source_object_bytes;
     char pr_id[128];
     char pr_head_ref[MAELYS_GIT_MAX_REF];
     char pr_merged_ref[MAELYS_GIT_MAX_REF];
@@ -422,6 +441,16 @@ maelys_git_result_t maelys_git_pr_check(
     const char *message,
     maelys_git_pr_check_result_t *out_result,
     maelys_git_error_t *error);
+maelys_git_result_t maelys_git_pr_check_with_source(
+    const char *git_executable,
+    const char *repository_path,
+    const char *base_oid,
+    const char *head_oid,
+    maelys_git_merge_style_t style,
+    const char *message,
+    const maelys_git_pr_source_t *source,
+    maelys_git_pr_check_result_t *out_result,
+    maelys_git_error_t *error);
 maelys_git_result_t maelys_git_pr_merge(
     const char *git_executable,
     const char *repository_path,
@@ -435,6 +464,25 @@ maelys_git_result_t maelys_git_pr_merge(
     const maelys_git_pr_gates_t *gates,
     maelys_git_policy_t *policy,
     const char *pr_id,
+    const char *expected_prepared_oid,
+    const char *expected_policy_fingerprint,
+    int apply,
+    maelys_git_pr_check_result_t *out_result,
+    maelys_git_error_t *error);
+maelys_git_result_t maelys_git_pr_merge_with_source(
+    const char *git_executable,
+    const char *repository_path,
+    const char *repository_name,
+    const char *base_ref,
+    const char *base_oid,
+    const char *head_oid,
+    maelys_git_merge_style_t style,
+    const char *message,
+    const char *principal,
+    const maelys_git_pr_gates_t *gates,
+    maelys_git_policy_t *policy,
+    const char *pr_id,
+    const maelys_git_pr_source_t *source,
     const char *expected_prepared_oid,
     const char *expected_policy_fingerprint,
     int apply,

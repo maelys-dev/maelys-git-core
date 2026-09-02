@@ -112,7 +112,15 @@
             "base_oid": {"type": "string", "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$"},
             "head_oid": {"type": "string", "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$"},
             "style": {"enum": ["ff", "merge", "squash"]},
-            "message": {"type": "string", "minLength": 1, "maxLength": 65536}
+            "message": {"type": "string", "minLength": 1, "maxLength": 65536},
+            "source_repository": {"type": "string", "minLength": 1, "maxLength": 511},
+            "source_ref": {"type": "string", "pattern": "^refs/heads/", "maxLength": 511},
+            "max_source_objects": {"type": "integer", "minimum": 1},
+            "max_source_bytes": {"type": "integer", "minimum": 1}
+          },
+          "dependentRequired": {
+            "source_repository": ["source_ref"],
+            "source_ref": ["source_repository"]
           }
         }
       }
@@ -132,6 +140,11 @@
             "style": {"enum": ["ff", "merge", "squash"]},
             "message": {"type": "string", "minLength": 1, "maxLength": 65536},
             "pr_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,127}$"},
+            "source_repository": {"type": "string", "minLength": 1, "maxLength": 511},
+            "source_ref": {"type": "string", "pattern": "^refs/heads/", "maxLength": 511},
+            "max_source_objects": {"type": "integer", "minimum": 1},
+            "max_source_bytes": {"type": "integer", "minimum": 1},
+            "expected_source_identity": {"type": "string", "pattern": "^[0-9a-f]+:[0-9a-f]+$"},
             "approvals": {"type": "integer", "minimum": 0},
             "required_approvals": {"type": "integer", "minimum": 0},
             "status_checks_passed": {"type": "boolean"},
@@ -140,10 +153,23 @@
             "expected_policy_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             "apply": {"type": "boolean"}
           },
-          "allOf": [{
-            "if": {"properties": {"apply": {"const": true}}},
-            "then": {"required": ["expected_prepared_oid", "expected_policy_fingerprint"]}
-          }]
+          "dependentRequired": {
+            "source_repository": ["source_ref"],
+            "source_ref": ["source_repository"]
+          },
+          "allOf": [
+            {
+              "if": {"properties": {"apply": {"const": true}}},
+              "then": {"required": ["expected_prepared_oid", "expected_policy_fingerprint"]}
+            },
+            {
+              "if": {
+                "required": ["source_repository"],
+                "properties": {"apply": {"const": true}}
+              },
+              "then": {"required": ["expected_source_identity"]}
+            }
+          ]
         }
       }
     }

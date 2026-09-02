@@ -187,7 +187,8 @@ if(MAELYS_GIT_BUILD_TESTS)
     add_test(NAME maelys-git-pr-integration
         COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pr_cli.sh
             $<TARGET_FILE:maelys-git>
-            ${CMAKE_CURRENT_SOURCE_DIR}/policies/manifest.json)
+            ${CMAKE_CURRENT_SOURCE_DIR}/policies/manifest.json
+            $<TARGET_FILE:maelys-git-executor>)
 
     add_test(NAME maelys-git-hook-integration
         COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hook_cli.sh
