@@ -53,9 +53,10 @@ porte jamais de précondition, un apply n'en manque jamais.
 
 Une valeur par défaut est déclarée une seule fois, dans `default_text` ; elle
 est validée contre le type au démarrage, exposée par `describe` (`default`) et
-livrée par les accesseurs typés quand l'option est absente. Le test de
-catalogue vérifie que les défauts du hook restent égaux à ceux de la
-bibliothèque (`maelys_git_inspection_limits_default`).
+livrée par les accesseurs typés quand l'option est absente. Quand la
+bibliothèque définit la constante (`MAELYS_GIT_DEFAULT_MAX_COMMITS`,
+`MAELYS_GIT_PR_DEFAULT_MAX_SOURCE_BYTES`, ...), le catalogue la déclare avec
+`MAELYS_CLI_DEFAULT_OF` : une seule source, validée au démarrage.
 
 ## Effets
 

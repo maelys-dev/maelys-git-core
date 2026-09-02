@@ -2187,7 +2187,7 @@
                   "type": "size"
                 },
                 "conflictsWith": [],
-                "default": "512M",
+                "default": "536870912",
                 "long": "--max-source-bytes",
                 "repeatable": false,
                 "required": false,
@@ -2589,7 +2589,7 @@
                   "type": "size"
                 },
                 "conflictsWith": [],
-                "default": "512M",
+                "default": "536870912",
                 "long": "--max-source-bytes",
                 "repeatable": false,
                 "required": false,
@@ -4427,7 +4427,7 @@
                   "type": "size"
                 },
                 "conflictsWith": [],
-                "default": "10G",
+                "default": "10737418240",
                 "long": "--max-total-blob-bytes",
                 "repeatable": false,
                 "required": false,
@@ -4442,7 +4442,7 @@
                   "type": "size"
                 },
                 "conflictsWith": [],
-                "default": "512M",
+                "default": "536870912",
                 "long": "--max-inspected-blob-bytes",
                 "repeatable": false,
                 "required": false,

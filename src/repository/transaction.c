@@ -85,10 +85,10 @@ maelys_git_result_t maelys_git_repository_classify_update(
 void maelys_git_inspection_limits_default(maelys_git_inspection_limits_t *limits) {
     if (!limits) return;
     *limits = (maelys_git_inspection_limits_t){
-        .max_commits = 10000u,
-        .max_changes = 100000u,
-        .max_total_new_blob_size = 10ULL * 1024ULL * 1024ULL * 1024ULL,
-        .max_inspected_blob_bytes = 512u * 1024u * 1024u,
+        .max_commits = MAELYS_GIT_DEFAULT_MAX_COMMITS,
+        .max_changes = MAELYS_GIT_DEFAULT_MAX_CHANGES,
+        .max_total_new_blob_size = MAELYS_GIT_DEFAULT_MAX_TOTAL_NEW_BLOB_BYTES,
+        .max_inspected_blob_bytes = MAELYS_GIT_DEFAULT_MAX_INSPECTED_BLOB_BYTES,
     };
 }
 

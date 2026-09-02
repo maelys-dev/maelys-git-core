@@ -2,7 +2,8 @@
 # fails when the committed documents under DOCS_DIR differ.
 #
 # usage: cmake -DPYTHON=... -DREFERENCE=... -DBUILD_DIR=... -DDOCS_DIR=...
-#              -DWORK_DIR=... -DPROGRAMS="a;b" -P cmake/check_cli_docs.cmake
+#              -DWORK_DIR=... -DPROGRAMS="a;b" [-DREFERENCE_ARGS="--title;T"]
+#              -P cmake/check_cli_docs.cmake
 foreach(variable IN ITEMS PYTHON REFERENCE BUILD_DIR DOCS_DIR WORK_DIR PROGRAMS)
     if(NOT DEFINED ${variable})
         message(FATAL_ERROR "${variable} is required")
@@ -12,7 +13,7 @@ file(MAKE_DIRECTORY "${WORK_DIR}")
 execute_process(
     COMMAND "${PYTHON}" "${REFERENCE}" --build "${BUILD_DIR}"
         --markdown "${WORK_DIR}/cli-reference.md"
-        --json "${WORK_DIR}/cli-contract.json" ${PROGRAMS}
+        --json "${WORK_DIR}/cli-contract.json" ${REFERENCE_ARGS} ${PROGRAMS}
     RESULT_VARIABLE status
     OUTPUT_QUIET)
 if(NOT status EQUAL 0)

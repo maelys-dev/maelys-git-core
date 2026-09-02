@@ -17,18 +17,19 @@ static const maelys_cli_option_t pre_receive_options[] = {
      "Authenticated principal; defaults to MAELYS_GIT_PRINCIPAL.")},
     MAELYS_GIT_CLI_GIT_OPTION,
     {MAELYS_CLI_PATH("git-dir", "DIR", "Bare Git directory; defaults to GIT_DIR.")},
+    /* Defaults have one source: the library constants. */
     {MAELYS_CLI_UNSIGNED("max-commits", "COUNT",
      "Maximum commits inspected across the receive transaction.", 1u, HOOK_LIMIT_MAX),
-     .default_text = "10000"},
+     MAELYS_CLI_DEFAULT_OF(MAELYS_GIT_DEFAULT_MAX_COMMITS)},
     {MAELYS_CLI_UNSIGNED("max-changes", "COUNT",
      "Maximum changed paths across the receive transaction.", 1u, HOOK_LIMIT_MAX),
-     .default_text = "100000"},
+     MAELYS_CLI_DEFAULT_OF(MAELYS_GIT_DEFAULT_MAX_CHANGES)},
     {MAELYS_CLI_SIZE("max-total-blob-bytes", "BYTES",
      "Maximum total size of new blobs across the receive transaction.", 1u, 0u),
-     .default_text = "10G"},
+     MAELYS_CLI_DEFAULT_OF(MAELYS_GIT_DEFAULT_MAX_TOTAL_NEW_BLOB_BYTES)},
     {MAELYS_CLI_SIZE("max-inspected-blob-bytes", "BYTES",
      "Maximum blob content consumed across the receive transaction.", 1u, HOOK_LIMIT_MAX),
-     .default_text = "512M"},
+     MAELYS_CLI_DEFAULT_OF(MAELYS_GIT_DEFAULT_MAX_INSPECTED_BLOB_BYTES)},
 };
 
 static const maelys_cli_option_t post_receive_options[] = {
@@ -51,7 +52,7 @@ static int missing_principal(maelys_cli_context_t *context, const char *operatio
 }
 
 /* The typed accessors always deliver a value: the invocation's or the
- * catalog default, which tests keep equal to the library default. */
+ * catalog default, declared from the library constant. */
 static void read_limit(const maelys_cli_context_t *context, const char *name, size_t *out) {
     uint64_t value = 0u;
     if (maelys_cli_option_unsigned(context, name, &value)) *out = (size_t)value;

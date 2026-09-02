@@ -76,12 +76,15 @@ else()
             "maelys-cli was not found: install it (find_package(maelys-cli)) or set "
             "MAELYS_CLI_SOURCE_DIR to its source tree")
     endif()
+    # Core only: the extension archive and dispatcher would pull maelys-json.
     set(MAELYS_CLI_BUILD_DISPATCHER OFF)
+    set(MAELYS_CLI_BUILD_EXTENSION OFF)
     set(MAELYS_CLI_BUILD_TESTS OFF)
     add_subdirectory("${MAELYS_CLI_SOURCE_DIR}"
                      "${CMAKE_CURRENT_BINARY_DIR}/maelys-cli"
                      EXCLUDE_FROM_ALL)
     unset(MAELYS_CLI_BUILD_DISPATCHER)
+    unset(MAELYS_CLI_BUILD_EXTENSION)
     unset(MAELYS_CLI_BUILD_TESTS)
     set(MAELYS_CLI_EMBED "${MAELYS_CLI_SOURCE_DIR}/tools/maelys-cli-embed")
     set(MAELYS_CLI_REFERENCE "${MAELYS_CLI_SOURCE_DIR}/tools/generate_cli_reference.py")
@@ -190,6 +193,12 @@ target_link_libraries(maelys_git_cli_agent
 
 set(MAELYS_GIT_PROGRAMS maelys-git maelys-git-agent maelys-git-executor
     maelys-git-shell maelys-git-hook)
+# Wording of the generated reference belongs to the product.
+set(MAELYS_GIT_REFERENCE_ARGS
+    --title "Référence des CLI Maelys Git Core"
+    --intro-file "${CMAKE_CURRENT_SOURCE_DIR}/docs/cli-reference-intro.md"
+    --columns "Identifiant|Usage|Effet|Sortie|But"
+    --global-label "Options globales :")
 
 add_executable(maelys-git cmd/maelys-git/main.c)
 target_link_libraries(maelys-git PRIVATE maelys_git_cli_admin maelys_git_build_flags)
@@ -330,6 +339,7 @@ if(MAELYS_GIT_BUILD_TESTS)
                 -DDOCS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/docs
                 -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/cli-docs-check
                 "-DPROGRAMS=${MAELYS_GIT_PROGRAMS}"
+                "-DREFERENCE_ARGS=${MAELYS_GIT_REFERENCE_ARGS}"
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_cli_docs.cmake)
     endif()
 endif()
@@ -342,8 +352,8 @@ if(Python3_Interpreter_FOUND)
             --build $<TARGET_FILE_DIR:maelys-git>
             --markdown ${CMAKE_CURRENT_SOURCE_DIR}/docs/cli-reference.md
             --json ${CMAKE_CURRENT_SOURCE_DIR}/docs/cli-contract.json
-            ${MAELYS_GIT_PROGRAMS}
-        DEPENDS ${MAELYS_GIT_PROGRAMS}
+            ${MAELYS_GIT_REFERENCE_ARGS} ${MAELYS_GIT_PROGRAMS}
+        DEPENDS ${MAELYS_GIT_PROGRAMS} docs/cli-reference-intro.md
         VERBATIM)
 endif()
 

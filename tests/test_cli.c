@@ -46,45 +46,6 @@ static int test_catalogs(void) {
     return 1;
 }
 
-/* The hook's catalog defaults must stay equal to the library defaults: the
- * typed accessors deliver the former, the library documents the latter. */
-static const maelys_cli_option_t *find_option(const maelys_cli_command_t *command,
-                                              const char *name) {
-    for (size_t i = 0u; i < command->option_count; ++i)
-        if (!strcmp(command->options[i].name, name)) return &command->options[i];
-    return NULL;
-}
-
-static int test_hook_defaults(void) {
-    const maelys_cli_command_t *pre_receive = NULL;
-    for (size_t i = 0u; i < maelys_git_cli_hook_app.command_count; ++i)
-        if (!strcmp(maelys_git_cli_hook_app.commands[i].id, "pre-receive"))
-            pre_receive = &maelys_git_cli_hook_app.commands[i];
-    CHECK(pre_receive != NULL);
-    maelys_git_inspection_limits_t limits;
-    maelys_git_inspection_limits_default(&limits);
-    struct {
-        const char *option;
-        uint64_t expected;
-    } defaults[] = {
-        {"max-commits", limits.max_commits},
-        {"max-changes", limits.max_changes},
-        {"max-total-blob-bytes", limits.max_total_new_blob_size},
-        {"max-inspected-blob-bytes", limits.max_inspected_blob_bytes},
-    };
-    for (size_t i = 0u; i < sizeof(defaults) / sizeof(defaults[0]); ++i) {
-        const maelys_cli_option_t *option = find_option(pre_receive, defaults[i].option);
-        CHECK(option && option->default_text);
-        uint64_t declared = 0u;
-        if (option->kind == MAELYS_CLI_VALUE_SIZE)
-            CHECK(maelys_cli_parse_byte_size(option->default_text, 0u, UINT64_MAX, &declared) == 0);
-        else
-            CHECK(maelys_cli_parse_u64_decimal(option->default_text, 0u, UINT64_MAX, &declared) == 0);
-        CHECK(declared == defaults[i].expected);
-    }
-    return 1;
-}
-
 static int parse(const maelys_cli_app_t *app, char **argv, int argc,
                  maelys_cli_invocation_t *invocation, maelys_cli_error_t *error) {
     return maelys_cli_parse(app, argc, argv, invocation, error) == 0;
@@ -260,10 +221,9 @@ static int test_envelopes(void) {
 int main(void) {
     int passed = 0;
     passed += test_catalogs();
-    passed += test_hook_defaults();
     passed += test_parser();
     passed += test_envelopes();
-    if (passed != 4) return 1;
+    if (passed != 3) return 1;
     (void)printf("ok: %d CLI contract test groups passed\n", passed);
     return 0;
 }

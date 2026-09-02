@@ -163,11 +163,11 @@ static const maelys_cli_option_t mirror_options[] = {
     {MAELYS_CLI_UNSIGNED("max-source-objects", "COUNT", \
      "Maximum objects reachable from a quarantined fork head.", 1u, \
      (uint64_t)INT64_MAX), .depends_on = "source-repository", \
-     .default_text = "100000"}, \
+     MAELYS_CLI_DEFAULT_OF(MAELYS_GIT_PR_DEFAULT_MAX_SOURCE_OBJECTS)}, \
     {MAELYS_CLI_SIZE("max-source-bytes", "BYTES", \
      "Maximum on-disk bytes reachable from a quarantined fork head.", 1u, \
      (uint64_t)INT64_MAX), .depends_on = "source-repository", \
-     .default_text = "512M"}
+     MAELYS_CLI_DEFAULT_OF(MAELYS_GIT_PR_DEFAULT_MAX_SOURCE_BYTES)}
 
 static const maelys_cli_option_t pr_check_options[] = {
     MAELYS_GIT_CLI_GIT_OPTION,
