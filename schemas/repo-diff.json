@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "repository",
+    "paths",
+    "pathCount"
+  ],
+  "properties": {
+    "repository": {
+      "type": "string"
+    },
+    "paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "pathCount": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

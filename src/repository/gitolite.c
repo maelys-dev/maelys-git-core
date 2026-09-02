@@ -4,7 +4,6 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdarg.h>
@@ -13,10 +12,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#ifndef PATH_MAX
-#define PATH_MAX 4096
-#endif
 
 #define MG_GITOLITE_MAX_CURRENT_REPOSITORIES 64u
 
@@ -35,6 +30,8 @@ typedef struct {
     repository_spec_kind_t kind;
     char value[512];
 } repository_spec_t;
+
+static int append_text(text_buffer_t *buffer, const char *format, ...) MG_PRINTF(2, 3);
 
 static int append_text(text_buffer_t *buffer, const char *format, ...) {
     va_list args;
@@ -595,43 +592,6 @@ static maelys_git_result_t parse_gitolite(FILE *input,
     return append_authorization_rules(policy) ? MAELYS_GIT_OK : MAELYS_GIT_ERR_IO;
 }
 
-static maelys_git_result_t write_file(const char *path,
-                                      const char *data,
-                                      size_t length,
-                                      maelys_git_error_t *error) {
-    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
-    if (fd < 0) {
-        mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "cannot create %s: %s", path, strerror(errno));
-        return MAELYS_GIT_ERR_IO;
-    }
-    size_t offset = 0u;
-    while (offset < length) {
-        ssize_t written = write(fd, data + offset, length - offset);
-        if (written < 0 && errno == EINTR) continue;
-        if (written <= 0) {
-            int saved = errno;
-            close(fd);
-            mg_error_set(error, MAELYS_GIT_ERR_IO, saved,
-                         "cannot write %s: %s", path, strerror(saved));
-            return MAELYS_GIT_ERR_IO;
-        }
-        offset += (size_t)written;
-    }
-    if (fsync(fd) != 0) {
-        int saved = errno;
-        close(fd);
-        mg_error_set(error, MAELYS_GIT_ERR_IO, saved,
-                     "cannot persist %s: %s", path, strerror(saved));
-        return MAELYS_GIT_ERR_IO;
-    }
-    if (close(fd) != 0) {
-        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
-                     "cannot close %s: %s", path, strerror(errno));
-        return MAELYS_GIT_ERR_IO;
-    }
-    return MAELYS_GIT_OK;
-}
-
 maelys_git_result_t maelys_git_migrate_gitolite(
     const char *input_path,
     const char *output_directory,
@@ -693,15 +653,18 @@ maelys_git_result_t maelys_git_migrate_gitolite(
         free(policy.data);
         return MAELYS_GIT_ERR_IO;
     }
-    char temporary[PATH_MAX];
-    int length = snprintf(temporary, sizeof(temporary), "%s.tmp.XXXXXX", output_directory);
-    int temporary_fd = length >= 0 && (size_t)length < sizeof(temporary) ?
-        mkstemp(temporary) : -1;
-    if (temporary_fd < 0 || close(temporary_fd) != 0 ||
-        unlink(temporary) != 0 || mkdir(temporary, 0700) != 0) {
+    /* The transaction directory lives beside its destination so that the
+     * final rename stays on one file system. */
+    char prefix[PATH_MAX], temporary[PATH_MAX];
+    int length = snprintf(prefix, sizeof(prefix), "%s.tmp", output_directory);
+    if (length < 0 || (size_t)length >= sizeof(prefix)) {
         free(policy.data); free(manifest.data);
-        mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "cannot create migration transaction");
-        return MAELYS_GIT_ERR_IO;
+        return MAELYS_GIT_ERR_LIMIT;
+    }
+    result = mg_make_temporary_directory(prefix, temporary, error);
+    if (result != MAELYS_GIT_OK) {
+        free(policy.data); free(manifest.data);
+        return result;
     }
     char policy_path[PATH_MAX], manifest_path[PATH_MAX];
     int p = snprintf(policy_path, sizeof(policy_path), "%s/gitolite-migrated.dl", temporary);
@@ -709,9 +672,9 @@ maelys_git_result_t maelys_git_migrate_gitolite(
     if (p < 0 || m < 0 || (size_t)p >= sizeof(policy_path) || (size_t)m >= sizeof(manifest_path))
         result = MAELYS_GIT_ERR_LIMIT;
     if (result == MAELYS_GIT_OK)
-        result = write_file(policy_path, policy.data, policy.length, error);
+        result = mg_write_file_exclusive(policy_path, policy.data, policy.length, 0600, error);
     if (result == MAELYS_GIT_OK)
-        result = write_file(manifest_path, manifest.data, manifest.length, error);
+        result = mg_write_file_exclusive(manifest_path, manifest.data, manifest.length, 0600, error);
     if (result == MAELYS_GIT_OK && rename(temporary, output_directory) != 0) {
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
                      "cannot publish migration output: %s", strerror(errno));

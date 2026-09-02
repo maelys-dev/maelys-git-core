@@ -24,8 +24,8 @@ The project is a security-oriented foundation. Its current capabilities are:
 - a persistent HTTPS/1.1 Cloud agent built on Maelys HTTP and Maelys System;
 - a separate, time-bounded Git executor process;
 - an administrative CLI for validation, authorization and repository work;
-- a Hermes-inspired executable CLI catalog for agent discovery and generated
-  documentation.
+- an executable CLI catalog on the shared `maelys-cli` framework, for agent
+  discovery and generated documentation.
 
 ## Build
 
@@ -33,6 +33,7 @@ The default Cloud-enabled layout expects these repositories to be siblings:
 
 ```text
 GitHubDocuments/
+├── maelys-cli/
 ├── maelys-datalog/
 ├── maelys-http/
 ├── maelys-system/
@@ -48,10 +49,13 @@ ctest --test-dir build --output-on-failure
 ```
 
 For a different Datalog checkout, pass
-`-DMAELYS_DATALOG_SOURCE_DIR=/absolute/path/to/maelys-datalog`.
-Jansson >= 2.14.1 and SQLite 3 are required. The default Cloud agent also
-requires Maelys HTTP, Maelys System and mbedTLS; it can be excluded with
-`-DMAELYS_GIT_ENABLE_CLOUD_AGENT=OFF`.
+`-DMAELYS_DATALOG_SOURCE_DIR=/absolute/path/to/maelys-datalog`. The CLI
+framework is taken from an installed `maelys-cli` (found through
+`find_package(maelys-cli)`) or, by default, built from the sibling source
+tree named by `MAELYS_CLI_SOURCE_DIR` through its own CMake project. Jansson >= 2.14.1 and SQLite 3 are required. The
+default Cloud agent also requires Maelys HTTP, Maelys System and mbedTLS; it
+can be excluded with `-DMAELYS_GIT_ENABLE_CLOUD_AGENT=OFF`.
+`-DMAELYS_GIT_WERROR=ON` turns the warning set into errors, as CI does.
 
 ## Policy model
 
@@ -90,8 +94,11 @@ validation exits `2` when it completes and finds violations.
 
 ## Normalized CLI contract
 
-All five binaries expose the same Hermes-inspired `agent-cli/v2` envelope and
-an executable command catalog:
+All five binaries are applications of `libmaelys_cli`: each declares one
+catalog (`src/cli/*.c`) whose output schemas live in `schemas/`, and the
+framework provides parsing, `help`, `describe`, rendering and exit codes.
+They expose the same `agent-cli/v2` envelope and an executable command
+catalog:
 
 ```sh
 build/maelys-git describe --summary --format json --compact --non-interactive

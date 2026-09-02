@@ -4,7 +4,7 @@ Maelys Git Core is pre-release software and has not been externally audited.
 Please report suspected vulnerabilities privately to the repository owner and
 avoid including secrets or exploit details in public issues.
 
-The implementation follows thirteen invariants:
+The implementation follows fourteen invariants:
 
 1. policy load and evaluation errors deny access;
 2. incoming text is never evaluated by a command shell;
@@ -26,7 +26,10 @@ The implementation follows thirteen invariants:
 12. PR apply repeats authorization and requires the reviewed target identity,
     prepared OID, policy fingerprint and, for forks, source identity;
 13. PR inputs reject object alternates, indirect repository structure and local
-    Git configuration capable of launching commands or loading external files.
+    Git configuration capable of launching commands or loading external files;
+14. temporary quarantine and transaction directories are created privately
+    with `mkdtemp` and never reused by name; lifecycle renames never replace
+    an existing entry (`renameatx_np`/`renameat2` where available).
 
 The executor process boundary does not by itself change Unix credentials. A
 production service definition should give the network agent no repository

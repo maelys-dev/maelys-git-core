@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int object_has_only(json_t *object, const char *const *allowed) {
+int mg_json_object_has_only(json_t *object, const char *const *allowed) {
     const char *key;
     json_t *value;
     json_object_foreach(object, key, value) {
@@ -81,7 +81,7 @@ maelys_git_result_t mg_protocol_parse(const char *bytes,
                      json_error.line, json_error.column, json_error.text);
         return MAELYS_GIT_ERR_PROTOCOL;
     }
-    if (!json_is_object(root) || !object_has_only(root, allowed)) {
+    if (!json_is_object(root) || !mg_json_object_has_only(root, allowed)) {
         json_decref(root);
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
                      "message must be an object with only documented fields");

@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "service",
+    "repository"
+  ],
+  "properties": {
+    "service": {
+      "enum": [
+        "upload-pack",
+        "receive-pack"
+      ]
+    },
+    "repository": {
+      "type": "string"
+    }
+  }
+}

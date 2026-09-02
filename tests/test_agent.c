@@ -1,4 +1,5 @@
 #include "agent/agent_internal.h"
+#include "test_support.h"
 
 #include <dirent.h>
 #include <stdio.h>
@@ -6,31 +7,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#define CHECK(condition) do { \
-    if (!(condition)) { \
-        (void)fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #condition); \
-        return 0; \
-    } \
-} while (0)
-
-static int remove_tree(const char *path) {
-    DIR *directory = opendir(path);
-    if (!directory) return unlink(path) == 0;
-    struct dirent *entry;
-    int ok = 1;
-    while ((entry = readdir(directory))) {
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        char child[4096];
-        (void)snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
-        struct stat status;
-        if (lstat(child, &status) != 0) { ok = 0; break; }
-        if (S_ISDIR(status.st_mode)) ok = remove_tree(child) && ok;
-        else ok = unlink(child) == 0 && ok;
-    }
-    (void)closedir(directory);
-    return rmdir(path) == 0 && ok;
-}
 
 static char *valid_command(const char *id) {
     json_t *payload = json_object();
@@ -135,7 +111,7 @@ static int test_durable_store(void) {
     json_decref(different_root); free(different); free(reused);
     mg_protocol_message_clear(&interrupted); free(interrupted_raw);
     mg_protocol_message_clear(&message); free(raw); mg_store_close(store);
-    CHECK(remove_tree(directory));
+    CHECK(test_remove_tree(directory));
     return 1;
 }
 
@@ -170,7 +146,7 @@ static int test_provision_and_token_security(void) {
     CHECK(!strcmp(value, "secret-token"));
     CHECK(chmod(token, 0644) == 0);
     CHECK(mg_token_load(token, value, sizeof(value), &error) == MAELYS_GIT_ERR_DENIED);
-    CHECK(remove_tree(directory));
+    CHECK(test_remove_tree(directory));
     return 1;
 }
 

@@ -1,0 +1,58 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mode",
+    "changed",
+    "input",
+    "output",
+    "groupCount",
+    "repositoryCount",
+    "ruleCount",
+    "vrefCount",
+    "unsupported",
+    "canApply"
+  ],
+  "properties": {
+    "mode": {
+      "enum": [
+        "plan",
+        "apply"
+      ]
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "input": {
+      "type": "string"
+    },
+    "output": {
+      "type": "string"
+    },
+    "groupCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "repositoryCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ruleCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "vrefCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "unsupported": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "canApply": {
+      "type": "boolean"
+    }
+  }
+}

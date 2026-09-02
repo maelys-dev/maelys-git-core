@@ -63,6 +63,9 @@ typedef struct {
     unsigned attempts;
 } mg_outbox_item_t;
 
+/* 1 when every member of `object` is named in the NULL-terminated list. */
+int mg_json_object_has_only(json_t *object, const char *const *allowed);
+
 maelys_git_result_t mg_protocol_parse(const char *bytes,
                                       size_t length,
                                       mg_agent_message_t *out,

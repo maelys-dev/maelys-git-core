@@ -1,4 +1,5 @@
 #include "maelys_git_agent.h"
+#include "test_support.h"
 
 #include <dirent.h>
 #include <stdio.h>
@@ -7,35 +8,6 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
-
-#define CHECK(condition) do { \
-    if (!(condition)) { \
-        (void)fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #condition); \
-        return 0; \
-    } \
-} while (0)
-
-static int remove_tree(const char *path) {
-    DIR *directory = opendir(path);
-    if (!directory) return unlink(path) == 0;
-    struct dirent *entry;
-    int ok = 1;
-    while ((entry = readdir(directory))) {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
-        char child[4096];
-        int count = snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
-        if (count < 0 || (size_t)count >= sizeof(child)) { ok = 0; break; }
-        struct stat status;
-        if (lstat(child, &status) != 0) { ok = 0; break; }
-        if (S_ISDIR(status.st_mode)) {
-            if (!remove_tree(child)) ok = 0;
-        } else if (unlink(child) != 0) {
-            ok = 0;
-        }
-    }
-    (void)closedir(directory);
-    return rmdir(path) == 0 && ok;
-}
 
 static int test_repository_names(void) {
     CHECK(maelys_git_repository_name_is_valid("example.git"));
@@ -128,7 +100,7 @@ static int test_repository_init(void) {
     char resolved[4096];
     CHECK(maelys_git_resolve_repository(root, "example.git", resolved, sizeof(resolved), &error) == MAELYS_GIT_OK);
     CHECK(strstr(resolved, "/example.git") != NULL);
-    CHECK(remove_tree(root));
+    CHECK(test_remove_tree(root));
     return 1;
 }
 
@@ -261,7 +233,7 @@ static int test_authorized_keys(void) {
     CHECK(maelys_git_compile_authorized_keys(keys, output, "/usr/local/bin/maelys-git-shell",
         "/srv/git", "/etc/maelys/policy.json", 0, &count, &error) ==
         MAELYS_GIT_ERR_PROTOCOL);
-    CHECK(remove_tree(root));
+    CHECK(test_remove_tree(root));
     return 1;
 }
 

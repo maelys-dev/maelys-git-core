@@ -36,7 +36,7 @@ int mg_copy_string(char *out, size_t capacity, const char *value) {
     return 1;
 }
 
-int mg_is_oid(const char *value) {
+int maelys_git_oid_is_valid(const char *value) {
     if (!value) return 0;
     size_t length = strlen(value);
     if (length != 40u && length != 64u) return 0;
@@ -46,10 +46,21 @@ int mg_is_oid(const char *value) {
     return 1;
 }
 
+int mg_is_oid(const char *value) {
+    return maelys_git_oid_is_valid(value);
+}
+
 int mg_is_zero_oid(const char *value) {
     if (!mg_is_oid(value)) return 0;
     for (const char *p = value; *p; ++p) {
         if (*p != '0') return 0;
     }
     return 1;
+}
+
+void mg_trim_line_endings(unsigned char *data, size_t *length) {
+    if (!data || !length) return;
+    while (*length && (data[*length - 1u] == '\n' || data[*length - 1u] == '\r'))
+        --*length;
+    data[*length] = '\0';
 }

@@ -9,10 +9,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#ifndef PATH_MAX
-#define PATH_MAX 4096
-#endif
-
 static int path_is_inside(const char *root, const char *path) {
     size_t root_length = strlen(root);
     return strncmp(root, path, root_length) == 0 &&

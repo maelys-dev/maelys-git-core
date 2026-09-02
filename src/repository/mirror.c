@@ -3,7 +3,6 @@
 #include "common/maelys_sha256.h"
 
 #include <errno.h>
-#include <inttypes.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -12,48 +11,12 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#ifndef PATH_MAX
-#define PATH_MAX 4096
-#endif
-
 #define MG_MIRROR_MAX_REFS_BYTES (16u * 1024u * 1024u)
 
 typedef struct {
     int symbolic;
     char value[MAELYS_GIT_MAX_REF];
 } mirror_head_t;
-
-static maelys_git_result_t mirror_root(const char *root,
-                                       char out[PATH_MAX],
-                                       maelys_git_error_t *error) {
-    if (!root || !realpath(root, out)) {
-        mg_error_set(error, MAELYS_GIT_ERR_NOT_FOUND, errno,
-                     "cannot resolve mirror root: %s", strerror(errno));
-        return MAELYS_GIT_ERR_NOT_FOUND;
-    }
-    struct stat status;
-    if (lstat(out, &status) != 0 || !S_ISDIR(status.st_mode) || S_ISLNK(status.st_mode)) {
-        mg_error_set(error, MAELYS_GIT_ERR_INVALID_REPOSITORY, errno,
-                     "mirror root is not a direct directory");
-        return MAELYS_GIT_ERR_INVALID_REPOSITORY;
-    }
-    return MAELYS_GIT_OK;
-}
-
-static int mirror_identity(const char *path, char out[128]) {
-    struct stat status;
-    if (lstat(path, &status) != 0 || !S_ISDIR(status.st_mode) || S_ISLNK(status.st_mode))
-        return 0;
-    int written = snprintf(out, 128u, "%" PRIxMAX ":%" PRIxMAX,
-                           (uintmax_t)status.st_dev, (uintmax_t)status.st_ino);
-    return written > 0 && written < 128;
-}
-
-static void trim_capture(unsigned char *data, size_t *length) {
-    while (*length && (data[*length - 1u] == '\n' || data[*length - 1u] == '\r'))
-        --*length;
-    data[*length] = '\0';
-}
 
 static maelys_git_result_t mirror_head(const char *git_executable,
                                        const char *repository_path,
@@ -71,7 +34,7 @@ static maelys_git_result_t mirror_head(const char *git_executable,
         MAELYS_GIT_MAX_REF - 1u, &status, error);
     if (result != MAELYS_GIT_OK) return result;
     if (status == 0) {
-        trim_capture(captured, &length);
+        mg_trim_line_endings(captured, &length);
         out->symbolic = 1;
         int copied = length > 0u && length < sizeof(out->value) &&
                      mg_copy_string(out->value, sizeof(out->value), (char *)captured);
@@ -98,7 +61,7 @@ static maelys_git_result_t mirror_head(const char *git_executable,
                      "repository HEAD is neither symbolic nor a valid object");
         return MAELYS_GIT_ERR_PROTOCOL;
     }
-    trim_capture(captured, &length);
+    mg_trim_line_endings(captured, &length);
     int copied = mg_is_oid((char *)captured) &&
                  mg_copy_string(out->value, sizeof(out->value), (char *)captured);
     free(captured);
@@ -214,9 +177,9 @@ maelys_git_result_t maelys_git_repository_mirror(
     memset(out_result, 0, sizeof(*out_result));
 
     char canonical_source_root[PATH_MAX], canonical_target_root[PATH_MAX];
-    maelys_git_result_t result = mirror_root(source_root, canonical_source_root, error);
+    maelys_git_result_t result = mg_canonical_directory(source_root, canonical_source_root, "mirror root", error);
     if (result != MAELYS_GIT_OK) return result;
-    result = mirror_root(target_root, canonical_target_root, error);
+    result = mg_canonical_directory(target_root, canonical_target_root, "mirror root", error);
     if (result != MAELYS_GIT_OK) return result;
     result = maelys_git_resolve_repository(canonical_source_root, source_repository,
                                            out_result->source_path,
@@ -231,7 +194,7 @@ maelys_git_result_t maelys_git_repository_mirror(
                      "mirror source and target must differ");
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     }
-    if (!mirror_identity(out_result->source_path, out_result->source_identity)) {
+    if (!mg_path_identity(out_result->source_path, out_result->source_identity, NULL)) {
         mg_error_set(error, MAELYS_GIT_ERR_INVALID_REPOSITORY, errno,
                      "mirror source is not a direct repository directory");
         return MAELYS_GIT_ERR_INVALID_REPOSITORY;
@@ -248,7 +211,7 @@ maelys_git_result_t maelys_git_repository_mirror(
                                                resolved_target, sizeof(resolved_target), error);
         if (result != MAELYS_GIT_OK) return result;
         if (strcmp(resolved_target, out_result->target_path) != 0 ||
-            !mirror_identity(resolved_target, out_result->target_identity)) {
+            !mg_path_identity(resolved_target, out_result->target_identity, NULL)) {
             mg_error_set(error, MAELYS_GIT_ERR_INVALID_REPOSITORY, 0,
                          "mirror target is not a direct repository directory");
             return MAELYS_GIT_ERR_INVALID_REPOSITORY;

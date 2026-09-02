@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "allowed",
+    "explicitDeny",
+    "matchedPolicy",
+    "reason"
+  ],
+  "properties": {
+    "allowed": {
+      "type": "boolean"
+    },
+    "explicitDeny": {
+      "type": "boolean"
+    },
+    "matchedPolicy": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Index of the deciding policy in the manifest; null when no policy matched."
+    },
+    "reason": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mode",
+    "changed",
+    "repository",
+    "ref",
+    "newOid",
+    "git",
+    "precondition"
+  ],
+  "properties": {
+    "mode": {
+      "enum": [
+        "plan",
+        "apply"
+      ]
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "repository": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "string"
+    },
+    "newOid": {
+      "type": "string"
+    },
+    "git": {
+      "type": "string"
+    },
+    "precondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "currentOid"
+      ],
+      "properties": {
+        "currentOid": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

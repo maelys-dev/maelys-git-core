@@ -1,3 +1,6 @@
+/* Change inspection of Git receive transactions: ref classification, the
+ * streamed tree/diff visitor with blob inspection quotas, and the textual
+ * pre-receive transaction reader. */
 #include "internal.h"
 
 #include <errno.h>
@@ -6,6 +9,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define MG_GIT_STREAM_MAX_BYTES (256u * 1024u * 1024u)
 
 const char *maelys_git_ref_kind_name(maelys_git_ref_kind_t kind) {
     switch (kind) {
@@ -135,106 +140,113 @@ static int parse_mode(const char *text, unsigned int *out) {
     return 1;
 }
 
+/* Reads one NUL-delimited record; returns 1, 0 at EOF, -1 on failure. */
+static int read_record(FILE *stream, char **record, size_t *capacity,
+                       maelys_git_error_t *error, const char *what) {
+    ssize_t length = getdelim(record, capacity, '\0', stream);
+    if (length <= 0) {
+        if (ferror(stream)) {
+            mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "cannot read %s", what);
+            return -1;
+        }
+        return 0;
+    }
+    return 1;
+}
+
+/* One `git ls-tree -r -z` record: "MODE TYPE OID\tPATH". */
 static int read_tree_change(FILE *stream,
                             int deleting,
                             maelys_git_change_t *change,
                             maelys_git_error_t *error) {
     char *record = NULL;
     size_t capacity = 0u;
-    ssize_t length = getdelim(&record, &capacity, '\0', stream);
-    if (length <= 0) {
+    int read = read_record(stream, &record, &capacity, error, "git tree stream");
+    if (read <= 0) {
         free(record);
-        if (ferror(stream)) {
-            mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "cannot read git tree stream");
-            return -1;
-        }
-        return 0;
+        return read;
     }
-    if (record[length - 1] == '\0') record[length - 1] = '\0';
     char *tab = strchr(record, '\t');
     char mode_text[16], type[16], object[65], extra;
-    if (!tab) {
-        free(record);
-        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "invalid git ls-tree record");
-        return -1;
+    int valid = tab != NULL;
+    if (valid) {
+        *tab = '\0';
+        const char *path = tab + 1u;
+        int parsed = sscanf(record, "%15s %15s %64s %c", mode_text, type, object, &extra);
+        valid = parsed == 3 && *path &&
+                (strcmp(type, "blob") == 0 || strcmp(type, "commit") == 0);
+        if (valid) {
+            memset(change, 0, sizeof(*change));
+            change->kind = deleting ? MAELYS_GIT_CHANGE_DELETE : MAELYS_GIT_CHANGE_ADD;
+            char *known_oid = deleting ? change->old_oid : change->new_oid;
+            char *absent_oid = deleting ? change->new_oid : change->old_oid;
+            unsigned int *known_mode = deleting ? &change->old_mode : &change->new_mode;
+            valid = parse_mode(mode_text, known_mode) &&
+                    mg_copy_string(change->path, sizeof(change->path), path) &&
+                    mg_copy_string(known_oid, 65u, object);
+            if (valid) {
+                memset(absent_oid, '0', strlen(object));
+                absent_oid[strlen(object)] = '\0';
+                change->submodule = *known_mode == 0160000u;
+                change->symlink = *known_mode == 0120000u;
+            }
+        }
     }
-    *tab = '\0';
-    const char *path = tab + 1u;
-    int parsed = sscanf(record, "%15s %15s %64s %c",
-                        mode_text, type, object, &extra);
-    if (parsed != 3 || !*path ||
-        (strcmp(type, "blob") != 0 && strcmp(type, "commit") != 0)) {
-        free(record);
-        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "invalid git ls-tree record");
-        return -1;
-    }
-    memset(change, 0, sizeof(*change));
-    change->kind = deleting ? MAELYS_GIT_CHANGE_DELETE : MAELYS_GIT_CHANGE_ADD;
-    if (!parse_mode(mode_text, deleting ? &change->old_mode : &change->new_mode) ||
-        !mg_copy_string(change->path, sizeof(change->path), path) ||
-        !mg_copy_string(deleting ? change->old_oid : change->new_oid, 65u, object)) {
-        free(record);
-        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "invalid git tree values");
-        return -1;
-    }
-    memset(deleting ? change->new_oid : change->old_oid, '0', strlen(object));
-    (deleting ? change->new_oid : change->old_oid)[strlen(object)] = '\0';
-    change->submodule = (deleting ? change->old_mode : change->new_mode) == 0160000u;
-    change->symlink = (deleting ? change->old_mode : change->new_mode) == 0120000u;
     free(record);
+    if (!valid) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "invalid git ls-tree record");
+        return -1;
+    }
     return 1;
 }
 
+/* One `git diff-tree --raw -z` record: header, path and, for renames, the
+ * destination path. */
 static int read_diff_change(FILE *stream,
                             maelys_git_change_t *change,
                             maelys_git_error_t *error) {
     char *header = NULL, *path = NULL;
     size_t header_capacity = 0u, path_capacity = 0u;
-    ssize_t header_length = getdelim(&header, &header_capacity, '\0', stream);
-    if (header_length <= 0) {
+    int read = read_record(stream, &header, &header_capacity, error, "git diff stream");
+    if (read <= 0) {
         free(header);
-        if (ferror(stream)) {
-            mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "cannot read git diff stream");
-            return -1;
-        }
-        return 0;
+        return read;
     }
-    if (header[header_length - 1] == '\0') header[header_length - 1] = '\0';
-    ssize_t path_length = getdelim(&path, &path_capacity, '\0', stream);
-    if (path_length <= 0) goto invalid;
-    if (path[path_length - 1] == '\0') path[path_length - 1] = '\0';
+    int valid = getdelim(&path, &path_capacity, '\0', stream) > 0;
     char old_mode[16], new_mode[16], old_object[65], new_object[65], status_text[8], extra;
-    if (sscanf(header, ":%15s %15s %64s %64s %7s%c",
-               old_mode, new_mode, old_object, new_object, status_text, &extra) != 5)
-        goto invalid;
-    memset(change, 0, sizeof(*change));
-    change->kind = status_text[0] == 'A' ? MAELYS_GIT_CHANGE_ADD :
-                   status_text[0] == 'D' ? MAELYS_GIT_CHANGE_DELETE :
-                   status_text[0] == 'R' ? MAELYS_GIT_CHANGE_RENAME :
-                   status_text[0] == 'T' ? MAELYS_GIT_CHANGE_TYPE : MAELYS_GIT_CHANGE_MODIFY;
-    if (!parse_mode(old_mode, &change->old_mode) ||
-        !parse_mode(new_mode, &change->new_mode) ||
-        !mg_copy_string(change->old_oid, sizeof(change->old_oid), old_object) ||
-        !mg_copy_string(change->new_oid, sizeof(change->new_oid), new_object) ||
-        !mg_copy_string(change->path, sizeof(change->path), path))
-        goto invalid;
-    if (change->kind == MAELYS_GIT_CHANGE_RENAME) {
-        if (!mg_copy_string(change->old_path, sizeof(change->old_path), path)) goto invalid;
-        path_length = getdelim(&path, &path_capacity, '\0', stream);
-        if (path_length <= 0) goto invalid;
-        if (path[path_length - 1] == '\0') path[path_length - 1] = '\0';
-        if (!mg_copy_string(change->path, sizeof(change->path), path)) goto invalid;
+    if (valid)
+        valid = sscanf(header, ":%15s %15s %64s %64s %7s%c",
+                       old_mode, new_mode, old_object, new_object, status_text, &extra) == 5;
+    if (valid) {
+        memset(change, 0, sizeof(*change));
+        change->kind = status_text[0] == 'A' ? MAELYS_GIT_CHANGE_ADD :
+                       status_text[0] == 'D' ? MAELYS_GIT_CHANGE_DELETE :
+                       status_text[0] == 'R' ? MAELYS_GIT_CHANGE_RENAME :
+                       status_text[0] == 'T' ? MAELYS_GIT_CHANGE_TYPE : MAELYS_GIT_CHANGE_MODIFY;
+        valid = parse_mode(old_mode, &change->old_mode) &&
+                parse_mode(new_mode, &change->new_mode) &&
+                mg_copy_string(change->old_oid, sizeof(change->old_oid), old_object) &&
+                mg_copy_string(change->new_oid, sizeof(change->new_oid), new_object) &&
+                mg_copy_string(change->path, sizeof(change->path), path);
     }
-    change->submodule = change->new_mode == 0160000u ||
-                        (mg_is_zero_oid(change->new_oid) && change->old_mode == 0160000u);
-    change->symlink = change->new_mode == 0120000u ||
-                      (mg_is_zero_oid(change->new_oid) && change->old_mode == 0120000u);
-    free(header); free(path);
+    if (valid && change->kind == MAELYS_GIT_CHANGE_RENAME) {
+        valid = mg_copy_string(change->old_path, sizeof(change->old_path), path) &&
+                getdelim(&path, &path_capacity, '\0', stream) > 0 &&
+                mg_copy_string(change->path, sizeof(change->path), path);
+    }
+    if (valid) {
+        change->submodule = change->new_mode == 0160000u ||
+                            (mg_is_zero_oid(change->new_oid) && change->old_mode == 0160000u);
+        change->symlink = change->new_mode == 0120000u ||
+                          (mg_is_zero_oid(change->new_oid) && change->old_mode == 0120000u);
+    }
+    free(header);
+    free(path);
+    if (!valid) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "invalid git diff-tree stream");
+        return -1;
+    }
     return 1;
-invalid:
-    free(header); free(path);
-    mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "invalid git diff-tree stream");
-    return -1;
 }
 
 static const char *inspection_oid(const maelys_git_change_t *change) {
@@ -332,121 +344,74 @@ static maelys_git_result_t run_blob_batch(const char *git,
     return result;
 }
 
-static maelys_git_result_t visit_tree(const char *git,
-                                      const char *repository,
-                                      const char *oid,
-                                      int deleting,
-                                      const maelys_git_inspection_limits_t *limits,
-                                      maelys_git_change_visitor_t visitor,
-                                      void *context,
-                                      maelys_git_change_summary_t *summary,
-                                      maelys_git_error_t *error) {
-    FILE *stream = tmpfile();
-    if (!stream) {
-        mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "tmpfile failed: %s", strerror(errno));
-        return MAELYS_GIT_ERR_IO;
-    }
-    char *argv[] = {(char *)git, "--git-dir", (char *)repository,
-                    "ls-tree", "-r", "-z", "--full-tree", (char *)oid, NULL};
-    int status = 0;
-    maelys_git_result_t result = mg_process_spool_status(
-        git, argv, stream, 256u * 1024u * 1024u, &status, error);
-    if (result != MAELYS_GIT_OK || status != 0) {
-        if (result == MAELYS_GIT_OK)
-            mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0, "git ls-tree failed with status %d", status);
-        fclose(stream);
-        return result == MAELYS_GIT_OK ? MAELYS_GIT_ERR_PROCESS : result;
-    }
-    FILE *requests = tmpfile(), *batch = tmpfile();
-    if (!requests || !batch) {
-        if (requests) fclose(requests);
-        if (batch) fclose(batch);
-        fclose(stream);
-        mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "tmpfile failed: %s", strerror(errno));
-        return MAELYS_GIT_ERR_IO;
-    }
-    rewind(stream);
-    size_t change_count = 0u, request_count = 0u;
-    maelys_git_change_t change;
-    int read_result;
-    while ((read_result = read_tree_change(stream, deleting, &change, error)) > 0) {
-        if (++change_count > limits->max_changes) {
-            mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0,
-                         "change count exceeds configured limit %zu", limits->max_changes);
-            result = MAELYS_GIT_ERR_LIMIT;
-            break;
-        }
-        const char *inspect = inspection_oid(&change);
-        if (inspect && fprintf(requests, "%s\n", inspect) < 0) {
-            result = MAELYS_GIT_ERR_IO;
-            break;
-        }
-        if (inspect) ++request_count;
-    }
-    if (read_result < 0 && result == MAELYS_GIT_OK) result = error->code;
-    if (result == MAELYS_GIT_OK)
-        result = run_blob_batch(git, repository, requests, batch,
-                                request_count, limits, error);
-    if (result == MAELYS_GIT_OK) {
-        rewind(stream);
-        unsigned long long inspected_bytes = 0u;
-        while ((read_result = read_tree_change(stream, deleting, &change, error)) > 0) {
-            const char *inspect = inspection_oid(&change);
-            result = inspect_batch_record(batch, inspect,
-                                          !mg_is_zero_oid(change.new_oid),
-                                          &change, &inspected_bytes, limits, error);
-            if (result == MAELYS_GIT_OK)
-                result = emit_change(&change, limits, visitor, context, summary, error);
-            if (result != MAELYS_GIT_OK) break;
-        }
-        if (result == MAELYS_GIT_OK) summary->inspected_blob_bytes = (size_t)inspected_bytes;
-        if (read_result < 0 && result == MAELYS_GIT_OK) result = error->code;
-        if (result == MAELYS_GIT_OK && request_count && fgetc(batch) != EOF) {
-            mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
-                         "git cat-file returned unexpected trailing data");
-            result = MAELYS_GIT_ERR_PROTOCOL;
-        }
-    }
-    fclose(requests); fclose(batch); fclose(stream);
-    return result;
+/* A reader turns the next record of a spooled Git stream into a change:
+ * 1 on success, 0 at end of stream, -1 with error. */
+typedef int (*change_reader_fn)(FILE *stream,
+                                void *reader_context,
+                                maelys_git_change_t *change,
+                                maelys_git_error_t *error);
+
+static int tree_reader(FILE *stream, void *reader_context,
+                       maelys_git_change_t *change, maelys_git_error_t *error) {
+    return read_tree_change(stream, *(const int *)reader_context, change, error);
 }
 
-static maelys_git_result_t visit_diff(const char *git,
-                                      const char *repository,
-                                      const char *old_oid,
-                                      const char *new_oid,
-                                      const maelys_git_inspection_limits_t *limits,
-                                      maelys_git_change_visitor_t visitor,
-                                      void *context,
-                                      maelys_git_change_summary_t *summary,
-                                      maelys_git_error_t *error) {
-    FILE *stream = tmpfile();
-    if (!stream) return MAELYS_GIT_ERR_IO;
-    char *argv[] = {(char *)git, "--git-dir", (char *)repository,
-                    "diff-tree", "--raw", "-r", "-z", "-M",
-                    (char *)old_oid, (char *)new_oid, "--", NULL};
-    int status = 0;
-    maelys_git_result_t result = mg_process_spool_status(
-        git, argv, stream, 256u * 1024u * 1024u, &status, error);
-    if (result != MAELYS_GIT_OK || status != 0) {
-        if (result == MAELYS_GIT_OK)
-            mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0, "git diff-tree failed with status %d", status);
-        fclose(stream);
-        return result == MAELYS_GIT_OK ? MAELYS_GIT_ERR_PROCESS : result;
-    }
-    FILE *requests = tmpfile(), *batch = tmpfile();
-    if (!requests || !batch) {
-        if (requests) fclose(requests);
-        if (batch) fclose(batch);
-        fclose(stream);
+static int diff_reader(FILE *stream, void *reader_context,
+                       maelys_git_change_t *change, maelys_git_error_t *error) {
+    (void)reader_context;
+    return read_diff_change(stream, change, error);
+}
+
+typedef struct {
+    FILE *stream;
+    FILE *requests;
+    FILE *batch;
+} visit_streams_t;
+
+static void close_streams(visit_streams_t *streams) {
+    if (streams->stream) (void)fclose(streams->stream);
+    if (streams->requests) (void)fclose(streams->requests);
+    if (streams->batch) (void)fclose(streams->batch);
+}
+
+/* Spools one Git listing, collects the blobs to inspect, runs one cat-file
+ * batch and emits every change with its inspection data. Both tree and diff
+ * listings follow this exact two-pass shape. */
+static maelys_git_result_t visit_change_stream(const char *git,
+                                               const char *command_name,
+                                               char *const argv[],
+                                               change_reader_fn reader,
+                                               void *reader_context,
+                                               const char *repository,
+                                               const maelys_git_inspection_limits_t *limits,
+                                               maelys_git_change_visitor_t visitor,
+                                               void *context,
+                                               maelys_git_change_summary_t *summary,
+                                               maelys_git_error_t *error) {
+    visit_streams_t streams = {tmpfile(), tmpfile(), tmpfile()};
+    if (!streams.stream || !streams.requests || !streams.batch) {
+        close_streams(&streams);
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "tmpfile failed: %s", strerror(errno));
         return MAELYS_GIT_ERR_IO;
     }
-    rewind(stream);
+    int status = 0;
+    maelys_git_result_t result = mg_process_spool_status(
+        git, argv, streams.stream, MG_GIT_STREAM_MAX_BYTES, &status, error);
+    if (result == MAELYS_GIT_OK && status != 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
+                     "git %s failed with status %d", command_name, status);
+        result = MAELYS_GIT_ERR_PROCESS;
+    }
+    if (result != MAELYS_GIT_OK) {
+        close_streams(&streams);
+        return result;
+    }
+    /* First pass: bound the change count and list the blobs to inspect. */
+    rewind(streams.stream);
     size_t change_count = 0u, request_count = 0u;
     maelys_git_change_t change;
     int read_result;
-    while ((read_result = read_diff_change(stream, &change, error)) > 0) {
+    while ((read_result = reader(streams.stream, reader_context, &change, error)) > 0) {
         if (++change_count > limits->max_changes) {
             mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0,
                          "change count exceeds configured limit %zu", limits->max_changes);
@@ -454,22 +419,23 @@ static maelys_git_result_t visit_diff(const char *git,
             break;
         }
         const char *inspect = inspection_oid(&change);
-        if (inspect && fprintf(requests, "%s\n", inspect) < 0) {
+        if (!inspect) continue;
+        if (fprintf(streams.requests, "%s\n", inspect) < 0) {
             result = MAELYS_GIT_ERR_IO;
             break;
         }
-        if (inspect) ++request_count;
+        ++request_count;
     }
     if (read_result < 0 && result == MAELYS_GIT_OK) result = error->code;
     if (result == MAELYS_GIT_OK)
-        result = run_blob_batch(git, repository, requests, batch,
+        result = run_blob_batch(git, repository, streams.requests, streams.batch,
                                 request_count, limits, error);
+    /* Second pass: pair each change with its cat-file record. */
     if (result == MAELYS_GIT_OK) {
-        rewind(stream);
+        rewind(streams.stream);
         unsigned long long inspected_bytes = 0u;
-        while ((read_result = read_diff_change(stream, &change, error)) > 0) {
-            const char *inspect = inspection_oid(&change);
-            result = inspect_batch_record(batch, inspect,
+        while ((read_result = reader(streams.stream, reader_context, &change, error)) > 0) {
+            result = inspect_batch_record(streams.batch, inspection_oid(&change),
                                           !mg_is_zero_oid(change.new_oid),
                                           &change, &inspected_bytes, limits, error);
             if (result == MAELYS_GIT_OK)
@@ -478,13 +444,13 @@ static maelys_git_result_t visit_diff(const char *git,
         }
         if (result == MAELYS_GIT_OK) summary->inspected_blob_bytes = (size_t)inspected_bytes;
         if (read_result < 0 && result == MAELYS_GIT_OK) result = error->code;
-        if (result == MAELYS_GIT_OK && request_count && fgetc(batch) != EOF) {
+        if (result == MAELYS_GIT_OK && request_count && fgetc(streams.batch) != EOF) {
             mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
                          "git cat-file returned unexpected trailing data");
             result = MAELYS_GIT_ERR_PROTOCOL;
         }
     }
-    fclose(requests); fclose(batch); fclose(stream);
+    close_streams(&streams);
     return result;
 }
 
@@ -519,15 +485,24 @@ maelys_git_result_t maelys_git_repository_visit_changes_ex(
         !mg_is_oid(new_oid) || !limits_valid(limits) || !out_summary)
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     memset(out_summary, 0, sizeof(*out_summary));
-    if (mg_is_zero_oid(old_oid) && mg_is_zero_oid(new_oid)) return MAELYS_GIT_OK;
-    if (mg_is_zero_oid(old_oid))
-        return visit_tree(git_executable, repository_path, new_oid, 0, limits, visitor,
-                          visitor_context, out_summary, error);
-    if (mg_is_zero_oid(new_oid))
-        return visit_tree(git_executable, repository_path, old_oid, 1, limits, visitor,
-                          visitor_context, out_summary, error);
-    return visit_diff(git_executable, repository_path, old_oid, new_oid, limits, visitor,
-                      visitor_context, out_summary, error);
+    int old_is_zero = mg_is_zero_oid(old_oid);
+    int new_is_zero = mg_is_zero_oid(new_oid);
+    if (old_is_zero && new_is_zero) return MAELYS_GIT_OK;
+    if (old_is_zero || new_is_zero) {
+        int deleting = new_is_zero;
+        char *argv[] = {(char *)git_executable, "--git-dir", (char *)repository_path,
+                        "ls-tree", "-r", "-z", "--full-tree",
+                        (char *)(deleting ? old_oid : new_oid), NULL};
+        return visit_change_stream(git_executable, "ls-tree", argv, tree_reader, &deleting,
+                                   repository_path, limits, visitor, visitor_context,
+                                   out_summary, error);
+    }
+    char *argv[] = {(char *)git_executable, "--git-dir", (char *)repository_path,
+                    "diff-tree", "--raw", "-r", "-z", "-M",
+                    (char *)old_oid, (char *)new_oid, "--", NULL};
+    return visit_change_stream(git_executable, "diff-tree", argv, diff_reader, NULL,
+                               repository_path, limits, visitor, visitor_context,
+                               out_summary, error);
 }
 
 void maelys_git_receive_transaction_clear(maelys_git_receive_transaction_t *transaction) {
@@ -561,11 +536,15 @@ maelys_git_result_t maelys_git_receive_transaction_read(
             size_t next = capacity ? capacity * 2u : 8u;
             maelys_git_receive_update_t *updates = realloc(
                 out_transaction->updates, next * sizeof(*updates));
-            if (!updates) { maelys_git_receive_transaction_clear(out_transaction); return MAELYS_GIT_ERR_IO; }
+            if (!updates) {
+                maelys_git_receive_transaction_clear(out_transaction);
+                return MAELYS_GIT_ERR_IO;
+            }
             out_transaction->updates = updates;
             capacity = next;
         }
-        maelys_git_receive_update_t *update = &out_transaction->updates[out_transaction->update_count];
+        maelys_git_receive_update_t *update =
+            &out_transaction->updates[out_transaction->update_count];
         memset(update, 0, sizeof(*update));
         line[length - 1u] = '\0';
         char extra;

@@ -1,0 +1,5 @@
+{
+  "type": "object",
+  "description": "Protocol stream; stdout belongs to the declared protocol and no CLI envelope is produced.",
+  "additionalProperties": false
+}

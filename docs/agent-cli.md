@@ -41,7 +41,8 @@ stable. `validate` produit plutôt un rapport réussi avec le code de processus
 
 ## Inventaires disponibles
 
-Chaque binaire possède son propre catalogue :
+Chaque binaire possède son propre catalogue, produit par `libmaelys_cli`
+(`data.framework` en donne la version) :
 
 ```sh
 maelys-git describe --summary --format json
@@ -52,4 +53,6 @@ maelys-git-hook describe --summary --format json
 ```
 
 La référence Markdown et le catalogue agrégé sont générés à partir de ces cinq
-réponses, jamais maintenus comme une seconde définition manuelle.
+réponses, jamais maintenus comme une seconde définition manuelle. Une commande
+dont `outputMode` vaut `protocol-stream` déclare son `protocol` ; ne lui passez
+aucune option de rendu.

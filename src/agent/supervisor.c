@@ -4,15 +4,51 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
-#include <signal.h>
 #include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 static void close_fd(int *fd) {
     if (*fd >= 0) { (void)close(*fd); *fd = -1; }
+}
+
+/* The executor's stdin is a Unix socket rather than a pipe so that a write
+ * after the child exited fails with EPIPE instead of raising SIGPIPE: the
+ * parent's end is marked SO_NOSIGPIPE where the platform has it, and writes
+ * use MSG_NOSIGNAL where that exists. The process signal dispositions are
+ * never touched. Element 0 goes to the child, element 1 stays here. */
+static int open_request_channel(int fds[2]) {
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) return 0;
+    int ok = 1;
+    for (size_t i = 0u; i < 2u; ++i) {
+        int flags = fcntl(fds[i], F_GETFD);
+        if (flags < 0 || fcntl(fds[i], F_SETFD, flags | FD_CLOEXEC) != 0) ok = 0;
+    }
+#ifdef SO_NOSIGPIPE
+    int no_sigpipe = 1;
+    if (ok && setsockopt(fds[1], SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe,
+                         sizeof(no_sigpipe)) != 0)
+        ok = 0;
+#endif
+    if (!ok) {
+        int saved = errno;
+        (void)close(fds[0]);
+        (void)close(fds[1]);
+        fds[0] = fds[1] = -1;
+        errno = saved;
+    }
+    return ok;
+}
+
+static ssize_t write_quiet(int fd, const void *bytes, size_t length) {
+#ifdef MSG_NOSIGNAL
+    return send(fd, bytes, length, MSG_NOSIGNAL);
+#else
+    return write(fd, bytes, length);
+#endif
 }
 
 static int remaining_timeout(int64_t deadline, int *out_timeout) {
@@ -33,15 +69,10 @@ static int write_all_until(int fd, const void *bytes, size_t length,
     if (descriptor_flags < 0 ||
         fcntl(fd, F_SETFL, descriptor_flags | O_NONBLOCK) != 0)
         return 0;
-    struct sigaction ignored = {0};
-    struct sigaction previous = {0};
-    ignored.sa_handler = SIG_IGN;
-    (void)sigemptyset(&ignored.sa_mask);
-    if (sigaction(SIGPIPE, &ignored, &previous) != 0) return 0;
     const unsigned char *cursor = bytes;
     int ok = 1;
     while (length > 0u) {
-        ssize_t count = write(fd, cursor, length);
+        ssize_t count = write_quiet(fd, cursor, length);
         if (count < 0 && errno == EINTR) continue;
         if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             int timeout = 0;
@@ -63,7 +94,6 @@ static int write_all_until(int fd, const void *bytes, size_t length,
         length -= (size_t)count;
     }
     int saved = errno;
-    if (sigaction(SIGPIPE, &previous, NULL) != 0) ok = 0;
     if (fcntl(fd, F_SETFL, descriptor_flags) != 0) ok = 0;
     errno = saved;
     return ok;
@@ -77,7 +107,7 @@ maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *confi
     *out_response_json = NULL;
     int input_pipe[2] = {-1, -1};
     int output_pipe[2] = {-1, -1};
-    if (!mg_pipe_cloexec(input_pipe) || !mg_pipe_cloexec(output_pipe)) {
+    if (!open_request_channel(input_pipe) || !mg_pipe_cloexec(output_pipe)) {
         close_fd(&input_pipe[0]); close_fd(&input_pipe[1]);
         close_fd(&output_pipe[0]); close_fd(&output_pipe[1]);
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "cannot create executor pipes");
@@ -136,7 +166,7 @@ maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *confi
     size_t used = 0u;
     int read_failed = 0;
     while (wrote && response && used < MAELYS_GIT_MAX_PROTOCOL_LINE + 1u) {
-        int timeout = (int)config->request_timeout_ms;
+        int timeout = 0;
         if (!remaining_timeout(deadline, &timeout)) { read_failed = 1; break; }
         if (timeout == 0) { timed_out = 1; break; }
         struct pollfd descriptor = {

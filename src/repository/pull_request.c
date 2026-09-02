@@ -10,19 +10,14 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#ifndef PATH_MAX
-#define PATH_MAX 4096
-#endif
-
+/* A pull request is prepared inside a private quarantine directory that
+ * holds one shared clone of the target; nothing reaches the target object
+ * database before a reviewed apply. */
 typedef struct {
+    char temporary_directory[PATH_MAX];
     char temporary_repository[PATH_MAX];
     maelys_git_pr_check_result_t result;
 } prepared_pr_t;
-
-static void trim_line(unsigned char *data, size_t *length) {
-    while (*length && (data[*length - 1u] == '\n' || data[*length - 1u] == '\r'))
-        data[--*length] = '\0';
-}
 
 static maelys_git_result_t capture_oid(const char *git,
                                        char *const argv[],
@@ -32,7 +27,7 @@ static maelys_git_result_t capture_oid(const char *git,
     size_t length = 0u;
     maelys_git_result_t result = mg_process_capture(git, argv, &data, &length, 256u, error);
     if (result != MAELYS_GIT_OK) return result;
-    trim_line(data, &length);
+    mg_trim_line_endings(data, &length);
     if (!mg_is_oid((char *)data)) {
         free(data);
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "Git did not return an object identifier");
@@ -51,7 +46,7 @@ static maelys_git_result_t capture_u64(const char *git,
     size_t length = 0u;
     maelys_git_result_t result = mg_process_capture(git, argv, &data, &length, 64u, error);
     if (result != MAELYS_GIT_OK) return result;
-    trim_line(data, &length);
+    mg_trim_line_endings(data, &length);
     char *end = NULL;
     errno = 0;
     uintmax_t value = strtoumax((char *)data, &end, 10);
@@ -66,24 +61,13 @@ static maelys_git_result_t capture_u64(const char *git,
     return MAELYS_GIT_OK;
 }
 
-static int repository_identity(const char *path, char out[128], struct stat *out_status) {
-    struct stat status;
-    if (!path || lstat(path, &status) != 0 || !S_ISDIR(status.st_mode) ||
-        S_ISLNK(status.st_mode)) return 0;
-    int written = snprintf(out, 128u, "%" PRIxMAX ":%" PRIxMAX,
-                           (uintmax_t)status.st_dev, (uintmax_t)status.st_ino);
-    if (written <= 0 || written >= 128) return 0;
-    if (out_status) *out_status = status;
-    return 1;
-}
-
 static maelys_git_result_t verify_repository_identity(
     const char *path,
     const char *expected,
     const char *role,
     maelys_git_error_t *error) {
-    char current[128];
-    if (!expected || !*expected || !repository_identity(path, current, NULL)) {
+    char current[MG_IDENTITY_MAX];
+    if (!expected || !*expected || !mg_path_identity(path, current, NULL)) {
         mg_error_set(error, MAELYS_GIT_ERR_INVALID_REPOSITORY, errno,
                      "%s repository identity is unavailable", role);
         return MAELYS_GIT_ERR_INVALID_REPOSITORY;
@@ -247,9 +231,9 @@ static maelys_git_result_t inspect_pr_source(
         git, source->repository_path, "source", error);
     if (validation != MAELYS_GIT_OK) return validation;
     struct stat source_status, target_status;
-    if (!repository_identity(source->repository_path, result->source_identity,
-                             &source_status) ||
-        !repository_identity(target_repository, (char[128]){0}, &target_status)) {
+    char target_identity[MG_IDENTITY_MAX];
+    if (!mg_path_identity(source->repository_path, result->source_identity, &source_status) ||
+        !mg_path_identity(target_repository, target_identity, &target_status)) {
         mg_error_set(error, MAELYS_GIT_ERR_INVALID_REPOSITORY, errno,
                      "PR source or target is not a direct repository directory");
         return MAELYS_GIT_ERR_INVALID_REPOSITORY;
@@ -405,7 +389,7 @@ static maelys_git_result_t optional_ref_oid(const char *git,
                      "git rev-parse failed with status %d", status);
         return MAELYS_GIT_ERR_PROCESS;
     }
-    trim_line(data, &length);
+    mg_trim_line_endings(data, &length);
     if (!mg_is_oid((char *)data)) {
         free(data);
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
@@ -491,7 +475,7 @@ static maelys_git_result_t capture_commit_epoch(const char *git,
     size_t length = 0u;
     maelys_git_result_t result = mg_process_capture(git, argv, &data, &length, 64u, error);
     if (result != MAELYS_GIT_OK) return result;
-    trim_line(data, &length);
+    mg_trim_line_endings(data, &length);
     char *end = NULL;
     errno = 0;
     long long epoch = strtoll((char *)data, &end, 10);
@@ -506,6 +490,28 @@ static maelys_git_result_t capture_commit_epoch(const char *git,
     return MAELYS_GIT_OK;
 }
 
+/* Reads the single object identifier written by `git hash-object`. */
+static maelys_git_result_t read_hashed_oid(FILE *output,
+                                           char out_oid[65],
+                                           maelys_git_error_t *error) {
+    unsigned char line[80];
+    rewind(output);
+    if (!fgets((char *)line, sizeof(line), output)) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "Git did not return an object identifier");
+        return MAELYS_GIT_ERR_PROTOCOL;
+    }
+    size_t length = strlen((char *)line);
+    mg_trim_line_endings(line, &length);
+    if (!mg_is_oid((char *)line) || !mg_copy_string(out_oid, 65u, (char *)line)) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "Git did not return an object identifier");
+        return MAELYS_GIT_ERR_PROTOCOL;
+    }
+    return MAELYS_GIT_OK;
+}
+
+/* Writes a commit whose bytes depend only on its tree, parents and message:
+ * fixed author, and a timestamp one second after the newest parent. The
+ * object is handed to Git on stdin so that no named temporary file exists. */
 static maelys_git_result_t create_deterministic_commit(
     const char *git,
     const char *repository,
@@ -530,43 +536,47 @@ static maelys_git_result_t create_deterministic_commit(
         return MAELYS_GIT_ERR_LIMIT;
     }
     ++epoch;
-    char template[] = "/tmp/maelys-git-commit-XXXXXX";
-    int descriptor = mkstemp(template);
-    if (descriptor < 0) {
+    FILE *input = tmpfile();
+    FILE *output = tmpfile();
+    if (!input || !output) {
+        if (input) (void)fclose(input);
+        if (output) (void)fclose(output);
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
-                     "cannot create deterministic commit input: %s", strerror(errno));
+                     "cannot create deterministic commit stream: %s", strerror(errno));
         return MAELYS_GIT_ERR_IO;
     }
-    FILE *stream = fdopen(descriptor, "wb");
-    if (!stream) {
-        close(descriptor);
-        unlink(template);
-        return MAELYS_GIT_ERR_IO;
-    }
-    int failed = fprintf(stream, "tree %s\nparent %s\n", tree_oid, base_oid) < 0;
+    size_t message_length = strlen(message);
+    int failed = fprintf(input, "tree %s\nparent %s\n", tree_oid, base_oid) < 0;
     if (!failed && include_head_parent)
-        failed = fprintf(stream, "parent %s\n", head_oid) < 0;
+        failed = fprintf(input, "parent %s\n", head_oid) < 0;
     if (!failed)
-        failed = fprintf(stream,
+        failed = fprintf(input,
                          "author Maelys Forge <forge@maelys.local> %lld +0000\n"
                          "committer Maelys Forge <forge@maelys.local> %lld +0000\n\n",
                          epoch, epoch) < 0;
-    size_t message_length = strlen(message);
-    if (!failed && fwrite(message, 1u, message_length, stream) != message_length) failed = 1;
+    if (!failed && fwrite(message, 1u, message_length, input) != message_length) failed = 1;
     if (!failed && (message_length == 0u || message[message_length - 1u] != '\n') &&
-        fputc('\n', stream) == EOF) failed = 1;
-    if (!failed && fflush(stream) != 0) failed = 1;
-    if (fclose(stream) != 0) failed = 1;
+        fputc('\n', input) == EOF) failed = 1;
     if (failed) {
-        unlink(template);
+        (void)fclose(input);
+        (void)fclose(output);
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
                      "cannot write deterministic commit input");
         return MAELYS_GIT_ERR_IO;
     }
     char *hash_argv[] = {(char *)git, "--git-dir", (char *)repository,
-                         "hash-object", "-t", "commit", "-w", "--", template, NULL};
-    result = capture_oid(git, hash_argv, out_oid, error);
-    unlink(template);
+                         "hash-object", "-t", "commit", "-w", "--stdin", NULL};
+    int status = 0;
+    result = mg_process_filter_spool_status(git, hash_argv, input, output, 256u,
+                                            &status, error);
+    if (result == MAELYS_GIT_OK && status != 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
+                     "git hash-object failed with status %d", status);
+        result = MAELYS_GIT_ERR_PROCESS;
+    }
+    if (result == MAELYS_GIT_OK) result = read_hashed_oid(output, out_oid, error);
+    (void)fclose(input);
+    (void)fclose(output);
     return result;
 }
 
@@ -610,8 +620,8 @@ static maelys_git_result_t parse_merge_tree(unsigned char *data,
 
 static void prepared_clear(prepared_pr_t *prepared) {
     maelys_git_pr_check_result_clear(&prepared->result);
-    if (prepared->temporary_repository[0])
-        (void)mg_remove_tree(prepared->temporary_repository);
+    if (prepared->temporary_directory[0])
+        (void)mg_remove_tree(prepared->temporary_directory);
     memset(prepared, 0, sizeof(*prepared));
 }
 
@@ -629,7 +639,7 @@ static maelys_git_result_t prepare_pr(const char *git,
         mg_is_zero_oid(base_oid) || mg_is_zero_oid(head_oid) ||
         style < MAELYS_GIT_MERGE_FAST_FORWARD || style > MAELYS_GIT_MERGE_SQUASH)
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
-    if (!repository_identity(repository, prepared->result.target_identity, NULL)) {
+    if (!mg_path_identity(repository, prepared->result.target_identity, NULL)) {
         mg_error_set(error, MAELYS_GIT_ERR_INVALID_REPOSITORY, errno,
                      "target repository identity is unavailable");
         return MAELYS_GIT_ERR_INVALID_REPOSITORY;
@@ -637,17 +647,25 @@ static maelys_git_result_t prepare_pr(const char *git,
     maelys_git_result_t validation = validate_pr_repository(
         git, repository, "target", error);
     if (validation != MAELYS_GIT_OK) return validation;
-    char template[] = "/tmp/maelys-git-pr-XXXXXX";
-    int temporary_fd = mkstemp(template);
-    if (temporary_fd < 0) return MAELYS_GIT_ERR_IO;
-    close(temporary_fd);
-    if (unlink(template) != 0 ||
-        !mg_copy_string(prepared->temporary_repository,
-                        sizeof(prepared->temporary_repository), template))
-        return MAELYS_GIT_ERR_IO;
-    char *clone_argv[] = {(char *)git, "clone", "--quiet", "--bare", "--shared",
+    char prefix[PATH_MAX];
+    int prefix_length = snprintf(prefix, sizeof(prefix), "%s/maelys-git-pr",
+                                 mg_temporary_root());
+    if (prefix_length < 0 || (size_t)prefix_length >= sizeof(prefix))
+        return MAELYS_GIT_ERR_LIMIT;
+    maelys_git_result_t rc = mg_make_temporary_directory(
+        prefix, prepared->temporary_directory, error);
+    if (rc != MAELYS_GIT_OK) return rc;
+    int repository_length = snprintf(prepared->temporary_repository,
+                                     sizeof(prepared->temporary_repository),
+                                     "%s/repository.git", prepared->temporary_directory);
+    if (repository_length < 0 ||
+        (size_t)repository_length >= sizeof(prepared->temporary_repository)) {
+        prepared_clear(prepared);
+        return MAELYS_GIT_ERR_LIMIT;
+    }
+    char *clone_argv[] = {(char *)git, "clone", "--quiet", "--bare", "--shared", "--",
                           (char *)repository, prepared->temporary_repository, NULL};
-    maelys_git_result_t rc = mg_process_run(git, clone_argv, NULL, error);
+    rc = mg_process_run(git, clone_argv, NULL, error);
     if (rc != MAELYS_GIT_OK) { prepared_clear(prepared); return rc; }
     rc = inspect_pr_source(git, repository, head_oid, source, &prepared->result, error);
     if (rc == MAELYS_GIT_OK)
@@ -850,6 +868,10 @@ static maelys_git_result_t promote_pr_objects(
     const prepared_pr_t *prepared,
     maelys_git_merge_style_t style,
     maelys_git_error_t *error) {
+    /* A same-repository fast-forward promotes nothing: the head already
+     * lives in the target object database. */
+    if (!prepared->result.cross_repository && style == MAELYS_GIT_MERGE_FAST_FORWARD)
+        return MAELYS_GIT_OK;
     char *argv[14];
     size_t argc = 0u;
     argv[argc++] = (char *)git;
@@ -867,8 +889,6 @@ static maelys_git_result_t promote_pr_objects(
     if (style != MAELYS_GIT_MERGE_FAST_FORWARD)
         argv[argc++] = "refs/maelys/prepared";
     argv[argc] = NULL;
-    if (!prepared->result.cross_repository && style == MAELYS_GIT_MERGE_FAST_FORWARD)
-        return MAELYS_GIT_OK;
     maelys_git_result_t rc = mg_process_run(git, argv, NULL, error);
     if (rc != MAELYS_GIT_OK) return rc;
     char prepared_commit[80];

@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mode",
+    "changed",
+    "keyDirectory",
+    "output",
+    "keyCount"
+  ],
+  "properties": {
+    "mode": {
+      "enum": [
+        "plan",
+        "apply"
+      ]
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "keyDirectory": {
+      "type": "string"
+    },
+    "output": {
+      "type": "string"
+    },
+    "keyCount": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

@@ -115,7 +115,10 @@ endif()
 run_json(0 shell_describe shell_describe_error
   "${MAELYS_SHELL_BIN}" describe serve --format json --compact)
 string(JSON shell_mode GET "${shell_describe}" data commands 0 outputMode)
-if(NOT shell_mode STREQUAL "git-smart-protocol-stream")
+string(JSON shell_protocol GET "${shell_describe}" data commands 0 protocol)
+string(JSON shell_framework GET "${shell_describe}" data framework)
+if(NOT shell_mode STREQUAL "protocol-stream" OR NOT shell_protocol STREQUAL "git-smart" OR
+   shell_framework STREQUAL "")
   message(FATAL_ERROR "shell stream contract missing: ${shell_describe}")
 endif()
 

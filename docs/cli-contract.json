@@ -1,57 +1,95 @@
 {
   "contract": "agent-cli/v2",
-  "product": "Maelys Git Core",
   "programs": {
     "maelys-git": {
+      "cliApi": 1,
       "commands": [
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "help",
           "input": {
             "constraints": [],
-            "operands": [],
+            "operands": [
+              {
+                "name": "COMMAND_ID",
+                "required": false,
+                "summary": "Stable command identifier whose help is shown.",
+                "variadic": false
+              }
+            ],
             "options": [],
-            "synopsis": "help"
+            "passthrough": false,
+            "synopsis": "help [COMMAND_ID] | --help"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
-            "additionalProperties": true,
-            "description": "CLI help text.",
+            "additionalProperties": false,
+            "properties": {
+              "commands": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "commands"
+            ],
             "type": "object"
           },
           "pattern": [
             "help"
           ],
-          "purpose": "Show the generated CLI guide.",
-          "usage": "help"
+          "purpose": "Show the generated CLI guide or one command's help.",
+          "usage": "help [COMMAND_ID] | --help"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "version",
           "input": {
             "constraints": [],
             "operands": [],
             "options": [],
+            "passthrough": false,
             "synopsis": "version | --version"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
             "additionalProperties": false,
             "properties": {
+              "cliApi": {
+                "type": "integer"
+              },
               "contract": {
                 "const": "agent-cli/v2"
               },
+              "framework": {
+                "type": "string"
+              },
               "product": {
+                "type": "string"
+              },
+              "program": {
                 "type": "string"
               },
               "version": {
@@ -60,8 +98,11 @@
             },
             "required": [
               "product",
+              "program",
               "version",
-              "contract"
+              "contract",
+              "cliApi",
+              "framework"
             ],
             "type": "object"
           },
@@ -72,12 +113,15 @@
           "usage": "version | --version"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "describe",
           "input": {
             "constraints": [],
@@ -96,30 +140,152 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Return the compact command inventory."
+                "summary": "Return the compact command inventory without output schemas."
               }
             ],
+            "passthrough": false,
             "synopsis": "describe [COMMAND_ID] [--summary]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
             "additionalProperties": true,
-            "description": "Versioned command catalog.",
+            "description": "Command catalog, summary or single descriptor.",
+            "required": [
+              "schemaVersion",
+              "kind",
+              "program",
+              "commands"
+            ],
             "type": "object"
           },
           "pattern": [
             "describe"
           ],
-          "purpose": "Return executable command contracts.",
+          "purpose": "Return the machine-readable catalog, summary or one descriptor.",
           "usage": "describe [COMMAND_ID] [--summary]"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
+          "id": "completion",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "choices": [
+                  "bash",
+                  "zsh",
+                  "fish"
+                ],
+                "name": "SHELL",
+                "required": true,
+                "summary": "Shell whose completion script is printed.",
+                "type": "choice",
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "passthrough": false,
+            "synopsis": "completion SHELL"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "script": {
+                "type": "string"
+              },
+              "shell": {
+                "enum": [
+                  "bash",
+                  "zsh",
+                  "fish"
+                ]
+              }
+            },
+            "required": [
+              "shell",
+              "script"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "completion"
+          ],
+          "purpose": "Print the shell completion script generated from the catalog.",
+          "usage": "completion SHELL"
+        },
+        {
+          "available": true,
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "external": false,
+          "hidden": true,
+          "id": "complete.candidates",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "WORDS",
+                "required": false,
+                "summary": "Command line words after the program name; the last one is the prefix being completed.",
+                "variadic": true
+              }
+            ],
+            "options": [],
+            "passthrough": false,
+            "synopsis": "__complete [WORDS...]"
+          },
+          "outputMode": "json-records",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "records": {
+                "items": {
+                  "required": [
+                    "word"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "count",
+              "records"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "__complete"
+          ],
+          "purpose": "Return completion candidates for a partial command line.",
+          "usage": "__complete [WORDS...]"
+        },
+        {
+          "available": true,
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "external": false,
+          "hidden": false,
           "id": "validate",
           "input": {
             "constraints": [],
@@ -132,6 +298,7 @@
               }
             ],
             "options": [],
+            "passthrough": false,
             "synopsis": "validate MANIFEST"
           },
           "outputMode": "json-envelope",
@@ -165,12 +332,15 @@
           "usage": "validate MANIFEST"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "authorize",
           "input": {
             "constraints": [],
@@ -213,6 +383,7 @@
               }
             ],
             "options": [],
+            "passthrough": false,
             "synopsis": "authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...]"
           },
           "outputMode": "json-envelope",
@@ -226,8 +397,12 @@
                 "type": "boolean"
               },
               "matchedPolicy": {
+                "description": "Index of the deciding policy in the manifest; null when no policy matched.",
                 "minimum": 0,
-                "type": "integer"
+                "type": [
+                  "integer",
+                  "null"
+                ]
               },
               "reason": {
                 "type": "string"
@@ -248,12 +423,15 @@
           "usage": "authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...]"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "parse-ssh",
           "input": {
             "constraints": [],
@@ -266,6 +444,7 @@
               }
             ],
             "options": [],
+            "passthrough": false,
             "synopsis": "parse-ssh COMMAND"
           },
           "outputMode": "json-envelope",
@@ -295,6 +474,7 @@
           "usage": "parse-ssh COMMAND"
         },
         {
+          "available": true,
           "effect": {
             "apply": "apply",
             "plan": "preview"
@@ -304,6 +484,8 @@
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "repo.init",
           "input": {
             "constraints": [],
@@ -325,9 +507,10 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
+                "default": "/usr/bin/git",
                 "long": "--git",
                 "repeatable": false,
                 "required": false,
@@ -343,6 +526,7 @@
                 "summary": "Apply the reviewed transaction; omission returns a read-only plan."
               }
             ],
+            "passthrough": false,
             "synopsis": "repo init ROOT REPOSITORY [--git FILE] [--apply]"
           },
           "outputMode": "json-envelope",
@@ -398,12 +582,15 @@
           "usage": "repo init ROOT REPOSITORY [--git FILE] [--apply]"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "repo.list",
           "input": {
             "constraints": [],
@@ -425,6 +612,7 @@
                 "summary": "Include repositories held in archive and recoverable trash."
               }
             ],
+            "passthrough": false,
             "synopsis": "repo list ROOT [--include-stored]"
           },
           "outputMode": "json-envelope",
@@ -460,12 +648,15 @@
           "usage": "repo list ROOT [--include-stored]"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "repo.inspect",
           "input": {
             "constraints": [],
@@ -487,9 +678,10 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
+                "default": "/usr/bin/git",
                 "long": "--git",
                 "repeatable": false,
                 "required": false,
@@ -497,6 +689,7 @@
                 "summary": "Absolute Git executable path."
               }
             ],
+            "passthrough": false,
             "synopsis": "repo inspect ROOT REPOSITORY [--git FILE]"
           },
           "outputMode": "json-envelope",
@@ -551,6 +744,7 @@
           "usage": "repo inspect ROOT REPOSITORY [--git FILE]"
         },
         {
+          "available": true,
           "effect": {
             "apply": "apply",
             "plan": "preview"
@@ -560,21 +754,17 @@
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "repo.rename",
           "input": {
             "constraints": [
               {
-                "kind": "requires",
+                "group": "apply",
+                "kind": "all-or-none",
                 "options": [
                   "--expected-source-identity",
                   "--apply"
-                ]
-              },
-              {
-                "kind": "requires",
-                "options": [
-                  "--apply",
-                  "--expected-source-identity"
                 ]
               }
             ],
@@ -605,26 +795,25 @@
                   "type": "string"
                 },
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--expected-source-identity",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--apply"
-                ],
+                "requires": [],
                 "summary": "Source device/inode identity returned by the reviewed plan."
               },
               {
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--apply",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--expected-source-identity"
-                ],
+                "requires": [],
                 "summary": "Apply the reviewed repository transition."
               }
             ],
-            "synopsis": "repo rename ROOT SOURCE TARGET [--apply --expected-source-identity IDENTITY]"
+            "passthrough": false,
+            "synopsis": "repo rename ROOT SOURCE TARGET [--expected-source-identity IDENTITY] [--apply]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -704,9 +893,10 @@
             "rename"
           ],
           "purpose": "Plan or atomically rename an active repository.",
-          "usage": "repo rename ROOT SOURCE TARGET [--apply --expected-source-identity IDENTITY]"
+          "usage": "repo rename ROOT SOURCE TARGET [--expected-source-identity IDENTITY] [--apply]"
         },
         {
+          "available": true,
           "effect": {
             "apply": "apply",
             "plan": "preview"
@@ -716,21 +906,17 @@
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "repo.archive",
           "input": {
             "constraints": [
               {
-                "kind": "requires",
+                "group": "apply",
+                "kind": "all-or-none",
                 "options": [
                   "--expected-source-identity",
                   "--apply"
-                ]
-              },
-              {
-                "kind": "requires",
-                "options": [
-                  "--apply",
-                  "--expected-source-identity"
                 ]
               }
             ],
@@ -761,26 +947,25 @@
                   "type": "string"
                 },
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--expected-source-identity",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--apply"
-                ],
+                "requires": [],
                 "summary": "Source device/inode identity returned by the reviewed plan."
               },
               {
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--apply",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--expected-source-identity"
-                ],
+                "requires": [],
                 "summary": "Apply the reviewed repository transition."
               }
             ],
-            "synopsis": "repo archive ROOT REPOSITORY STORAGE_ID [--apply --expected-source-identity IDENTITY]"
+            "passthrough": false,
+            "synopsis": "repo archive ROOT REPOSITORY STORAGE_ID [--expected-source-identity IDENTITY] [--apply]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -860,9 +1045,10 @@
             "archive"
           ],
           "purpose": "Plan or move a repository into recoverable archive storage.",
-          "usage": "repo archive ROOT REPOSITORY STORAGE_ID [--apply --expected-source-identity IDENTITY]"
+          "usage": "repo archive ROOT REPOSITORY STORAGE_ID [--expected-source-identity IDENTITY] [--apply]"
         },
         {
+          "available": true,
           "effect": {
             "apply": "apply",
             "plan": "preview"
@@ -872,21 +1058,17 @@
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "repo.delete",
           "input": {
             "constraints": [
               {
-                "kind": "requires",
+                "group": "apply",
+                "kind": "all-or-none",
                 "options": [
                   "--expected-source-identity",
                   "--apply"
-                ]
-              },
-              {
-                "kind": "requires",
-                "options": [
-                  "--apply",
-                  "--expected-source-identity"
                 ]
               }
             ],
@@ -917,26 +1099,25 @@
                   "type": "string"
                 },
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--expected-source-identity",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--apply"
-                ],
+                "requires": [],
                 "summary": "Source device/inode identity returned by the reviewed plan."
               },
               {
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--apply",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--expected-source-identity"
-                ],
+                "requires": [],
                 "summary": "Apply the reviewed repository transition."
               }
             ],
-            "synopsis": "repo delete ROOT REPOSITORY STORAGE_ID [--apply --expected-source-identity IDENTITY]"
+            "passthrough": false,
+            "synopsis": "repo delete ROOT REPOSITORY STORAGE_ID [--expected-source-identity IDENTITY] [--apply]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -1016,9 +1197,10 @@
             "delete"
           ],
           "purpose": "Plan or move a repository into recoverable trash without erasing objects.",
-          "usage": "repo delete ROOT REPOSITORY STORAGE_ID [--apply --expected-source-identity IDENTITY]"
+          "usage": "repo delete ROOT REPOSITORY STORAGE_ID [--expected-source-identity IDENTITY] [--apply]"
         },
         {
+          "available": true,
           "effect": {
             "apply": "apply",
             "plan": "preview"
@@ -1028,21 +1210,17 @@
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "repo.restore",
           "input": {
             "constraints": [
               {
-                "kind": "requires",
+                "group": "apply",
+                "kind": "all-or-none",
                 "options": [
                   "--expected-source-identity",
                   "--apply"
-                ]
-              },
-              {
-                "kind": "requires",
-                "options": [
-                  "--apply",
-                  "--expected-source-identity"
                 ]
               }
             ],
@@ -1063,8 +1241,12 @@
             "options": [
               {
                 "argument": {
-                  "name": "archive|trash",
-                  "type": "string"
+                  "choices": [
+                    "archive",
+                    "trash"
+                  ],
+                  "name": "VALUE",
+                  "type": "choice"
                 },
                 "conflictsWith": [],
                 "long": "--from",
@@ -1091,26 +1273,25 @@
                   "type": "string"
                 },
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--expected-source-identity",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--apply"
-                ],
+                "requires": [],
                 "summary": "Stored repository device/inode identity returned by the reviewed plan."
               },
               {
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--apply",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--expected-source-identity"
-                ],
+                "requires": [],
                 "summary": "Apply the reviewed repository restoration."
               }
             ],
-            "synopsis": "repo restore ROOT STORAGE_ID --from archive|trash [--as REPOSITORY] [--apply --expected-source-identity IDENTITY]"
+            "passthrough": false,
+            "synopsis": "repo restore ROOT STORAGE_ID --from archive|trash [--as REPOSITORY] [--expected-source-identity IDENTITY] [--apply]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -1190,9 +1371,10 @@
             "restore"
           ],
           "purpose": "Plan or restore an archived or deleted repository.",
-          "usage": "repo restore ROOT STORAGE_ID --from archive|trash [--as REPOSITORY] [--apply --expected-source-identity IDENTITY]"
+          "usage": "repo restore ROOT STORAGE_ID --from archive|trash [--as REPOSITORY] [--expected-source-identity IDENTITY] [--apply]"
         },
         {
+          "available": true,
           "effect": {
             "apply": "apply",
             "plan": "preview"
@@ -1202,42 +1384,20 @@
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "repo.mirror",
           "input": {
             "constraints": [
               {
-                "kind": "requires",
+                "group": "apply",
+                "kind": "all-or-none",
                 "options": [
                   "--expected-source-identity",
-                  "--apply"
-                ]
-              },
-              {
-                "kind": "requires",
-                "options": [
                   "--expected-target-identity",
-                  "--expected-source-identity"
-                ]
-              },
-              {
-                "kind": "requires",
-                "options": [
                   "--expected-source-fingerprint",
-                  "--expected-target-identity"
-                ]
-              },
-              {
-                "kind": "requires",
-                "options": [
                   "--expected-target-fingerprint",
-                  "--expected-source-fingerprint"
-                ]
-              },
-              {
-                "kind": "requires",
-                "options": [
-                  "--apply",
-                  "--expected-target-fingerprint"
+                  "--apply"
                 ]
               }
             ],
@@ -1277,9 +1437,10 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
+                "default": "/usr/bin/git",
                 "long": "--git",
                 "repeatable": false,
                 "required": false,
@@ -1292,12 +1453,11 @@
                   "type": "string"
                 },
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--expected-source-identity",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--apply"
-                ],
+                "requires": [],
                 "summary": "Source device/inode identity returned by the reviewed plan."
               },
               {
@@ -1306,54 +1466,53 @@
                   "type": "string"
                 },
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--expected-target-identity",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--expected-source-identity"
-                ],
+                "requires": [],
                 "summary": "Target identity or absent marker returned by the reviewed plan."
               },
               {
                 "argument": {
+                  "digits": 64,
                   "name": "SHA256",
-                  "type": "sha256"
+                  "type": "hex"
                 },
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--expected-source-fingerprint",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--expected-target-identity"
-                ],
+                "requires": [],
                 "summary": "Source refs and HEAD fingerprint returned by the reviewed plan."
               },
               {
                 "argument": {
+                  "digits": 64,
                   "name": "SHA256",
-                  "type": "sha256"
+                  "type": "hex"
                 },
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--expected-target-fingerprint",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--expected-source-fingerprint"
-                ],
+                "requires": [],
                 "summary": "Target refs and HEAD fingerprint returned by the reviewed plan."
               },
               {
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--apply",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--expected-target-fingerprint"
-                ],
+                "requires": [],
                 "summary": "Synchronize the mirror using the reviewed preconditions."
               }
             ],
-            "synopsis": "repo mirror SOURCE_ROOT REPOSITORY TARGET_ROOT [--as REPOSITORY] [--git FILE] [--apply --expected-source-identity IDENTITY --expected-target-identity IDENTITY|absent --expected-source-fingerprint SHA256 --expected-target-fingerprint SHA256]"
+            "passthrough": false,
+            "synopsis": "repo mirror SOURCE_ROOT REPOSITORY TARGET_ROOT [--as REPOSITORY] [--git FILE] [--expected-source-identity IDENTITY] [--expected-target-identity IDENTITY|absent] [--expected-source-fingerprint SHA256] [--expected-target-fingerprint SHA256] [--apply]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -1412,15 +1571,18 @@
             "mirror"
           ],
           "purpose": "Plan or idempotently synchronize a complete local bare mirror.",
-          "usage": "repo mirror SOURCE_ROOT REPOSITORY TARGET_ROOT [--as REPOSITORY] [--git FILE] [--apply --expected-source-identity IDENTITY --expected-target-identity IDENTITY|absent --expected-source-fingerprint SHA256 --expected-target-fingerprint SHA256]"
+          "usage": "repo mirror SOURCE_ROOT REPOSITORY TARGET_ROOT [--as REPOSITORY] [--git FILE] [--expected-source-identity IDENTITY] [--expected-target-identity IDENTITY|absent] [--expected-source-fingerprint SHA256] [--expected-target-fingerprint SHA256] [--apply]"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "repo.diff",
           "input": {
             "constraints": [],
@@ -1438,15 +1600,21 @@
                 "variadic": false
               },
               {
+                "alternativeDigits": 64,
+                "digits": 40,
                 "name": "OLD_OID",
                 "required": true,
                 "summary": "Expected old object identifier.",
+                "type": "hex",
                 "variadic": false
               },
               {
+                "alternativeDigits": 64,
+                "digits": 40,
                 "name": "NEW_OID",
                 "required": true,
                 "summary": "New object identifier.",
+                "type": "hex",
                 "variadic": false
               }
             ],
@@ -1454,9 +1622,10 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
+                "default": "/usr/bin/git",
                 "long": "--git",
                 "repeatable": false,
                 "required": false,
@@ -1464,6 +1633,7 @@
                 "summary": "Absolute Git executable path."
               }
             ],
+            "passthrough": false,
             "synopsis": "repo diff ROOT REPOSITORY OLD_OID NEW_OID [--git FILE]"
           },
           "outputMode": "json-envelope",
@@ -1499,6 +1669,7 @@
           "usage": "repo diff ROOT REPOSITORY OLD_OID NEW_OID [--git FILE]"
         },
         {
+          "available": true,
           "effect": {
             "apply": "apply",
             "plan": "preview"
@@ -1508,6 +1679,8 @@
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "repo.update-ref",
           "input": {
             "constraints": [],
@@ -1531,15 +1704,21 @@
                 "variadic": false
               },
               {
+                "alternativeDigits": 64,
+                "digits": 40,
                 "name": "NEW_OID",
                 "required": true,
                 "summary": "New object identifier.",
+                "type": "hex",
                 "variadic": false
               },
               {
+                "alternativeDigits": 64,
+                "digits": 40,
                 "name": "OLD_OID",
                 "required": true,
                 "summary": "Expected current object identifier.",
+                "type": "hex",
                 "variadic": false
               }
             ],
@@ -1547,9 +1726,10 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
+                "default": "/usr/bin/git",
                 "long": "--git",
                 "repeatable": false,
                 "required": false,
@@ -1565,6 +1745,7 @@
                 "summary": "Apply the reviewed transaction; omission returns a read-only plan."
               }
             ],
+            "passthrough": false,
             "synopsis": "repo update-ref ROOT REPOSITORY REF NEW_OID OLD_OID [--git FILE] [--apply]"
           },
           "outputMode": "json-envelope",
@@ -1624,6 +1805,7 @@
           "usage": "repo update-ref ROOT REPOSITORY REF NEW_OID OLD_OID [--git FILE] [--apply]"
         },
         {
+          "available": true,
           "effect": {
             "apply": "apply",
             "plan": "preview"
@@ -1633,6 +1815,8 @@
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "keys.compile",
           "input": {
             "constraints": [],
@@ -1653,18 +1837,21 @@
                 "name": "SHELL",
                 "required": true,
                 "summary": "Absolute maelys-git-shell executable path.",
+                "type": "absolute-path",
                 "variadic": false
               },
               {
                 "name": "ROOT",
                 "required": true,
                 "summary": "Absolute repository root.",
+                "type": "absolute-path",
                 "variadic": false
               },
               {
                 "name": "MANIFEST",
                 "required": true,
                 "summary": "Absolute Datalog policy manifest path.",
+                "type": "absolute-path",
                 "variadic": false
               }
             ],
@@ -1678,6 +1865,7 @@
                 "summary": "Apply the reviewed transaction; omission returns a read-only plan."
               }
             ],
+            "passthrough": false,
             "synopsis": "keys compile KEY_DIRECTORY OUTPUT SHELL ROOT MANIFEST [--apply]"
           },
           "outputMode": "json-envelope",
@@ -1721,6 +1909,7 @@
           "usage": "keys compile KEY_DIRECTORY OUTPUT SHELL ROOT MANIFEST [--apply]"
         },
         {
+          "available": true,
           "effect": {
             "apply": "apply",
             "plan": "preview"
@@ -1730,6 +1919,8 @@
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "migrate.gitolite",
           "input": {
             "constraints": [],
@@ -1757,6 +1948,7 @@
                 "summary": "Apply the reviewed transaction; omission returns a read-only plan."
               }
             ],
+            "passthrough": false,
             "synopsis": "migrate gitolite INPUT OUTPUT [--apply]"
           },
           "outputMode": "json-envelope",
@@ -1826,12 +2018,15 @@
           "usage": "migrate gitolite INPUT OUTPUT [--apply]"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "pr.check",
           "input": {
             "constraints": [
@@ -1878,15 +2073,21 @@
                 "variadic": false
               },
               {
+                "alternativeDigits": 64,
+                "digits": 40,
                 "name": "BASE_OID",
                 "required": true,
                 "summary": "Current target commit.",
+                "type": "hex",
                 "variadic": false
               },
               {
+                "alternativeDigits": 64,
+                "digits": 40,
                 "name": "HEAD_OID",
                 "required": true,
                 "summary": "Pull request head commit.",
+                "type": "hex",
                 "variadic": false
               }
             ],
@@ -1894,9 +2095,10 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
+                "default": "/usr/bin/git",
                 "long": "--git",
                 "repeatable": false,
                 "required": false,
@@ -1905,8 +2107,13 @@
               },
               {
                 "argument": {
-                  "name": "ff|merge|squash",
-                  "type": "string"
+                  "choices": [
+                    "ff",
+                    "merge",
+                    "squash"
+                  ],
+                  "name": "VALUE",
+                  "type": "choice"
                 },
                 "conflictsWith": [],
                 "long": "--style",
@@ -1957,10 +2164,13 @@
               },
               {
                 "argument": {
+                  "maximum": 9223372036854775807,
+                  "minimum": 1,
                   "name": "COUNT",
-                  "type": "integer"
+                  "type": "unsigned"
                 },
                 "conflictsWith": [],
+                "default": "100000",
                 "long": "--max-source-objects",
                 "repeatable": false,
                 "required": false,
@@ -1971,10 +2181,13 @@
               },
               {
                 "argument": {
+                  "maximum": 9223372036854775807,
+                  "minimum": 1,
                   "name": "BYTES",
-                  "type": "integer"
+                  "type": "size"
                 },
                 "conflictsWith": [],
+                "default": "512M",
                 "long": "--max-source-bytes",
                 "repeatable": false,
                 "required": false,
@@ -1984,7 +2197,8 @@
                 "summary": "Maximum on-disk bytes reachable from a quarantined fork head."
               }
             ],
-            "synopsis": "pr check ROOT REPOSITORY BASE_OID HEAD_OID --style ff|merge|squash [--source-repository REPOSITORY --source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--message TEXT] [--git FILE]"
+            "passthrough": false,
+            "synopsis": "pr check ROOT REPOSITORY BASE_OID HEAD_OID --style ff|merge|squash [--git FILE] [--message TEXT] [--source-repository REPOSITORY] [--source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -2109,9 +2323,10 @@
             "check"
           ],
           "purpose": "Compute merge-base, conflicts, emptiness and a prepared result in an isolated quarantine.",
-          "usage": "pr check ROOT REPOSITORY BASE_OID HEAD_OID --style ff|merge|squash [--source-repository REPOSITORY --source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--message TEXT] [--git FILE]"
+          "usage": "pr check ROOT REPOSITORY BASE_OID HEAD_OID --style ff|merge|squash [--git FILE] [--message TEXT] [--source-repository REPOSITORY] [--source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES]"
         },
         {
+          "available": true,
           "effect": {
             "apply": "apply",
             "plan": "preview"
@@ -2121,6 +2336,8 @@
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "pr.merge",
           "input": {
             "constraints": [
@@ -2160,31 +2377,13 @@
                 ]
               },
               {
-                "kind": "requires",
+                "group": "apply",
+                "kind": "all-or-none",
                 "options": [
                   "--expected-target-identity",
-                  "--apply"
-                ]
-              },
-              {
-                "kind": "requires",
-                "options": [
                   "--expected-prepared-oid",
-                  "--expected-target-identity"
-                ]
-              },
-              {
-                "kind": "requires",
-                "options": [
                   "--expected-policy-fingerprint",
-                  "--expected-prepared-oid"
-                ]
-              },
-              {
-                "kind": "requires",
-                "options": [
-                  "--apply",
-                  "--expected-policy-fingerprint"
+                  "--apply"
                 ]
               }
             ],
@@ -2208,15 +2407,21 @@
                 "variadic": false
               },
               {
+                "alternativeDigits": 64,
+                "digits": 40,
                 "name": "BASE_OID",
                 "required": true,
                 "summary": "Expected target commit for CAS.",
+                "type": "hex",
                 "variadic": false
               },
               {
+                "alternativeDigits": 64,
+                "digits": 40,
                 "name": "HEAD_OID",
                 "required": true,
                 "summary": "Pull request head commit.",
+                "type": "hex",
                 "variadic": false
               },
               {
@@ -2236,9 +2441,10 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
+                "default": "/usr/bin/git",
                 "long": "--git",
                 "repeatable": false,
                 "required": false,
@@ -2247,8 +2453,13 @@
               },
               {
                 "argument": {
-                  "name": "ff|merge|squash",
-                  "type": "string"
+                  "choices": [
+                    "ff",
+                    "merge",
+                    "squash"
+                  ],
+                  "name": "VALUE",
+                  "type": "choice"
                 },
                 "conflictsWith": [],
                 "long": "--style",
@@ -2271,8 +2482,10 @@
               },
               {
                 "argument": {
+                  "maximum": 18446744073709551615,
+                  "minimum": 0,
                   "name": "COUNT",
-                  "type": "integer"
+                  "type": "unsigned"
                 },
                 "conflictsWith": [],
                 "long": "--approvals",
@@ -2283,8 +2496,10 @@
               },
               {
                 "argument": {
+                  "maximum": 18446744073709551615,
+                  "minimum": 0,
                   "name": "COUNT",
-                  "type": "integer"
+                  "type": "unsigned"
                 },
                 "conflictsWith": [],
                 "long": "--required-approvals",
@@ -2351,10 +2566,13 @@
               },
               {
                 "argument": {
+                  "maximum": 9223372036854775807,
+                  "minimum": 1,
                   "name": "COUNT",
-                  "type": "integer"
+                  "type": "unsigned"
                 },
                 "conflictsWith": [],
+                "default": "100000",
                 "long": "--max-source-objects",
                 "repeatable": false,
                 "required": false,
@@ -2365,10 +2583,13 @@
               },
               {
                 "argument": {
+                  "maximum": 9223372036854775807,
+                  "minimum": 1,
                   "name": "BYTES",
-                  "type": "integer"
+                  "type": "size"
                 },
                 "conflictsWith": [],
+                "default": "512M",
                 "long": "--max-source-bytes",
                 "repeatable": false,
                 "required": false,
@@ -2397,54 +2618,54 @@
                   "type": "string"
                 },
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--expected-target-identity",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--apply"
-                ],
-                "summary": "Target device/inode identity returned by the reviewed plan; required with --apply."
+                "requires": [],
+                "summary": "Target device/inode identity returned by the reviewed plan."
               },
               {
                 "argument": {
+                  "alternativeDigits": 64,
+                  "digits": 40,
                   "name": "OID",
-                  "type": "oid"
+                  "type": "hex"
                 },
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--expected-prepared-oid",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--expected-target-identity"
-                ],
-                "summary": "Prepared OID returned by the reviewed plan; required with --apply."
+                "requires": [],
+                "summary": "Prepared OID returned by the reviewed plan."
               },
               {
                 "argument": {
+                  "digits": 64,
                   "name": "SHA256",
-                  "type": "sha256"
+                  "type": "hex"
                 },
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--expected-policy-fingerprint",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--expected-prepared-oid"
-                ],
-                "summary": "Policy-set fingerprint returned by the reviewed plan; required with --apply."
+                "requires": [],
+                "summary": "Policy-set fingerprint returned by the reviewed plan."
               },
               {
                 "conflictsWith": [],
+                "group": "apply",
                 "long": "--apply",
                 "repeatable": false,
                 "required": false,
-                "requires": [
-                  "--expected-policy-fingerprint"
-                ],
+                "requires": [],
                 "summary": "Reauthorize and update the target ref with CAS."
               }
             ],
-            "synopsis": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--source-repository REPOSITORY --source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--pr-id ID] [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-target-identity IDENTITY --expected-prepared-oid OID --expected-policy-fingerprint SHA256 --expected-source-identity IDENTITY]"
+            "passthrough": false,
+            "synopsis": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--git FILE] [--message TEXT] [--status-checks-passed] [--blocking-review] [--pr-id ID] [--source-repository REPOSITORY] [--source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--expected-source-identity IDENTITY] [--expected-target-identity IDENTITY] [--expected-prepared-oid OID] [--expected-policy-fingerprint SHA256] [--apply]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -2569,83 +2790,197 @@
             "merge"
           ],
           "purpose": "Plan or execute a gated, reauthorized pull request merge with reviewed repository identities and compare-and-swap.",
-          "usage": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--source-repository REPOSITORY --source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--pr-id ID] [--status-checks-passed] [--blocking-review] [--message TEXT] [--git FILE] [--apply --expected-target-identity IDENTITY --expected-prepared-oid OID --expected-policy-fingerprint SHA256 --expected-source-identity IDENTITY]"
+          "usage": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--git FILE] [--message TEXT] [--status-checks-passed] [--blocking-review] [--pr-id ID] [--source-repository REPOSITORY] [--source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--expected-source-identity IDENTITY] [--expected-target-identity IDENTITY] [--expected-prepared-oid OID] [--expected-policy-fingerprint SHA256] [--apply]"
         }
       ],
-      "globalOptions": {
-        "compact": "single-line JSON",
-        "format": "text|json",
-        "json": "alias of --format json",
-        "non-interactive": "never prompt",
-        "pretty": "--pretty=false selects compact JSON"
-      },
+      "contract": "agent-cli/v2",
+      "globalOptions": [
+        {
+          "argument": {
+            "choices": [
+              "text",
+              "json",
+              "jsonl"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "text",
+          "long": "--format",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Select text for humans, json for one envelope or jsonl for records."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--json",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Exact alias of --format json."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--compact",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Render JSON on a single line."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--pretty",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "--pretty=false selects compact JSON."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--non-interactive",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Never prompt; fail instead of asking a question."
+        },
+        {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--color",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Control ANSI colors on terminals."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--help",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Show the help of the selected command."
+        }
+      ],
       "invariants": [
         "usage and agent discovery share one catalog",
         "transactional commands plan by default and require --apply",
         "stdout carries success data; stderr carries failures",
         "--json and --format json are identical",
-        "stream commands reject envelope rendering flags"
+        "unknown or duplicated options are refused",
+        "stream commands reject envelope rendering flags",
+        "external commands receive their arguments verbatim"
       ],
       "kind": "catalog",
       "output": {
         "contract": "agent-cli/v2",
         "schemaVersion": 2,
+        "stderr": "diagnostics and failure envelopes",
         "stdout": "success data only; protocol streams are explicit exceptions"
       },
       "product": "Maelys Git Core",
-      "schemaVersion": 1,
-      "version": "0.1.0"
+      "program": "maelys-git",
+      "schemaVersion": 1
     },
     "maelys-git-agent": {
+      "cliApi": 1,
       "commands": [
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "help",
           "input": {
             "constraints": [],
-            "operands": [],
+            "operands": [
+              {
+                "name": "COMMAND_ID",
+                "required": false,
+                "summary": "Stable command identifier whose help is shown.",
+                "variadic": false
+              }
+            ],
             "options": [],
-            "synopsis": "help"
+            "passthrough": false,
+            "synopsis": "help [COMMAND_ID] | --help"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
-            "additionalProperties": true,
-            "description": "CLI help text.",
+            "additionalProperties": false,
+            "properties": {
+              "commands": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "commands"
+            ],
             "type": "object"
           },
           "pattern": [
             "help"
           ],
-          "purpose": "Show the generated CLI guide.",
-          "usage": "help"
+          "purpose": "Show the generated CLI guide or one command's help.",
+          "usage": "help [COMMAND_ID] | --help"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "version",
           "input": {
             "constraints": [],
             "operands": [],
             "options": [],
+            "passthrough": false,
             "synopsis": "version | --version"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
             "additionalProperties": false,
             "properties": {
+              "cliApi": {
+                "type": "integer"
+              },
               "contract": {
                 "const": "agent-cli/v2"
               },
+              "framework": {
+                "type": "string"
+              },
               "product": {
+                "type": "string"
+              },
+              "program": {
                 "type": "string"
               },
               "version": {
@@ -2654,8 +2989,11 @@
             },
             "required": [
               "product",
+              "program",
               "version",
-              "contract"
+              "contract",
+              "cliApi",
+              "framework"
             ],
             "type": "object"
           },
@@ -2666,12 +3004,15 @@
           "usage": "version | --version"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "describe",
           "input": {
             "constraints": [],
@@ -2690,24 +3031,144 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Return the compact command inventory."
+                "summary": "Return the compact command inventory without output schemas."
               }
             ],
+            "passthrough": false,
             "synopsis": "describe [COMMAND_ID] [--summary]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
             "additionalProperties": true,
-            "description": "Versioned command catalog.",
+            "description": "Command catalog, summary or single descriptor.",
+            "required": [
+              "schemaVersion",
+              "kind",
+              "program",
+              "commands"
+            ],
             "type": "object"
           },
           "pattern": [
             "describe"
           ],
-          "purpose": "Return executable command contracts.",
+          "purpose": "Return the machine-readable catalog, summary or one descriptor.",
           "usage": "describe [COMMAND_ID] [--summary]"
         },
         {
+          "available": true,
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "external": false,
+          "hidden": false,
+          "id": "completion",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "choices": [
+                  "bash",
+                  "zsh",
+                  "fish"
+                ],
+                "name": "SHELL",
+                "required": true,
+                "summary": "Shell whose completion script is printed.",
+                "type": "choice",
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "passthrough": false,
+            "synopsis": "completion SHELL"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "script": {
+                "type": "string"
+              },
+              "shell": {
+                "enum": [
+                  "bash",
+                  "zsh",
+                  "fish"
+                ]
+              }
+            },
+            "required": [
+              "shell",
+              "script"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "completion"
+          ],
+          "purpose": "Print the shell completion script generated from the catalog.",
+          "usage": "completion SHELL"
+        },
+        {
+          "available": true,
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "external": false,
+          "hidden": true,
+          "id": "complete.candidates",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "WORDS",
+                "required": false,
+                "summary": "Command line words after the program name; the last one is the prefix being completed.",
+                "variadic": true
+              }
+            ],
+            "options": [],
+            "passthrough": false,
+            "synopsis": "__complete [WORDS...]"
+          },
+          "outputMode": "json-records",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "records": {
+                "items": {
+                  "required": [
+                    "word"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "count",
+              "records"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "__complete"
+          ],
+          "purpose": "Return completion candidates for a partial command line.",
+          "usage": "__complete [WORDS...]"
+        },
+        {
+          "available": true,
           "effect": {
             "apply": "apply",
             "plan": "preview"
@@ -2717,6 +3178,8 @@
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "provision",
           "input": {
             "constraints": [],
@@ -2725,7 +3188,7 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
                 "long": "--config",
@@ -2761,7 +3224,7 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
                 "long": "--ca",
@@ -2773,7 +3236,7 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
                 "long": "--token",
@@ -2785,7 +3248,7 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
                 "long": "--database",
@@ -2797,7 +3260,7 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
                 "long": "--manifest",
@@ -2809,7 +3272,7 @@
               {
                 "argument": {
                   "name": "DIR",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
                 "long": "--root",
@@ -2821,7 +3284,7 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
                 "long": "--executor",
@@ -2839,6 +3302,7 @@
                 "summary": "Create the reviewed configuration."
               }
             ],
+            "passthrough": false,
             "synopsis": "provision --config FILE --agent-id ID --authority HOST[:PORT] --ca FILE --token FILE --database FILE --manifest FILE --root DIR --executor FILE [--apply]"
           },
           "outputMode": "json-envelope",
@@ -2897,12 +3361,15 @@
           "usage": "provision --config FILE --agent-id ID --authority HOST[:PORT] --ca FILE --token FILE --database FILE --manifest FILE --root DIR --executor FILE [--apply]"
         },
         {
+          "available": true,
           "effect": "execute",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "run",
           "input": {
             "constraints": [],
@@ -2929,6 +3396,7 @@
                 "summary": "Run one synchronization cycle."
               }
             ],
+            "passthrough": false,
             "synopsis": "run --config FILE [--once]"
           },
           "outputMode": "json-envelope",
@@ -2958,12 +3426,15 @@
           "usage": "run --config FILE [--once]"
         },
         {
+          "available": true,
           "effect": "stream",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "stdio",
           "input": {
             "constraints": [],
@@ -2996,9 +3467,10 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
+                "default": "/usr/bin/git",
                 "long": "--git",
                 "repeatable": false,
                 "required": false,
@@ -3006,95 +3478,211 @@
                 "summary": "Absolute Git executable path."
               }
             ],
+            "passthrough": false,
             "synopsis": "stdio --manifest FILE --root DIR [--git FILE]"
           },
-          "outputMode": "maelys-git-agent-jsonl-stream",
+          "outputMode": "protocol-stream",
           "outputSchema": {
-            "additionalProperties": true,
-            "description": "Protocol stream; no CLI envelope.",
+            "additionalProperties": false,
+            "description": "Protocol stream; stdout belongs to the declared protocol and no CLI envelope is produced.",
             "type": "object"
           },
           "pattern": [
             "stdio"
           ],
+          "protocol": "maelys-git-agent/1",
           "purpose": "Serve the executor JSONL protocol on stdio.",
           "usage": "stdio --manifest FILE --root DIR [--git FILE]"
         }
       ],
-      "globalOptions": {
-        "compact": "single-line JSON",
-        "format": "text|json",
-        "json": "alias of --format json",
-        "non-interactive": "never prompt",
-        "pretty": "--pretty=false selects compact JSON"
-      },
+      "contract": "agent-cli/v2",
+      "globalOptions": [
+        {
+          "argument": {
+            "choices": [
+              "text",
+              "json",
+              "jsonl"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "text",
+          "long": "--format",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Select text for humans, json for one envelope or jsonl for records."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--json",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Exact alias of --format json."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--compact",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Render JSON on a single line."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--pretty",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "--pretty=false selects compact JSON."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--non-interactive",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Never prompt; fail instead of asking a question."
+        },
+        {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--color",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Control ANSI colors on terminals."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--help",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Show the help of the selected command."
+        }
+      ],
       "invariants": [
         "usage and agent discovery share one catalog",
         "transactional commands plan by default and require --apply",
         "stdout carries success data; stderr carries failures",
         "--json and --format json are identical",
-        "stream commands reject envelope rendering flags"
+        "unknown or duplicated options are refused",
+        "stream commands reject envelope rendering flags",
+        "external commands receive their arguments verbatim"
       ],
       "kind": "catalog",
       "output": {
         "contract": "agent-cli/v2",
         "schemaVersion": 2,
+        "stderr": "diagnostics and failure envelopes",
         "stdout": "success data only; protocol streams are explicit exceptions"
       },
-      "product": "Maelys Git Core",
-      "schemaVersion": 1,
-      "version": "0.1.0"
+      "product": "Maelys Git Agent",
+      "program": "maelys-git-agent",
+      "schemaVersion": 1
     },
     "maelys-git-executor": {
+      "cliApi": 1,
       "commands": [
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "help",
           "input": {
             "constraints": [],
-            "operands": [],
+            "operands": [
+              {
+                "name": "COMMAND_ID",
+                "required": false,
+                "summary": "Stable command identifier whose help is shown.",
+                "variadic": false
+              }
+            ],
             "options": [],
-            "synopsis": "help"
+            "passthrough": false,
+            "synopsis": "help [COMMAND_ID] | --help"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
-            "additionalProperties": true,
-            "description": "CLI help text.",
+            "additionalProperties": false,
+            "properties": {
+              "commands": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "commands"
+            ],
             "type": "object"
           },
           "pattern": [
             "help"
           ],
-          "purpose": "Show the generated CLI guide.",
-          "usage": "help"
+          "purpose": "Show the generated CLI guide or one command's help.",
+          "usage": "help [COMMAND_ID] | --help"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "version",
           "input": {
             "constraints": [],
             "operands": [],
             "options": [],
+            "passthrough": false,
             "synopsis": "version | --version"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
             "additionalProperties": false,
             "properties": {
+              "cliApi": {
+                "type": "integer"
+              },
               "contract": {
                 "const": "agent-cli/v2"
               },
+              "framework": {
+                "type": "string"
+              },
               "product": {
+                "type": "string"
+              },
+              "program": {
                 "type": "string"
               },
               "version": {
@@ -3103,8 +3691,11 @@
             },
             "required": [
               "product",
+              "program",
               "version",
-              "contract"
+              "contract",
+              "cliApi",
+              "framework"
             ],
             "type": "object"
           },
@@ -3115,12 +3706,15 @@
           "usage": "version | --version"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "describe",
           "input": {
             "constraints": [],
@@ -3139,30 +3733,152 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Return the compact command inventory."
+                "summary": "Return the compact command inventory without output schemas."
               }
             ],
+            "passthrough": false,
             "synopsis": "describe [COMMAND_ID] [--summary]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
             "additionalProperties": true,
-            "description": "Versioned command catalog.",
+            "description": "Command catalog, summary or single descriptor.",
+            "required": [
+              "schemaVersion",
+              "kind",
+              "program",
+              "commands"
+            ],
             "type": "object"
           },
           "pattern": [
             "describe"
           ],
-          "purpose": "Return executable command contracts.",
+          "purpose": "Return the machine-readable catalog, summary or one descriptor.",
           "usage": "describe [COMMAND_ID] [--summary]"
         },
         {
+          "available": true,
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "external": false,
+          "hidden": false,
+          "id": "completion",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "choices": [
+                  "bash",
+                  "zsh",
+                  "fish"
+                ],
+                "name": "SHELL",
+                "required": true,
+                "summary": "Shell whose completion script is printed.",
+                "type": "choice",
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "passthrough": false,
+            "synopsis": "completion SHELL"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "script": {
+                "type": "string"
+              },
+              "shell": {
+                "enum": [
+                  "bash",
+                  "zsh",
+                  "fish"
+                ]
+              }
+            },
+            "required": [
+              "shell",
+              "script"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "completion"
+          ],
+          "purpose": "Print the shell completion script generated from the catalog.",
+          "usage": "completion SHELL"
+        },
+        {
+          "available": true,
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "external": false,
+          "hidden": true,
+          "id": "complete.candidates",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "WORDS",
+                "required": false,
+                "summary": "Command line words after the program name; the last one is the prefix being completed.",
+                "variadic": true
+              }
+            ],
+            "options": [],
+            "passthrough": false,
+            "synopsis": "__complete [WORDS...]"
+          },
+          "outputMode": "json-records",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "records": {
+                "items": {
+                  "required": [
+                    "word"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "count",
+              "records"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "__complete"
+          ],
+          "purpose": "Return completion candidates for a partial command line.",
+          "usage": "__complete [WORDS...]"
+        },
+        {
+          "available": true,
           "effect": "stream",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "serve",
           "input": {
             "constraints": [],
@@ -3195,9 +3911,10 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
+                "default": "/usr/bin/git",
                 "long": "--git",
                 "repeatable": false,
                 "required": false,
@@ -3205,95 +3922,211 @@
                 "summary": "Absolute Git executable path."
               }
             ],
+            "passthrough": false,
             "synopsis": "serve --manifest FILE --root DIR [--git FILE]"
           },
-          "outputMode": "maelys-git-agent-jsonl-stream",
+          "outputMode": "protocol-stream",
           "outputSchema": {
-            "additionalProperties": true,
-            "description": "Protocol stream; no CLI envelope.",
+            "additionalProperties": false,
+            "description": "Protocol stream; stdout belongs to the declared protocol and no CLI envelope is produced.",
             "type": "object"
           },
           "pattern": [
             "serve"
           ],
+          "protocol": "maelys-git-agent/1",
           "purpose": "Serve one-command-at-a-time JSONL execution.",
           "usage": "serve --manifest FILE --root DIR [--git FILE]"
         }
       ],
-      "globalOptions": {
-        "compact": "single-line JSON",
-        "format": "text|json",
-        "json": "alias of --format json",
-        "non-interactive": "never prompt",
-        "pretty": "--pretty=false selects compact JSON"
-      },
+      "contract": "agent-cli/v2",
+      "globalOptions": [
+        {
+          "argument": {
+            "choices": [
+              "text",
+              "json",
+              "jsonl"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "text",
+          "long": "--format",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Select text for humans, json for one envelope or jsonl for records."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--json",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Exact alias of --format json."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--compact",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Render JSON on a single line."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--pretty",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "--pretty=false selects compact JSON."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--non-interactive",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Never prompt; fail instead of asking a question."
+        },
+        {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--color",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Control ANSI colors on terminals."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--help",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Show the help of the selected command."
+        }
+      ],
       "invariants": [
         "usage and agent discovery share one catalog",
         "transactional commands plan by default and require --apply",
         "stdout carries success data; stderr carries failures",
         "--json and --format json are identical",
-        "stream commands reject envelope rendering flags"
+        "unknown or duplicated options are refused",
+        "stream commands reject envelope rendering flags",
+        "external commands receive their arguments verbatim"
       ],
       "kind": "catalog",
       "output": {
         "contract": "agent-cli/v2",
         "schemaVersion": 2,
+        "stderr": "diagnostics and failure envelopes",
         "stdout": "success data only; protocol streams are explicit exceptions"
       },
-      "product": "Maelys Git Core",
-      "schemaVersion": 1,
-      "version": "0.1.0"
+      "product": "Maelys Git Executor",
+      "program": "maelys-git-executor",
+      "schemaVersion": 1
     },
     "maelys-git-hook": {
+      "cliApi": 1,
       "commands": [
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "help",
           "input": {
             "constraints": [],
-            "operands": [],
+            "operands": [
+              {
+                "name": "COMMAND_ID",
+                "required": false,
+                "summary": "Stable command identifier whose help is shown.",
+                "variadic": false
+              }
+            ],
             "options": [],
-            "synopsis": "help"
+            "passthrough": false,
+            "synopsis": "help [COMMAND_ID] | --help"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
-            "additionalProperties": true,
-            "description": "CLI help text.",
+            "additionalProperties": false,
+            "properties": {
+              "commands": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "commands"
+            ],
             "type": "object"
           },
           "pattern": [
             "help"
           ],
-          "purpose": "Show the generated CLI guide.",
-          "usage": "help"
+          "purpose": "Show the generated CLI guide or one command's help.",
+          "usage": "help [COMMAND_ID] | --help"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "version",
           "input": {
             "constraints": [],
             "operands": [],
             "options": [],
+            "passthrough": false,
             "synopsis": "version | --version"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
             "additionalProperties": false,
             "properties": {
+              "cliApi": {
+                "type": "integer"
+              },
               "contract": {
                 "const": "agent-cli/v2"
               },
+              "framework": {
+                "type": "string"
+              },
               "product": {
+                "type": "string"
+              },
+              "program": {
                 "type": "string"
               },
               "version": {
@@ -3302,8 +4135,11 @@
             },
             "required": [
               "product",
+              "program",
               "version",
-              "contract"
+              "contract",
+              "cliApi",
+              "framework"
             ],
             "type": "object"
           },
@@ -3314,12 +4150,15 @@
           "usage": "version | --version"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "describe",
           "input": {
             "constraints": [],
@@ -3338,30 +4177,152 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Return the compact command inventory."
+                "summary": "Return the compact command inventory without output schemas."
               }
             ],
+            "passthrough": false,
             "synopsis": "describe [COMMAND_ID] [--summary]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
             "additionalProperties": true,
-            "description": "Versioned command catalog.",
+            "description": "Command catalog, summary or single descriptor.",
+            "required": [
+              "schemaVersion",
+              "kind",
+              "program",
+              "commands"
+            ],
             "type": "object"
           },
           "pattern": [
             "describe"
           ],
-          "purpose": "Return executable command contracts.",
+          "purpose": "Return the machine-readable catalog, summary or one descriptor.",
           "usage": "describe [COMMAND_ID] [--summary]"
         },
         {
+          "available": true,
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "external": false,
+          "hidden": false,
+          "id": "completion",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "choices": [
+                  "bash",
+                  "zsh",
+                  "fish"
+                ],
+                "name": "SHELL",
+                "required": true,
+                "summary": "Shell whose completion script is printed.",
+                "type": "choice",
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "passthrough": false,
+            "synopsis": "completion SHELL"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "script": {
+                "type": "string"
+              },
+              "shell": {
+                "enum": [
+                  "bash",
+                  "zsh",
+                  "fish"
+                ]
+              }
+            },
+            "required": [
+              "shell",
+              "script"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "completion"
+          ],
+          "purpose": "Print the shell completion script generated from the catalog.",
+          "usage": "completion SHELL"
+        },
+        {
+          "available": true,
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "external": false,
+          "hidden": true,
+          "id": "complete.candidates",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "WORDS",
+                "required": false,
+                "summary": "Command line words after the program name; the last one is the prefix being completed.",
+                "variadic": true
+              }
+            ],
+            "options": [],
+            "passthrough": false,
+            "synopsis": "__complete [WORDS...]"
+          },
+          "outputMode": "json-records",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "records": {
+                "items": {
+                  "required": [
+                    "word"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "count",
+              "records"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "__complete"
+          ],
+          "purpose": "Return completion candidates for a partial command line.",
+          "usage": "__complete [WORDS...]"
+        },
+        {
+          "available": true,
           "effect": "stream",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "pre-receive",
           "input": {
             "constraints": [],
@@ -3401,14 +4362,15 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Authenticated principal; defaults to the environment."
+                "summary": "Authenticated principal; defaults to MAELYS_GIT_PRINCIPAL."
               },
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
+                "default": "/usr/bin/git",
                 "long": "--git",
                 "repeatable": false,
                 "required": false,
@@ -3425,14 +4387,17 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Bare Git directory."
+                "summary": "Bare Git directory; defaults to GIT_DIR."
               },
               {
                 "argument": {
+                  "maximum": 18446744073709551615,
+                  "minimum": 1,
                   "name": "COUNT",
-                  "type": "integer"
+                  "type": "unsigned"
                 },
                 "conflictsWith": [],
+                "default": "10000",
                 "long": "--max-commits",
                 "repeatable": false,
                 "required": false,
@@ -3441,10 +4406,13 @@
               },
               {
                 "argument": {
+                  "maximum": 18446744073709551615,
+                  "minimum": 1,
                   "name": "COUNT",
-                  "type": "integer"
+                  "type": "unsigned"
                 },
                 "conflictsWith": [],
+                "default": "100000",
                 "long": "--max-changes",
                 "repeatable": false,
                 "required": false,
@@ -3453,10 +4421,13 @@
               },
               {
                 "argument": {
+                  "maximum": 18446744073709551615,
+                  "minimum": 1,
                   "name": "BYTES",
-                  "type": "integer"
+                  "type": "size"
                 },
                 "conflictsWith": [],
+                "default": "10G",
                 "long": "--max-total-blob-bytes",
                 "repeatable": false,
                 "required": false,
@@ -3465,10 +4436,13 @@
               },
               {
                 "argument": {
+                  "maximum": 18446744073709551615,
+                  "minimum": 1,
                   "name": "BYTES",
-                  "type": "integer"
+                  "type": "size"
                 },
                 "conflictsWith": [],
+                "default": "512M",
                 "long": "--max-inspected-blob-bytes",
                 "repeatable": false,
                 "required": false,
@@ -3476,27 +4450,32 @@
                 "summary": "Maximum blob content consumed across the receive transaction."
               }
             ],
+            "passthrough": false,
             "synopsis": "pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES]"
           },
-          "outputMode": "git-hook-stream",
+          "outputMode": "protocol-stream",
           "outputSchema": {
-            "additionalProperties": true,
-            "description": "Git hook diagnostics; no CLI envelope.",
+            "additionalProperties": false,
+            "description": "Protocol stream; stdout belongs to the declared protocol and no CLI envelope is produced.",
             "type": "object"
           },
           "pattern": [
             "pre-receive"
           ],
+          "protocol": "git-hook",
           "purpose": "Authorize a quota-bounded Git receive transaction from stdin.",
           "usage": "pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES]"
         },
         {
+          "available": true,
           "effect": "stream",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "post-receive",
           "input": {
             "constraints": [],
@@ -3524,7 +4503,7 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Authenticated principal; defaults to the environment."
+                "summary": "Authenticated principal; defaults to MAELYS_GIT_PRINCIPAL."
               },
               {
                 "argument": {
@@ -3539,95 +4518,211 @@
                 "summary": "Append-only JSONL event file; stdout when omitted."
               }
             ],
+            "passthrough": false,
             "synopsis": "post-receive --repository NAME [--user PRINCIPAL] [--events FILE]"
           },
-          "outputMode": "maelys-git-events-jsonl-stream",
+          "outputMode": "protocol-stream",
           "outputSchema": {
-            "additionalProperties": true,
-            "description": "Versioned event stream; no CLI envelope.",
+            "additionalProperties": false,
+            "description": "Protocol stream; stdout belongs to the declared protocol and no CLI envelope is produced.",
             "type": "object"
           },
           "pattern": [
             "post-receive"
           ],
+          "protocol": "maelys-git-events/1",
           "purpose": "Convert received refs into JSONL events.",
           "usage": "post-receive --repository NAME [--user PRINCIPAL] [--events FILE]"
         }
       ],
-      "globalOptions": {
-        "compact": "single-line JSON",
-        "format": "text|json",
-        "json": "alias of --format json",
-        "non-interactive": "never prompt",
-        "pretty": "--pretty=false selects compact JSON"
-      },
+      "contract": "agent-cli/v2",
+      "globalOptions": [
+        {
+          "argument": {
+            "choices": [
+              "text",
+              "json",
+              "jsonl"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "text",
+          "long": "--format",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Select text for humans, json for one envelope or jsonl for records."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--json",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Exact alias of --format json."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--compact",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Render JSON on a single line."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--pretty",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "--pretty=false selects compact JSON."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--non-interactive",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Never prompt; fail instead of asking a question."
+        },
+        {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--color",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Control ANSI colors on terminals."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--help",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Show the help of the selected command."
+        }
+      ],
       "invariants": [
         "usage and agent discovery share one catalog",
         "transactional commands plan by default and require --apply",
         "stdout carries success data; stderr carries failures",
         "--json and --format json are identical",
-        "stream commands reject envelope rendering flags"
+        "unknown or duplicated options are refused",
+        "stream commands reject envelope rendering flags",
+        "external commands receive their arguments verbatim"
       ],
       "kind": "catalog",
       "output": {
         "contract": "agent-cli/v2",
         "schemaVersion": 2,
+        "stderr": "diagnostics and failure envelopes",
         "stdout": "success data only; protocol streams are explicit exceptions"
       },
-      "product": "Maelys Git Core",
-      "schemaVersion": 1,
-      "version": "0.1.0"
+      "product": "Maelys Git Hook",
+      "program": "maelys-git-hook",
+      "schemaVersion": 1
     },
     "maelys-git-shell": {
+      "cliApi": 1,
       "commands": [
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "help",
           "input": {
             "constraints": [],
-            "operands": [],
+            "operands": [
+              {
+                "name": "COMMAND_ID",
+                "required": false,
+                "summary": "Stable command identifier whose help is shown.",
+                "variadic": false
+              }
+            ],
             "options": [],
-            "synopsis": "help"
+            "passthrough": false,
+            "synopsis": "help [COMMAND_ID] | --help"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
-            "additionalProperties": true,
-            "description": "CLI help text.",
+            "additionalProperties": false,
+            "properties": {
+              "commands": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "commands"
+            ],
             "type": "object"
           },
           "pattern": [
             "help"
           ],
-          "purpose": "Show the generated CLI guide.",
-          "usage": "help"
+          "purpose": "Show the generated CLI guide or one command's help.",
+          "usage": "help [COMMAND_ID] | --help"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "version",
           "input": {
             "constraints": [],
             "operands": [],
             "options": [],
+            "passthrough": false,
             "synopsis": "version | --version"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
             "additionalProperties": false,
             "properties": {
+              "cliApi": {
+                "type": "integer"
+              },
               "contract": {
                 "const": "agent-cli/v2"
               },
+              "framework": {
+                "type": "string"
+              },
               "product": {
+                "type": "string"
+              },
+              "program": {
                 "type": "string"
               },
               "version": {
@@ -3636,8 +4731,11 @@
             },
             "required": [
               "product",
+              "program",
               "version",
-              "contract"
+              "contract",
+              "cliApi",
+              "framework"
             ],
             "type": "object"
           },
@@ -3648,12 +4746,15 @@
           "usage": "version | --version"
         },
         {
+          "available": true,
           "effect": "read",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "describe",
           "input": {
             "constraints": [],
@@ -3672,30 +4773,152 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Return the compact command inventory."
+                "summary": "Return the compact command inventory without output schemas."
               }
             ],
+            "passthrough": false,
             "synopsis": "describe [COMMAND_ID] [--summary]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
             "additionalProperties": true,
-            "description": "Versioned command catalog.",
+            "description": "Command catalog, summary or single descriptor.",
+            "required": [
+              "schemaVersion",
+              "kind",
+              "program",
+              "commands"
+            ],
             "type": "object"
           },
           "pattern": [
             "describe"
           ],
-          "purpose": "Return executable command contracts.",
+          "purpose": "Return the machine-readable catalog, summary or one descriptor.",
           "usage": "describe [COMMAND_ID] [--summary]"
         },
         {
+          "available": true,
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "external": false,
+          "hidden": false,
+          "id": "completion",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "choices": [
+                  "bash",
+                  "zsh",
+                  "fish"
+                ],
+                "name": "SHELL",
+                "required": true,
+                "summary": "Shell whose completion script is printed.",
+                "type": "choice",
+                "variadic": false
+              }
+            ],
+            "options": [],
+            "passthrough": false,
+            "synopsis": "completion SHELL"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "script": {
+                "type": "string"
+              },
+              "shell": {
+                "enum": [
+                  "bash",
+                  "zsh",
+                  "fish"
+                ]
+              }
+            },
+            "required": [
+              "shell",
+              "script"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "completion"
+          ],
+          "purpose": "Print the shell completion script generated from the catalog.",
+          "usage": "completion SHELL"
+        },
+        {
+          "available": true,
+          "effect": "read",
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "external": false,
+          "hidden": true,
+          "id": "complete.candidates",
+          "input": {
+            "constraints": [],
+            "operands": [
+              {
+                "name": "WORDS",
+                "required": false,
+                "summary": "Command line words after the program name; the last one is the prefix being completed.",
+                "variadic": true
+              }
+            ],
+            "options": [],
+            "passthrough": false,
+            "synopsis": "__complete [WORDS...]"
+          },
+          "outputMode": "json-records",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "records": {
+                "items": {
+                  "required": [
+                    "word"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "count",
+              "records"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "__complete"
+          ],
+          "purpose": "Return completion candidates for a partial command line.",
+          "usage": "__complete [WORDS...]"
+        },
+        {
+          "available": true,
           "effect": "stream",
           "exitCodes": {
             "0": "command completed",
             "1": "execution failed",
             "2": "valid report with violations"
           },
+          "external": false,
+          "hidden": false,
           "id": "serve",
           "input": {
             "constraints": [
@@ -3748,9 +4971,10 @@
               {
                 "argument": {
                   "name": "FILE",
-                  "type": "path"
+                  "type": "absolute-path"
                 },
                 "conflictsWith": [],
+                "default": "/usr/bin/git",
                 "long": "--git",
                 "repeatable": false,
                 "required": false,
@@ -3780,45 +5004,121 @@
                 "summary": "Reject receive-pack for this deploy key."
               }
             ],
-            "synopsis": "serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE] [--restrict-repository NAME [--read-only]]"
+            "passthrough": false,
+            "synopsis": "serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE] [--restrict-repository NAME] [--read-only]"
           },
-          "outputMode": "git-smart-protocol-stream",
+          "outputMode": "protocol-stream",
           "outputSchema": {
-            "additionalProperties": true,
-            "description": "Git smart-protocol stream; no CLI envelope.",
+            "additionalProperties": false,
+            "description": "Protocol stream; stdout belongs to the declared protocol and no CLI envelope is produced.",
             "type": "object"
           },
           "pattern": [
             "serve"
           ],
+          "protocol": "git-smart",
           "purpose": "Authorize SSH_ORIGINAL_COMMAND then replace the process with Git.",
-          "usage": "serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE] [--restrict-repository NAME [--read-only]]"
+          "usage": "serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE] [--restrict-repository NAME] [--read-only]"
         }
       ],
-      "globalOptions": {
-        "compact": "single-line JSON",
-        "format": "text|json",
-        "json": "alias of --format json",
-        "non-interactive": "never prompt",
-        "pretty": "--pretty=false selects compact JSON"
-      },
+      "contract": "agent-cli/v2",
+      "globalOptions": [
+        {
+          "argument": {
+            "choices": [
+              "text",
+              "json",
+              "jsonl"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "text",
+          "long": "--format",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Select text for humans, json for one envelope or jsonl for records."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--json",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Exact alias of --format json."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--compact",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Render JSON on a single line."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--pretty",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "--pretty=false selects compact JSON."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--non-interactive",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Never prompt; fail instead of asking a question."
+        },
+        {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--color",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Control ANSI colors on terminals."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--help",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Show the help of the selected command."
+        }
+      ],
       "invariants": [
         "usage and agent discovery share one catalog",
         "transactional commands plan by default and require --apply",
         "stdout carries success data; stderr carries failures",
         "--json and --format json are identical",
-        "stream commands reject envelope rendering flags"
+        "unknown or duplicated options are refused",
+        "stream commands reject envelope rendering flags",
+        "external commands receive their arguments verbatim"
       ],
       "kind": "catalog",
       "output": {
         "contract": "agent-cli/v2",
         "schemaVersion": 2,
+        "stderr": "diagnostics and failure envelopes",
         "stdout": "success data only; protocol streams are explicit exceptions"
       },
-      "product": "Maelys Git Core",
-      "schemaVersion": 1,
-      "version": "0.1.0"
+      "product": "Maelys Git Shell",
+      "program": "maelys-git-shell",
+      "schemaVersion": 1
     }
-  },
-  "schemaVersion": 1
+  }
 }

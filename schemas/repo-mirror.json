@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mode",
+    "changed",
+    "synchronizationRequired",
+    "sourceRepository",
+    "targetRepository",
+    "sourcePath",
+    "targetPath",
+    "targetExists",
+    "precondition",
+    "event"
+  ],
+  "properties": {
+    "mode": {
+      "enum": [
+        "plan",
+        "apply"
+      ]
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "synchronizationRequired": {
+      "type": "boolean"
+    },
+    "sourceRepository": {
+      "type": "string"
+    },
+    "targetRepository": {
+      "type": "string"
+    },
+    "sourcePath": {
+      "type": "string"
+    },
+    "targetPath": {
+      "type": "string"
+    },
+    "targetExists": {
+      "type": "boolean"
+    },
+    "precondition": {
+      "type": "object"
+    },
+    "event": {
+      "type": "object"
+    }
+  }
+}

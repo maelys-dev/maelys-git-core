@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "repository",
+    "path",
+    "identity",
+    "headRef",
+    "headOid",
+    "refCount",
+    "objectCount",
+    "objectBytes"
+  ],
+  "properties": {
+    "repository": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "identity": {
+      "type": "string"
+    },
+    "headRef": {
+      "type": "string"
+    },
+    "headOid": {
+      "type": "string"
+    },
+    "refCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "objectCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "objectBytes": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mode",
+    "changed",
+    "config",
+    "agentId",
+    "authority",
+    "database",
+    "precondition"
+  ],
+  "properties": {
+    "mode": {
+      "enum": [
+        "plan",
+        "apply"
+      ]
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "config": {
+      "type": "string"
+    },
+    "agentId": {
+      "type": "string"
+    },
+    "authority": {
+      "type": "string"
+    },
+    "database": {
+      "type": "string"
+    },
+    "precondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configAbsent"
+      ],
+      "properties": {
+        "configAbsent": {
+          "const": true
+        }
+      }
+    }
+  }
+}

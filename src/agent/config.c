@@ -11,36 +11,27 @@
 #define O_NOFOLLOW 0
 #endif
 
-static int object_has_only(json_t *object, const char *const *allowed) {
-    const char *key;
-    json_t *value;
-    json_object_foreach(object, key, value) {
-        (void)value;
-        int found = 0;
-        for (size_t i = 0u; allowed[i]; ++i) {
-            if (strcmp(key, allowed[i]) == 0) { found = 1; break; }
-        }
-        if (!found) return 0;
-    }
-    return 1;
-}
+typedef enum {
+    FILE_TRUST_CONFIG,  /* owned by the agent or root, not writable by others */
+    FILE_TRUST_SECRET,  /* owned by the agent, no group or world permissions */
+    FILE_TRUST_SYSTEM   /* trusted input that may be reached through a symlink */
+} file_trust_t;
 
-/* kind: 0=config, 1=secret token, 2=trusted input that may be a system symlink. */
-static int secure_regular_file(const char *path, int kind, maelys_git_error_t *error) {
+static int secure_regular_file(const char *path, file_trust_t kind, maelys_git_error_t *error) {
     struct stat status;
-    if ((kind == 2 ? stat(path, &status) : lstat(path, &status)) != 0) {
+    if ((kind == FILE_TRUST_SYSTEM ? stat(path, &status) : lstat(path, &status)) != 0) {
         mg_error_set(error, MAELYS_GIT_ERR_NOT_FOUND, errno,
                      "cannot inspect %s: %s", path, strerror(errno));
         return 0;
     }
-    mode_t forbidden = kind == 1 ? 077u : 022u;
-    int owner_ok = kind == 1 ? status.st_uid == geteuid() :
+    mode_t forbidden = kind == FILE_TRUST_SECRET ? 077u : 022u;
+    int owner_ok = kind == FILE_TRUST_SECRET ? status.st_uid == geteuid() :
                    (status.st_uid == geteuid() || status.st_uid == 0u);
     if (!S_ISREG(status.st_mode) || !owner_ok ||
         (status.st_mode & forbidden) != 0) {
         mg_error_set(error, MAELYS_GIT_ERR_DENIED, 0,
                      "%s must be a regular file owned by the agent%s",
-                     path, kind == 1 ? " with no group/world permissions" :
+                     path, kind == FILE_TRUST_SECRET ? " with no group/world permissions" :
                                        " and not group/world-writable");
         return 0;
     }
@@ -99,7 +90,7 @@ maelys_git_result_t mg_config_load(const char *path,
     };
     if (!path || !out) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     *out = NULL;
-    if (!secure_regular_file(path, 0, error)) return error ? error->code : MAELYS_GIT_ERR_DENIED;
+    if (!secure_regular_file(path, FILE_TRUST_CONFIG, error)) return error ? error->code : MAELYS_GIT_ERR_DENIED;
     json_error_t json_error;
     json_t *root = json_load_file(path, JSON_REJECT_DUPLICATES, &json_error);
     if (!root) {
@@ -110,7 +101,7 @@ maelys_git_result_t mg_config_load(const char *path,
     json_t *version = json_object_get(root, "version");
     json_t *poll = json_object_get(root, "poll_timeout_ms");
     json_t *request = json_object_get(root, "request_timeout_ms");
-    int valid = config && json_is_object(root) && object_has_only(root, allowed) &&
+    int valid = config && json_is_object(root) && mg_json_object_has_only(root, allowed) &&
                 json_is_integer(version) && json_integer_value(version) == 1 &&
                 copy_json_string(root, "agent_id", config->agent_id, sizeof(config->agent_id), 1) &&
                 copy_json_string(root, "authority", config->authority, sizeof(config->authority), 1) &&
@@ -142,9 +133,9 @@ maelys_git_result_t mg_config_load(const char *path,
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "configuration does not match version 1 schema");
         return MAELYS_GIT_ERR_PROTOCOL;
     }
-    if (!secure_regular_file(config->token_file, 1, error) ||
-        !secure_regular_file(config->ca_file, 2, error) ||
-        !secure_regular_file(config->manifest_path, 2, error)) {
+    if (!secure_regular_file(config->token_file, FILE_TRUST_SECRET, error) ||
+        !secure_regular_file(config->ca_file, FILE_TRUST_SYSTEM, error) ||
+        !secure_regular_file(config->manifest_path, FILE_TRUST_SYSTEM, error)) {
         free(config);
         return error ? error->code : MAELYS_GIT_ERR_DENIED;
     }
@@ -164,7 +155,7 @@ maelys_git_result_t mg_token_load(const char *path,
                                   maelys_git_error_t *error) {
     if (!path || !out || capacity < 2u) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     out[0] = '\0';
-    if (!secure_regular_file(path, 1, error)) return error ? error->code : MAELYS_GIT_ERR_DENIED;
+    if (!secure_regular_file(path, FILE_TRUST_SECRET, error)) return error ? error->code : MAELYS_GIT_ERR_DENIED;
     int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "cannot open token: %s", strerror(errno));
@@ -259,8 +250,8 @@ maelys_git_result_t maelys_git_agent_validate_provision(
                      "provisioning values must use valid identifiers and absolute paths");
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     }
-    if (!secure_regular_file(token_file, 1, error)) return error ? error->code : MAELYS_GIT_ERR_DENIED;
-    if (!secure_regular_file(ca_file, 2, error) || !secure_regular_file(manifest_path, 2, error))
+    if (!secure_regular_file(token_file, FILE_TRUST_SECRET, error)) return error ? error->code : MAELYS_GIT_ERR_DENIED;
+    if (!secure_regular_file(ca_file, FILE_TRUST_SYSTEM, error) || !secure_regular_file(manifest_path, FILE_TRUST_SYSTEM, error))
         return error ? error->code : MAELYS_GIT_ERR_DENIED;
     struct stat status;
     if (stat(repository_root, &status) != 0 || !S_ISDIR(status.st_mode)) {

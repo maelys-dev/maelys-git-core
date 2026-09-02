@@ -13,10 +13,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#ifndef PATH_MAX
-#define PATH_MAX 4096
-#endif
-
 typedef struct {
     char *principal;
     char *key;
@@ -469,9 +465,14 @@ maelys_git_result_t maelys_git_compile_authorized_keys(
         return MAELYS_GIT_ERR_IO;
     }
     FILE *output = fdopen(descriptor, "w");
-    if (!output) { close(descriptor); unlink(temporary); free_entries(entries, count); return MAELYS_GIT_ERR_IO; }
+    if (!output) {
+        (void)close(descriptor);
+        (void)unlink(temporary);
+        free_entries(entries, count);
+        return MAELYS_GIT_ERR_IO;
+    }
     for (size_t i = 0u; i < count; ++i) {
-        int written = entries[i].repository ?
+        int line_length = entries[i].repository ?
             fprintf(output,
                     "restrict,command=\"%s serve --user %s --root %s --manifest %s --restrict-repository %s%s\" %s\n",
                     shell_path, entries[i].principal, repository_root, manifest_path,
@@ -481,7 +482,7 @@ maelys_git_result_t maelys_git_compile_authorized_keys(
                     "restrict,command=\"%s serve --user %s --root %s --manifest %s\" %s\n",
                     shell_path, entries[i].principal, repository_root, manifest_path,
                     entries[i].key);
-        if (written < 0) {
+        if (line_length < 0) {
             result = MAELYS_GIT_ERR_IO;
             break;
         }
@@ -492,8 +493,9 @@ maelys_git_result_t maelys_git_compile_authorized_keys(
     if (fclose(output) != 0 && result == MAELYS_GIT_OK) result = MAELYS_GIT_ERR_IO;
     if (result == MAELYS_GIT_OK && rename(temporary, output_path) != 0) result = MAELYS_GIT_ERR_IO;
     if (result != MAELYS_GIT_OK) {
-        unlink(temporary);
-        mg_error_set(error, result, errno, "authorized_keys update failed: %s", strerror(errno));
+        int saved = errno;
+        (void)unlink(temporary);
+        mg_error_set(error, result, saved, "authorized_keys update failed: %s", strerror(saved));
     }
     free_entries(entries, count);
     return result;

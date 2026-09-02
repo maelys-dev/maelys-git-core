@@ -61,6 +61,8 @@ maelys_git_result_t maelys_git_parse_ssh_command(
 
 int maelys_git_repository_name_is_valid(const char *name);
 int maelys_git_ref_name_is_valid(const char *ref_name);
+/* 40 (SHA-1) or 64 (SHA-256) hexadecimal digits. */
+int maelys_git_oid_is_valid(const char *value);
 
 maelys_git_result_t maelys_git_resolve_repository(
     const char *repository_root,

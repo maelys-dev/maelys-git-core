@@ -3,7 +3,6 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <stdio.h>
@@ -11,17 +10,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#ifndef PATH_MAX
-#define PATH_MAX 4096
-#endif
-
-#if defined(__APPLE__)
-extern int renameatx_np(int, const char *, int, const char *, unsigned int);
-#ifndef RENAME_EXCL
-#define RENAME_EXCL 0x00000004u
-#endif
-#endif
 
 #define MG_MAX_REPOSITORY_ENTRIES 10000u
 
@@ -41,23 +29,6 @@ int maelys_git_lifecycle_id_is_valid(const char *identifier) {
     for (const unsigned char *p = (const unsigned char *)identifier; *p; ++p)
         if (!(isalnum(*p) || *p == '.' || *p == '_' || *p == '-')) return 0;
     return 1;
-}
-
-static maelys_git_result_t canonical_root(const char *root,
-                                          char out[PATH_MAX],
-                                          maelys_git_error_t *error) {
-    if (!root || !realpath(root, out)) {
-        mg_error_set(error, MAELYS_GIT_ERR_NOT_FOUND, errno,
-                     "cannot resolve repository root: %s", strerror(errno));
-        return MAELYS_GIT_ERR_NOT_FOUND;
-    }
-    struct stat status;
-    if (lstat(out, &status) != 0 || !S_ISDIR(status.st_mode) || S_ISLNK(status.st_mode)) {
-        mg_error_set(error, MAELYS_GIT_ERR_INVALID_REPOSITORY, errno,
-                     "repository root is not a direct directory");
-        return MAELYS_GIT_ERR_INVALID_REPOSITORY;
-    }
-    return MAELYS_GIT_OK;
 }
 
 static int bare_layout(const char *path) {
@@ -104,12 +75,6 @@ static maelys_git_result_t active_path(const char *root,
     }
     if (out_status) *out_status = status;
     return MAELYS_GIT_OK;
-}
-
-static int identity_string(const struct stat *status, char out[128]) {
-    int written = snprintf(out, 128u, "%" PRIxMAX ":%" PRIxMAX,
-                           (uintmax_t)status->st_dev, (uintmax_t)status->st_ino);
-    return written > 0 && written < 128;
 }
 
 static maelys_git_result_t require_identity(const char *expected,
@@ -167,36 +132,6 @@ static maelys_git_result_t ensure_directory(const char *path,
     return MAELYS_GIT_OK;
 }
 
-maelys_git_result_t mg_repository_ensure_parent_directories(
-    const char *root, const char *target, maelys_git_error_t *error) {
-    char path[PATH_MAX];
-    if (!mg_copy_string(path, sizeof(path), target)) return MAELYS_GIT_ERR_LIMIT;
-    char *last = strrchr(path, '/');
-    if (!last || (size_t)(last - path) < strlen(root)) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
-    if ((size_t)(last - path) == strlen(root)) return MAELYS_GIT_OK;
-    *last = '\0';
-    for (char *p = path + strlen(root) + 1u;; ++p) {
-        if (*p != '/' && *p != '\0') continue;
-        char saved = *p;
-        *p = '\0';
-        struct stat status;
-        if (lstat(path, &status) != 0) {
-            if (errno != ENOENT || mkdir(path, 0750) != 0) {
-                mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
-                             "cannot create repository parent %s: %s", path, strerror(errno));
-                return MAELYS_GIT_ERR_IO;
-            }
-        } else if (!S_ISDIR(status.st_mode) || S_ISLNK(status.st_mode)) {
-            mg_error_set(error, MAELYS_GIT_ERR_IO, 0,
-                         "repository parent is not a direct directory: %s", path);
-            return MAELYS_GIT_ERR_IO;
-        }
-        *p = saved;
-        if (saved == '\0') break;
-    }
-    return MAELYS_GIT_OK;
-}
-
 static void prune_empty_parents(const char *root, const char *source) {
     char path[PATH_MAX];
     if (!mg_copy_string(path, sizeof(path), source)) return;
@@ -206,17 +141,6 @@ static void prune_empty_parents(const char *root, const char *source) {
         if (rmdir(path) != 0) break;
         slash = strrchr(path, '/');
     }
-}
-
-static int rename_no_replace(const char *source, const char *target) {
-#if defined(__APPLE__)
-    return renameatx_np(AT_FDCWD, source, AT_FDCWD, target, RENAME_EXCL);
-#else
-    struct stat status;
-    if (lstat(target, &status) == 0) { errno = EEXIST; return -1; }
-    if (errno != ENOENT) return -1;
-    return rename(source, target);
-#endif
 }
 
 static int compare_entries(const void *left, const void *right) {
@@ -401,7 +325,7 @@ maelys_git_result_t maelys_git_repository_list(
     if (!out_list) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     memset(out_list, 0, sizeof(*out_list));
     char root[PATH_MAX];
-    maelys_git_result_t result = canonical_root(repository_root, root, error);
+    maelys_git_result_t result = mg_canonical_directory(repository_root, root, "repository root", error);
     size_t capacity = 0u;
     if (result == MAELYS_GIT_OK)
         result = scan_active(root, "", out_list, &capacity, error);
@@ -450,12 +374,12 @@ maelys_git_result_t maelys_git_repository_inspect(
     memset(out_info, 0, sizeof(*out_info));
     char root[PATH_MAX];
     struct stat status;
-    maelys_git_result_t result = canonical_root(repository_root, root, error);
+    maelys_git_result_t result = mg_canonical_directory(repository_root, root, "repository root", error);
     if (result == MAELYS_GIT_OK)
         result = active_path(root, repository_name, out_info->path, &status, error);
     if (result != MAELYS_GIT_OK) return result;
     if (!mg_copy_string(out_info->repository, sizeof(out_info->repository), repository_name) ||
-        !identity_string(&status, out_info->identity)) return MAELYS_GIT_ERR_LIMIT;
+        !mg_identity_from_stat(&status, out_info->identity)) return MAELYS_GIT_ERR_LIMIT;
 
     char *head_ref_argv[] = {(char *)git, "--git-dir", out_info->path,
                              "symbolic-ref", "--quiet", "HEAD", NULL};
@@ -518,7 +442,7 @@ static maelys_git_result_t initialize_transition(
         (storage_id && !mg_copy_string(transition->storage_id, sizeof(transition->storage_id), storage_id)) ||
         !mg_copy_string(transition->source_path, sizeof(transition->source_path), source_path) ||
         !mg_copy_string(transition->target_path, sizeof(transition->target_path), target_path) ||
-        !identity_string(source_status, transition->source_identity)) return MAELYS_GIT_ERR_LIMIT;
+        !mg_identity_from_stat(source_status, transition->source_identity)) return MAELYS_GIT_ERR_LIMIT;
     transition->source_state = source_state;
     transition->target_state = target_state;
     return MAELYS_GIT_OK;
@@ -533,7 +457,7 @@ maelys_git_result_t maelys_git_repository_rename(
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     char root[PATH_MAX], source[PATH_MAX], target[PATH_MAX];
     struct stat source_status;
-    maelys_git_result_t result = canonical_root(repository_root, root, error);
+    maelys_git_result_t result = mg_canonical_directory(repository_root, root, "repository root", error);
     if (result == MAELYS_GIT_OK)
         result = active_path(root, source_repository, source, &source_status, error);
     int written = result == MAELYS_GIT_OK ?
@@ -550,7 +474,7 @@ maelys_git_result_t maelys_git_repository_rename(
                                   out_transition->source_identity, apply, error);
     if (result == MAELYS_GIT_OK && apply)
         result = mg_repository_ensure_parent_directories(root, target, error);
-    if (result == MAELYS_GIT_OK && apply && rename_no_replace(source, target) != 0) {
+    if (result == MAELYS_GIT_OK && apply && mg_rename_no_replace(source, target) != 0) {
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
                      "cannot rename repository: %s", strerror(errno));
         result = MAELYS_GIT_ERR_IO;
@@ -565,37 +489,10 @@ static maelys_git_result_t write_repository_name(const char *entry,
     char path[PATH_MAX];
     int written = snprintf(path, sizeof(path), "%s/repository-name", entry);
     if (written < 0 || (size_t)written >= sizeof(path)) return MAELYS_GIT_ERR_LIMIT;
-    int descriptor = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
-    if (descriptor < 0) {
-        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
-                     "cannot create lifecycle metadata: %s", strerror(errno));
-        return MAELYS_GIT_ERR_IO;
-    }
-    size_t length = strlen(repository);
-    size_t offset = 0u;
-    int failed = 0;
-    while (offset < length) {
-        ssize_t count = write(descriptor, repository + offset, length - offset);
-        if (count < 0 && errno == EINTR) continue;
-        if (count <= 0) { failed = 1; break; }
-        offset += (size_t)count;
-    }
-    while (!failed) {
-        ssize_t count = write(descriptor, "\n", 1u);
-        if (count < 0 && errno == EINTR) continue;
-        if (count != 1) failed = 1;
-        break;
-    }
-    if (!failed && fsync(descriptor) != 0) failed = 1;
-    int saved = errno;
-    if (close(descriptor) != 0) failed = 1;
-    if (failed) {
-        unlink(path);
-        mg_error_set(error, MAELYS_GIT_ERR_IO, saved,
-                     "cannot persist lifecycle metadata: %s", strerror(saved));
-        return MAELYS_GIT_ERR_IO;
-    }
-    return MAELYS_GIT_OK;
+    char line[MAELYS_GIT_MAX_REPOSITORY + 2u];
+    int length = snprintf(line, sizeof(line), "%s\n", repository);
+    if (length < 0 || (size_t)length >= sizeof(line)) return MAELYS_GIT_ERR_LIMIT;
+    return mg_write_file_exclusive(path, line, (size_t)length, 0600, error);
 }
 
 static maelys_git_result_t storage_paths(const char *root,
@@ -626,7 +523,7 @@ maelys_git_result_t maelys_git_repository_store(
     char entry[PATH_MAX], target[PATH_MAX];
     struct stat source_status;
     int entry_created = 0;
-    maelys_git_result_t result = canonical_root(repository_root, root, error);
+    maelys_git_result_t result = mg_canonical_directory(repository_root, root, "repository root", error);
     if (result == MAELYS_GIT_OK)
         result = storage_paths(root, target_state, storage_id,
                                internal, store, entry, target);
@@ -651,7 +548,7 @@ maelys_git_result_t maelys_git_repository_store(
     }
     if (result == MAELYS_GIT_OK && apply)
         result = write_repository_name(entry, repository_name, error);
-    if (result == MAELYS_GIT_OK && apply && rename_no_replace(source, target) != 0) {
+    if (result == MAELYS_GIT_OK && apply && mg_rename_no_replace(source, target) != 0) {
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
                      "cannot store repository: %s", strerror(errno));
         result = MAELYS_GIT_ERR_IO;
@@ -674,7 +571,7 @@ maelys_git_result_t maelys_git_repository_restore(
     maelys_git_error_clear(error);
     if (!out_transition) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     char root[PATH_MAX], internal[PATH_MAX], store[PATH_MAX], entry[PATH_MAX], source[PATH_MAX];
-    maelys_git_result_t result = canonical_root(repository_root, root, error);
+    maelys_git_result_t result = mg_canonical_directory(repository_root, root, "repository root", error);
     if (result == MAELYS_GIT_OK)
         result = storage_paths(root, source_state, storage_id,
                                internal, store, entry, source);
@@ -708,7 +605,7 @@ maelys_git_result_t maelys_git_repository_restore(
                                   out_transition->source_identity, apply, error);
     if (result == MAELYS_GIT_OK && apply)
         result = mg_repository_ensure_parent_directories(root, target, error);
-    if (result == MAELYS_GIT_OK && apply && rename_no_replace(source, target) != 0) {
+    if (result == MAELYS_GIT_OK && apply && mg_rename_no_replace(source, target) != 0) {
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
                      "cannot restore repository: %s", strerror(errno));
         result = MAELYS_GIT_ERR_IO;

@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "valid",
+    "manifest",
+    "diagnostics"
+  ],
+  "properties": {
+    "valid": {
+      "type": "boolean"
+    },
+    "manifest": {
+      "type": "string"
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  }
+}

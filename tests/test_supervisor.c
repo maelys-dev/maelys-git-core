@@ -18,7 +18,16 @@ static void pause_ms(long milliseconds) {
     }
 }
 
+static int ends_with(const char *value, const char *suffix) {
+    size_t value_length = strlen(value);
+    size_t suffix_length = strlen(suffix);
+    return value_length >= suffix_length &&
+           strcmp(value + value_length - suffix_length, suffix) == 0;
+}
+
 static int executor_mode(const char *marker) {
+    /* An executor that exits before reading its request. */
+    if (ends_with(marker, "/exit-early")) return 0;
     pid_t descendant = fork();
     if (descendant < 0) return 2;
     if (descendant == 0) {
@@ -77,6 +86,23 @@ int main(int argc, char **argv) {
     if (lstat(marker, &status) == 0)
         return fail("executor descendant survived supervisor timeout");
     if (errno != ENOENT) return fail("cannot inspect executor descendant marker");
+
+    /* A child that closes its stdin before the request is written must yield
+     * a failure, never a SIGPIPE that terminates the supervisor. */
+    (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/exit-early",
+                   directory);
+    config.request_timeout_ms = 2000u;
+    request = malloc(MAELYS_GIT_MAX_PROTOCOL_LINE + 1u);
+    if (!request) return fail("cannot allocate supervisor request");
+    memset(request, 'x', MAELYS_GIT_MAX_PROTOCOL_LINE);
+    request[MAELYS_GIT_MAX_PROTOCOL_LINE] = '\0';
+    response = NULL;
+    memset(&error, 0, sizeof(error));
+    result = mg_supervisor_execute(&config, request, &response, &error);
+    free(request);
+    free(response);
+    if (result == MAELYS_GIT_OK)
+        return fail("executor that exited before reading was reported as success");
     if (rmdir(directory) != 0) return fail("cannot remove temporary directory");
     return 0;
 }

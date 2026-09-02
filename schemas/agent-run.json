@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "completed",
+    "mode"
+  ],
+  "properties": {
+    "completed": {
+      "const": true
+    },
+    "mode": {
+      "enum": [
+        "once",
+        "continuous"
+      ]
+    }
+  }
+}
