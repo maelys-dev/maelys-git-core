@@ -63,9 +63,11 @@ unset(BUILD_TESTING)
 # ---- maelys-cli -------------------------------------------------------------
 # The shared CLI framework comes from an installed CMake package
 # (find_package) or, by default, from the sibling source tree added as a
-# subdirectory. Both provide the maelys::cli target; the embed and reference
-# tools are located next to the sources in the subdirectory case.
-find_package(maelys-cli 0.4 QUIET CONFIG)
+# subdirectory. Both provide the dependency-free maelys::cli target; the
+# embed and reference tools are located next to the sources in the
+# subdirectory case. The package promises compatibility within one minor
+# version, so the requested version follows the framework releases.
+find_package(maelys-cli 0.5 QUIET CONFIG)
 if(maelys-cli_FOUND)
     message(STATUS "Using installed maelys-cli ${maelys-cli_VERSION}")
 else()

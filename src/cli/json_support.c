@@ -11,7 +11,10 @@ int maelys_git_cli_succeed_json(
             context && context->invocation && context->invocation->command ?
                 context->invocation->command->id : "unresolved");
     }
-    /* Sorted keys keep the data deterministic across Jansson versions. */
+    /* Sorted keys keep the data deterministic across Jansson versions;
+     * JSON_ENSURE_ASCII satisfies the framework writer's UTF-8 strictness.
+     * Jansson guarantees validity, so the trusted reply writes the text
+     * verbatim in compact mode instead of validating and reformatting it. */
     char *text = json_dumps(data, JSON_COMPACT | JSON_SORT_KEYS | JSON_ENSURE_ASCII);
     json_decref(data);
     if (!text) {
@@ -19,7 +22,7 @@ int maelys_git_cli_succeed_json(
             "Report this defect to the command implementation.",
             "Result document could not be serialized.");
     }
-    int result = maelys_cli_succeed(context, text, human, exit_code);
+    int result = maelys_cli_succeed_trusted(context, text, human, exit_code);
     free(text);
     return result;
 }

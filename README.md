@@ -56,6 +56,9 @@ tree named by `MAELYS_CLI_SOURCE_DIR` through its own CMake project. Jansson >= 
 default Cloud agent also requires Maelys HTTP, Maelys System and mbedTLS; it
 can be excluded with `-DMAELYS_GIT_ENABLE_CLOUD_AGENT=OFF`.
 `-DMAELYS_GIT_WERROR=ON` turns the warning set into errors, as CI does.
+Only the dependency-free core of `maelys-cli` is linked; its extension
+archive and `maelys` dispatcher (which need `maelys-json`) are not built
+here.
 
 ## Policy model
 
