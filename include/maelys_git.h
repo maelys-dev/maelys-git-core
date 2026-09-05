@@ -77,6 +77,8 @@ maelys_git_result_t maelys_git_resolve_repository(
     size_t out_capacity,
     maelys_git_error_t *error);
 
+/* A loaded policy set. Handles are thread-confined: distinct handles are
+ * independent, but one handle must not be used concurrently. */
 typedef struct maelys_git_policy maelys_git_policy_t;
 
 typedef struct {

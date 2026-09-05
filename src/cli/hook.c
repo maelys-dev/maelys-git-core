@@ -2,6 +2,7 @@
  * transaction read from stdin; `post-receive` converts updates into JSONL
  * events. Both are protocol streams and never render CLI envelopes. */
 #include "cli/support.h"
+#include "internal.h"
 
 #include <errno.h>
 #include <stdint.h>
@@ -78,11 +79,13 @@ static int command_pre_receive(maelys_cli_context_t *context) {
     maelys_git_policy_t *policy = NULL;
     maelys_git_result_t result = maelys_git_policy_open(
         maelys_cli_option(context, "manifest"), &policy, &error);
+    if (result == MAELYS_GIT_OK) result = mg_receive_objects_begin(git_dir, &error);
     if (result == MAELYS_GIT_OK)
         result = maelys_git_pre_receive_with_limits(
             policy, maelys_git_cli_git(context), git_dir,
             maelys_cli_option(context, "repository"), user, &limits, NULL, 0u,
             stdin, context->err, &error);
+    mg_receive_objects_end();
     maelys_git_policy_close(policy);
     return result == MAELYS_GIT_OK ? MAELYS_CLI_EXIT_OK :
         maelys_git_cli_stream_error(context, "pre-receive", result, &error);

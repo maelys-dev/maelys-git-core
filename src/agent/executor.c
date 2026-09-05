@@ -214,24 +214,36 @@ static char *execute_update_ref(maelys_git_policy_t *policy,
     char repository_path[4096];
     maelys_git_result_t result = maelys_git_resolve_repository(root, message->repository,
         repository_path, sizeof(repository_path), error);
-    maelys_git_path_list_t changed = {0};
-    if (result == MAELYS_GIT_OK)
-        result = maelys_git_repository_changed_paths(git, repository_path, old_oid, new_oid, &changed, error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
-    maelys_git_policy_decision_t decision;
-    result = authorize(policy, message, "push", ref, (const char *const *)changed.items,
-                       changed.count, &decision, error);
-    if (result != MAELYS_GIT_OK) {
-        maelys_git_path_list_clear(&changed);
-        return failure(message, "failed", result, error->message, error);
+    if (!maelys_git_ref_name_is_valid(ref) || !mg_is_oid(old_oid) || !mg_is_oid(new_oid) ||
+        !message->principal[0])
+        return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid update_ref values", error);
+    FILE *updates = tmpfile();
+    FILE *diagnostics = tmpfile();
+    if (!updates || !diagnostics) {
+        if (updates) fclose(updates);
+        if (diagnostics) fclose(diagnostics);
+        return failure(message, "failed", MAELYS_GIT_ERR_IO, "cannot create authorization stream", error);
     }
-    if (!decision.allowed) {
-        maelys_git_path_list_clear(&changed);
-        return decision_result(message, &decision, error);
+    maelys_git_change_summary_t summary = {0};
+    maelys_git_policy_decision_t decision = {0};
+    maelys_git_inspection_limits_t limits;
+    maelys_git_inspection_limits_default(&limits);
+    if (fprintf(updates, "%s %s %s\n", old_oid, new_oid, ref) < 0 ||
+        fflush(updates) != 0 || fseek(updates, 0L, SEEK_SET) != 0) {
+        result = MAELYS_GIT_ERR_IO;
+        mg_error_set(error, result, 0, "cannot write authorization stream");
+    } else {
+        result = mg_receive_authorize(policy, git, repository_path, message->repository,
+            message->principal, &limits, NULL, 0u, updates, diagnostics, &summary,
+            &decision, error);
     }
+    fclose(updates);
+    fclose(diagnostics);
+    if (result == MAELYS_GIT_ERR_DENIED) return decision_result(message, &decision, error);
+    if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
     result = maelys_git_repository_update_ref(git, repository_path, ref, new_oid, old_oid, error);
-    size_t changed_count = changed.count;
-    maelys_git_path_list_clear(&changed);
+    size_t changed_count = summary.changed_count + summary.renamed_count;
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
     json_t *payload = json_pack("{s:s,s:I}", "ref", ref, "changed_paths", (json_int_t)changed_count);
     char *encoded = payload ? mg_protocol_encode_result(message, "ok", payload, error) : NULL;

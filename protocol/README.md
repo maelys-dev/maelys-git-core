@@ -30,6 +30,12 @@ agent invocations use `agent-cli/v2`, described by `cli-envelope-v2.schema.json`
 Commands declared as streams reject CLI rendering flags so the two protocols
 cannot be accidentally nested or mixed on stdout.
 
+`update_ref` applies the receive hook's full policy to the proposed transaction:
+ref and update kind, commits/signatures, each changed path, per-ref summary and
+transaction summary. Default receive quotas apply. A policy denial returns
+`status: "denied"` and leaves the ref unchanged; a successful authorization is
+followed by compare-and-swap against `old_oid`.
+
 Pull-request orchestration uses `pr_check` for read-only merge analysis and
 `pr_merge` for gated execution. The latter requires an explicit `apply`
 boolean, validates the target OID, re-evaluates local Datalog policy, and uses

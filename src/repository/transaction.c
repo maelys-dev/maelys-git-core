@@ -336,8 +336,7 @@ static maelys_git_result_t run_blob_batch(const char *git,
     maelys_git_result_t result = mg_process_filter_spool_status(
         git, argv, requests, batch, output_limit, &status, error);
     if (result == MAELYS_GIT_OK && status != 0) {
-        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
-                     "git cat-file --batch failed with status %d", status);
+        mg_process_status_error(error, "git cat-file --batch", status);
         return MAELYS_GIT_ERR_PROCESS;
     }
     if (result == MAELYS_GIT_OK) rewind(batch);
@@ -398,8 +397,7 @@ static maelys_git_result_t visit_change_stream(const char *git,
     maelys_git_result_t result = mg_process_spool_status(
         git, argv, streams.stream, MG_GIT_STREAM_MAX_BYTES, &status, error);
     if (result == MAELYS_GIT_OK && status != 0) {
-        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
-                     "git %s failed with status %d", command_name, status);
+        mg_process_status_error(error, command_name, status);
         result = MAELYS_GIT_ERR_PROCESS;
     }
     if (result != MAELYS_GIT_OK) {
@@ -480,9 +478,26 @@ maelys_git_result_t maelys_git_repository_visit_changes_ex(
     void *visitor_context,
     maelys_git_change_summary_t *out_summary,
     maelys_git_error_t *error) {
+    if (!limits_valid(limits)) {
+        maelys_git_error_clear(error);
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    return mg_repository_visit_changes_with_budget(
+        git_executable, repository_path, old_oid, new_oid, limits,
+        visitor, visitor_context, out_summary, error);
+}
+
+/* A receive transaction can exhaust one budget exactly. Zero remaining
+ * permits zero consumption, and the stream checks reject any excess. */
+maelys_git_result_t mg_repository_visit_changes_with_budget(
+    const char *git_executable, const char *repository_path,
+    const char *old_oid, const char *new_oid,
+    const maelys_git_inspection_limits_t *limits,
+    maelys_git_change_visitor_t visitor, void *visitor_context,
+    maelys_git_change_summary_t *out_summary, maelys_git_error_t *error) {
     maelys_git_error_clear(error);
     if (!git_executable || !repository_path || !mg_is_oid(old_oid) ||
-        !mg_is_oid(new_oid) || !limits_valid(limits) || !out_summary)
+        !mg_is_oid(new_oid) || !limits || !out_summary)
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     memset(out_summary, 0, sizeof(*out_summary));
     int old_is_zero = mg_is_zero_oid(old_oid);

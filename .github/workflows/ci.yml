@@ -1,0 +1,62 @@
+name: Build and security regressions
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+        sanitizers: ["off", "address,undefined"]
+        cloud: ["ON", "OFF"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: maelys-git-core
+      - name: Fetch the tested dependency revisions
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, subprocess
+          pins = pathlib.Path('maelys-git-core/cmake/dependencies.cmake').read_text()
+          for name in ['CLI', 'DATALOG', 'HTTP', 'SYSTEM']:
+              revision = re.search(r'set\(MAELYS_GIT_' + name + r'_REVISION "([0-9a-f]{40})"\)', pins)[1]
+              directory = 'maelys-' + name.lower()
+              subprocess.run(['git', 'init', directory], check=True)
+              subprocess.run(['git', '-C', directory, 'fetch', '--depth', '1',
+                              'https://github.com/maelys-dev/' + directory + '.git', revision], check=True)
+              subprocess.run(['git', '-C', directory, 'checkout', '--detach', 'FETCH_HEAD'], check=True)
+          PY
+      - name: Install macOS libraries
+        if: runner.os == 'macOS'
+        run: brew install cmake pkg-config jansson sqlite mbedtls openssl
+      - name: Build Linux toolchain
+        if: runner.os == 'Linux'
+        run: docker build -t maelys-git-core-ci -f maelys-git-core/tests/Dockerfile.linux maelys-git-core/tests
+      - name: Build and test
+        shell: bash
+        env:
+          SANITIZERS: ${{ matrix.sanitizers }}
+          CLOUD_AGENT: ${{ matrix.cloud }}
+        run: |
+          flags=""
+          if [ "$SANITIZERS" != off ]; then flags="-fsanitize=$SANITIZERS -fno-omit-frame-pointer"; fi
+          if [ "$RUNNER_OS" = Linux ]; then
+            docker run --rm --network none --user "$(id -u):$(id -g)" \
+              --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/source,readonly" \
+              -e "AUDIT_CFLAGS=$flags" -e "CLOUD_AGENT=$CLOUD_AGENT" maelys-git-core-ci sh -ec '
+                cmake -S /source/maelys-git-core -B /tmp/build -DCMAKE_BUILD_TYPE=Debug \
+                  -DCMAKE_C_COMPILER=clang -DMAELYS_GIT_WERROR=ON "-DCMAKE_C_FLAGS=$AUDIT_CFLAGS" \
+                  -DMAELYS_GIT_ENABLE_CLOUD_AGENT="$CLOUD_AGENT"
+                cmake --build /tmp/build -j 4
+                ctest --test-dir /tmp/build --output-on-failure -j 4 --timeout 120'
+          else
+            cmake -S maelys-git-core -B build -DCMAKE_BUILD_TYPE=Debug \
+              -DMAELYS_GIT_WERROR=ON "-DCMAKE_C_FLAGS=$flags" \
+              -DMAELYS_GIT_ENABLE_CLOUD_AGENT="$CLOUD_AGENT" \
+              "-DMAELYS_OPENSSL_PROGRAM=$(brew --prefix openssl)/bin/openssl"
+            cmake --build build -j 4
+            ctest --test-dir build --output-on-failure -j 4 --timeout 120
+          fi

@@ -12,6 +12,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 option(MAELYS_GIT_BUILD_TESTS "Build the Maelys Git tests" ON)
 option(MAELYS_GIT_ENABLE_CLOUD_AGENT "Build the HTTPS Cloud agent" ON)
 option(MAELYS_GIT_WERROR "Treat compiler warnings as errors" OFF)
+include(cmake/dependencies.cmake)
 set(MAELYS_DATALOG_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../maelys-datalog"
     CACHE PATH "Path to the maelys-datalog source tree")
@@ -28,6 +29,7 @@ set(MAELYS_SYSTEM_SOURCE_DIR
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson>=2.14.1)
 find_package(SQLite3 REQUIRED)
+find_package(Threads REQUIRED)
 
 # ---- shared compilation contract -------------------------------------------
 # One interface target carries the feature macros and the warning set so that
@@ -47,6 +49,7 @@ if(MAELYS_GIT_WERROR)
 endif()
 
 # ---- maelys-datalog ---------------------------------------------------------
+maelys_git_resolve_dependency(DATALOG MAELYS_DATALOG_SOURCE_DIR)
 if(NOT EXISTS "${MAELYS_DATALOG_SOURCE_DIR}/CMakeLists.txt")
     message(FATAL_ERROR
         "maelys-datalog was not found at ${MAELYS_DATALOG_SOURCE_DIR}; "
@@ -59,18 +62,21 @@ add_subdirectory("${MAELYS_DATALOG_SOURCE_DIR}"
                  "${CMAKE_CURRENT_BINARY_DIR}/maelys-datalog"
                  EXCLUDE_FROM_ALL)
 unset(BUILD_TESTING)
+# The pinned Datalog sources use POSIX strnlen under strict C11.
+target_compile_definitions(maelys_datalog PRIVATE _POSIX_C_SOURCE=200809L)
 
 # ---- maelys-cli -------------------------------------------------------------
 # The shared CLI framework comes from an installed CMake package
 # (find_package) or, by default, from the sibling source tree added as a
 # subdirectory. Both provide the dependency-free maelys::cli target; the
 # embed and reference tools are located next to the sources in the
-# subdirectory case. The package promises compatibility within one minor
-# version, so the requested version follows the framework releases.
-find_package(maelys-cli 0.5 QUIET CONFIG)
+# subdirectory case. Keep the exact tested version so describe output and
+# generated documentation cannot drift with an installed framework update.
+find_package(maelys-cli ${MAELYS_GIT_CLI_VERSION} EXACT QUIET CONFIG)
 if(maelys-cli_FOUND)
     message(STATUS "Using installed maelys-cli ${maelys-cli_VERSION}")
 else()
+    maelys_git_resolve_dependency(CLI MAELYS_CLI_SOURCE_DIR)
     if(NOT EXISTS "${MAELYS_CLI_SOURCE_DIR}/CMakeLists.txt")
         message(FATAL_ERROR
             "maelys-cli was not found: install it (find_package(maelys-cli)) or set "
@@ -117,7 +123,7 @@ target_include_directories(maelys_git_core
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(maelys_git_core
     PUBLIC maelys_datalog
-    PRIVATE maelys_git_build_flags)
+    PRIVATE Threads::Threads maelys_git_build_flags)
 
 add_library(maelys_git_agent_core STATIC
     src/protocol/protocol.c
@@ -195,6 +201,7 @@ set(MAELYS_GIT_PROGRAMS maelys-git maelys-git-agent maelys-git-executor
     maelys-git-shell maelys-git-hook)
 # Wording of the generated reference belongs to the product.
 set(MAELYS_GIT_REFERENCE_ARGS
+    --neutral-availability run
     --title "Référence des CLI Maelys Git Core"
     --intro-file "${CMAKE_CURRENT_SOURCE_DIR}/docs/cli-reference-intro.md"
     --columns "Identifiant|Usage|Effet|Sortie|But"
@@ -217,20 +224,36 @@ target_link_libraries(maelys-git-executor PRIVATE maelys_git_cli_agent maelys_gi
 
 # ---- Cloud agent ------------------------------------------------------------
 if(MAELYS_GIT_ENABLE_CLOUD_AGENT)
+    maelys_git_resolve_dependency(HTTP MAELYS_HTTP_SOURCE_DIR)
+    maelys_git_resolve_dependency(SYSTEM MAELYS_SYSTEM_SOURCE_DIR)
     if(NOT EXISTS "${MAELYS_HTTP_SOURCE_DIR}/Makefile" OR
        NOT EXISTS "${MAELYS_SYSTEM_SOURCE_DIR}/Makefile")
         message(FATAL_ERROR "Cloud agent requires maelys-http and maelys-system source trees")
     endif()
     pkg_check_modules(MBEDTLS REQUIRED IMPORTED_TARGET mbedtls mbedx509 mbedcrypto)
-    set(MAELYS_HTTP_CORE_LIB "${MAELYS_HTTP_SOURCE_DIR}/build/libmaelys_http.a")
-    set(MAELYS_HTTP_CLIENT_LIB "${MAELYS_HTTP_SOURCE_DIR}/build/libmaelys_http_client.a")
-    set(MAELYS_HTTP_TLS_LIB "${MAELYS_HTTP_SOURCE_DIR}/build/libmaelys_http_tls_mbedtls.a")
-    set(MAELYS_SYSTEM_LIB "${MAELYS_SYSTEM_SOURCE_DIR}/build/release/lib/libmaelys_sys.a")
+    set(MAELYS_HTTP_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/maelys-http")
+    set(MAELYS_SYSTEM_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/maelys-system")
+    set(MAELYS_HTTP_CORE_LIB "${MAELYS_HTTP_BUILD_DIR}/libmaelys_http.a")
+    set(MAELYS_HTTP_CLIENT_LIB "${MAELYS_HTTP_BUILD_DIR}/libmaelys_http_client.a")
+    set(MAELYS_HTTP_TLS_LIB "${MAELYS_HTTP_BUILD_DIR}/libmaelys_http_tls_mbedtls.a")
+    set(MAELYS_SYSTEM_LIB "${MAELYS_SYSTEM_BUILD_DIR}/lib/libmaelys_sys.a")
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" MAELYS_BUILD_TYPE_UPPER)
+    set(MAELYS_DEPENDENCY_CFLAGS "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${MAELYS_BUILD_TYPE_UPPER}}")
+    # Project headers precede inherited include paths, including installed
+    # copies of older Maelys releases. Each build has its own dependency objects.
     add_custom_target(maelys_agent_dependencies
-        COMMAND ${MAELYS_MAKE_PROGRAM} -C "${MAELYS_SYSTEM_SOURCE_DIR}" all
-        COMMAND ${MAELYS_MAKE_PROGRAM} -C "${MAELYS_HTTP_SOURCE_DIR}" all check-mbedtls
+        COMMAND ${CMAKE_COMMAND} -E env
+                "CPPFLAGS=-I${MAELYS_SYSTEM_SOURCE_DIR}/include -I${MAELYS_SYSTEM_SOURCE_DIR} $ENV{CPPFLAGS}"
+                "CFLAGS=${MAELYS_DEPENDENCY_CFLAGS}"
+                ${MAELYS_MAKE_PROGRAM} -C "${MAELYS_SYSTEM_SOURCE_DIR}" all
+                "BUILD=${MAELYS_SYSTEM_BUILD_DIR}" "CC=${CMAKE_C_COMPILER}"
+        COMMAND ${CMAKE_COMMAND} -E env
+                "CPPFLAGS=-I${MAELYS_HTTP_SOURCE_DIR}/include -I${MAELYS_HTTP_SOURCE_DIR}/src -I${MAELYS_SYSTEM_SOURCE_DIR}/include $ENV{CPPFLAGS}"
+                "CFLAGS=${MAELYS_DEPENDENCY_CFLAGS}"
+                ${MAELYS_MAKE_PROGRAM} -C "${MAELYS_HTTP_SOURCE_DIR}" all check-mbedtls
                 REQUIRE_MBEDTLS=1
-                SYSTEM_DIR="${MAELYS_SYSTEM_SOURCE_DIR}"
+                "BUILD=${MAELYS_HTTP_BUILD_DIR}" "SYSTEM_LIB=${MAELYS_SYSTEM_LIB}"
+                "SYSTEM_DIR=${MAELYS_SYSTEM_SOURCE_DIR}" "CC=${CMAKE_C_COMPILER}"
         BYPRODUCTS "${MAELYS_HTTP_CORE_LIB}" "${MAELYS_HTTP_CLIENT_LIB}"
                    "${MAELYS_HTTP_TLS_LIB}" "${MAELYS_SYSTEM_LIB}"
         VERBATIM)
@@ -255,6 +278,7 @@ endif()
 
 # ---- tests ------------------------------------------------------------------
 if(MAELYS_GIT_BUILD_TESTS)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     enable_testing()
     set(MAELYS_GIT_TEST_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/policies/manifest.json")
 
@@ -263,6 +287,16 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_compile_definitions(test-maelys-git PRIVATE
         TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}")
     add_test(NAME maelys-git-core COMMAND test-maelys-git)
+
+    add_executable(test-maelys-git-policy-sessions
+        tests/test_policy_sessions.c src/policy/policy.c)
+    target_include_directories(test-maelys-git-policy-sessions PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_definitions(test-maelys-git-policy-sessions PRIVATE
+        MAELYS_GIT_POLICY_TESTING=1 TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}")
+    target_link_libraries(test-maelys-git-policy-sessions PRIVATE
+        maelys_git_core Threads::Threads maelys_git_build_flags)
+    add_test(NAME maelys-git-policy-sessions COMMAND test-maelys-git-policy-sessions)
+    set_tests_properties(maelys-git-policy-sessions PROPERTIES TIMEOUT 120)
 
     add_executable(test-maelys-git-agent tests/test_agent.c)
     target_include_directories(test-maelys-git-agent PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -283,6 +317,7 @@ if(MAELYS_GIT_BUILD_TESTS)
     add_test(NAME maelys-git-process-isolation COMMAND test-maelys-git-process)
 
     if(MAELYS_GIT_ENABLE_CLOUD_AGENT)
+        find_program(MAELYS_OPENSSL_PROGRAM openssl REQUIRED)
         add_executable(test-maelys-git-supervisor tests/test_supervisor.c)
         target_include_directories(test-maelys-git-supervisor PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -291,6 +326,11 @@ if(MAELYS_GIT_BUILD_TESTS)
         target_compile_definitions(test-maelys-git-supervisor PRIVATE
             MAELYS_GIT_ENABLE_CLOUD_AGENT=1)
         add_test(NAME maelys-git-supervisor-isolation COMMAND test-maelys-git-supervisor)
+        add_test(NAME maelys-git-cloud-transport
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cloud_transport.py
+                $<TARGET_FILE:maelys-git-agent> $<TARGET_FILE:maelys-git-executor>
+                ${MAELYS_GIT_TEST_MANIFEST} ${MAELYS_OPENSSL_PROGRAM})
+        set_tests_properties(maelys-git-cloud-transport PROPERTIES TIMEOUT 60)
     endif()
 
     add_test(NAME maelys-git-cli-integration
@@ -311,6 +351,18 @@ if(MAELYS_GIT_BUILD_TESTS)
     add_test(NAME maelys-git-hook-integration
         COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hook_cli.sh
             $<TARGET_FILE:maelys-git-hook>)
+
+    add_test(NAME maelys-git-receive-authorization
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_receive_authorization.py
+            $<TARGET_FILE:maelys-git-hook> $<TARGET_FILE:maelys-git-executor>)
+    set_tests_properties(maelys-git-receive-authorization PROPERTIES TIMEOUT 120)
+
+    add_test(NAME maelys-git-audit-regressions
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_audit_regressions.py
+            $<TARGET_FILE:maelys-git> $<TARGET_FILE:maelys-git-hook>
+            $<TARGET_FILE:maelys-git-executor> $<TARGET_FILE:maelys-git-agent>
+            $<BOOL:${MAELYS_GIT_ENABLE_CLOUD_AGENT}>)
+    set_tests_properties(maelys-git-audit-regressions PROPERTIES TIMEOUT 120)
 
     add_test(NAME maelys-git-gitolite-integration
         COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gitolite_cli.sh

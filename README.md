@@ -55,7 +55,18 @@ framework is taken from an installed `maelys-cli` (found through
 tree named by `MAELYS_CLI_SOURCE_DIR` through its own CMake project. Jansson >= 2.14.1 and SQLite 3 are required. The
 default Cloud agent also requires Maelys HTTP, Maelys System and mbedTLS; it
 can be excluded with `-DMAELYS_GIT_ENABLE_CLOUD_AGENT=OFF`.
+Both configurations run the CLI reference check. The generated reference
+describes the complete product; `describe` reports actual build availability.
 `-DMAELYS_GIT_WERROR=ON` turns the warning set into errors, as CI does.
+The tested dependency commits and versions live in `cmake/dependencies.cmake`.
+CMake exports those commits from the sibling repositories into the build
+directory; local edits and later commits in those siblings do not silently
+change this build. Versioned source distributions are also accepted. For
+intentional dependency development, `-DMAELYS_GIT_ALLOW_UNPINNED_DEPS=ON`
+uses the working trees instead. An installed CLI package must match the
+recorded version exactly. HTTP/System objects are also private to each build,
+and inherit its compiler and sanitizer flags. Project headers take precedence
+over older installed headers in `CPPFLAGS`.
 Only the dependency-free core of `maelys-cli` is linked; its extension
 archive and `maelys` dispatcher (which need `maelys-json`) are not built
 here.
@@ -172,6 +183,13 @@ fingerprint/identity and trust facts. Rename records expose both paths, and
 binary content plus blob-size summaries are calculated locally before
 authorization.
 
+Commit inspection is relative to the destination reference. Creating a ref
+checks its entire reachable history, including commits already present on
+other refs, under the existing commit quota. Transaction quotas are inclusive:
+reaching a limit exactly still permits later refs that consume none of that
+remaining resource. Disabled manifest entries are ignored when collecting
+policy vocabulary, just as they are by the Datalog loader.
+
 The same binary can be installed as `post-receive` to append versioned JSONL
 events for an audit collector or the forge agent:
 
@@ -253,8 +271,10 @@ Supported executor commands are:
   result under forge-neutral internal Git refs in the same transaction. Both
   commands accept an optional source repository and branch for fork PRs.
 
-`update_ref` calculates changed paths first, authorizes the operation as a
-`push`, and only then invokes Git's compare-and-swap update. `pr_merge` uses the
+`update_ref` uses the same streamed `push` authorization as the receive hook:
+ref/update kind, every new commit and signature, per-path details, ref summary
+and transaction summary, with the default receive quotas. Only then does it
+invoke Git's compare-and-swap update. `pr_merge` uses the
 same invariant and repeats authorization immediately before its state change.
 Its plan returns a deterministic prepared OID, the Maelys Datalog policy-set
 fingerprint and the target repository device/inode identity; apply requires all
@@ -324,11 +344,29 @@ authorization.
 All core Git subprocesses and each supervised executor receive a minimal
 allowlisted environment: only the absolute service-account `HOME` is retained
 for signature trust stores; global/system Git configuration, credential prompts
-and askpass helpers are disabled. They run in a new process group, so deadlines
-terminate descendants as well as the direct child. Executable paths at this
+and askpass helpers are disabled. The receive hook validates Git's quarantine
+as a direct child of this repository's object directory, and reconstructs its
+object-directory environment for the duration of inspection only.
+Standalone Git commands run in new process groups. An executor started by the
+agent retains its Git children in the group owned by the supervisor; that
+group is cleaned up before any terminal result. The deadline covers waiting
+for exit even after stdout closes. Executable paths at this
 boundary must be absolute.
+Internal Git helpers have private stdout/stderr pipes. Diagnostics are drained
+concurrently, retained as a bounded printable prefix and included in structured
+failures, so child output cannot corrupt a CLI JSON envelope.
+
+CTest includes real pushes, parity between receive-hook and `update_ref`
+authorization, process-group/EOF regressions and a loopback HTTPS server that
+tests command execution, durable outbox delivery, token rotation, CA/hostname
+verification and rejection of redirects. Tests require Python 3 and, with
+Cloud enabled, the OpenSSL command-line tool. The policy-session test compares
+the prepared path with a test-only fresh-EDB oracle, including A/B/A sequences,
+recovery after errors and independent worker threads. CI is configured to run the complete
+suite on Linux and macOS, with Cloud enabled and disabled, both normally and
+with ASan/UBSan.
 
 This code has not received an external security audit. Before production use,
 run the network agent and executor under distinct least-privilege service
-accounts (or add a narrow Unix socket handoff), add platform CI and fuzz the
+accounts (or add a narrow Unix socket handoff), and fuzz the
 SSH parser plus all Jansson schemas.

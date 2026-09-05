@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 static void close_fd(int *fd) {
@@ -144,7 +145,7 @@ maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *confi
         (char *)config->git_executable, NULL
     };
     pid_t child = -1;
-    maelys_git_result_t spawn_result = mg_spawn_isolated(
+    maelys_git_result_t spawn_result = mg_spawn_executor(
         &child, config->executor_path, &actions, argv, error);
     (void)posix_spawn_file_actions_destroy(&actions);
     close_fd(&input_pipe[0]);
@@ -187,8 +188,24 @@ maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *confi
     if (!wrote || !response || timed_out || read_failed || oversized)
         mg_terminate_process_group(child);
     int status = 0;
-    pid_t waited;
-    do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+    pid_t waited = 0;
+    while (waited == 0) {
+        waited = waitpid(child, &status, WNOHANG);
+        if (waited < 0 && errno == EINTR) { waited = 0; continue; }
+        if (waited != 0) break;
+        int timeout = 0;
+        if (!remaining_timeout(deadline, &timeout) || timeout == 0) {
+            timed_out = 1;
+            mg_terminate_process_group(child);
+            do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+            break;
+        }
+        struct timespec pause = {0, 1000000L * (timeout < 10 ? timeout : 10)};
+        (void)nanosleep(&pause, NULL);
+    }
+    /* No descendant may keep mutating repositories after a terminal result,
+     * even if the executor returned successfully or closed stdout early. */
+    mg_terminate_process_group(child);
     if (!wrote || !response || timed_out || read_failed || used == 0u ||
         oversized || waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         free(response);

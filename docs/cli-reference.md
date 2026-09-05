@@ -6,13 +6,17 @@ détail machine, exécutez `BINAIRE describe COMMAND_ID --format json`. Cette
 page est générée par `maelys-cli-reference` depuis les binaires ; ne la
 modifiez pas à la main.
 
+La référence décrit le produit complet. La disponibilité effective de la
+commande `maelys-git-agent run` dépend de l'option de compilation Cloud et
+reste indiquée par `describe` dans chaque binaire.
+
 ## `maelys-git` (Maelys Git Core)
 
 | Identifiant | Usage | Effet | Sortie | But |
 | --- | --- | --- | --- | --- |
 | help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the generated CLI guide or one command's help. |
 | version | `version \| --version` | read | json-envelope | Return product identity. |
-| describe | `describe [COMMAND_ID] [--summary]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
+| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
 | validate | `validate MANIFEST` | read | json-envelope | Validate a Datalog policy manifest. |
@@ -49,7 +53,7 @@ Options globales :
 | --- | --- | --- | --- | --- |
 | help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the generated CLI guide or one command's help. |
 | version | `version \| --version` | read | json-envelope | Return product identity. |
-| describe | `describe [COMMAND_ID] [--summary]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
+| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
 | provision | `provision --config FILE --agent-id ID --authority HOST[:PORT] --ca FILE --token FILE --database FILE --manifest FILE --root DIR --executor FILE [--apply]` | preview then apply with --apply | json-envelope | Plan or create an agent configuration. |
@@ -72,7 +76,7 @@ Options globales :
 | --- | --- | --- | --- | --- |
 | help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the generated CLI guide or one command's help. |
 | version | `version \| --version` | read | json-envelope | Return product identity. |
-| describe | `describe [COMMAND_ID] [--summary]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
+| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
 | serve | `serve --manifest FILE --root DIR [--git FILE]` | stream | protocol-stream (maelys-git-agent/1) | Serve one-command-at-a-time JSONL execution. |
@@ -93,7 +97,7 @@ Options globales :
 | --- | --- | --- | --- | --- |
 | help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the generated CLI guide or one command's help. |
 | version | `version \| --version` | read | json-envelope | Return product identity. |
-| describe | `describe [COMMAND_ID] [--summary]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
+| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
 | serve | `serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE] [--restrict-repository NAME] [--read-only]` | stream | protocol-stream (git-smart) | Authorize SSH_ORIGINAL_COMMAND then replace the process with Git. |
@@ -114,7 +118,7 @@ Options globales :
 | --- | --- | --- | --- | --- |
 | help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the generated CLI guide or one command's help. |
 | version | `version \| --version` | read | json-envelope | Return product identity. |
-| describe | `describe [COMMAND_ID] [--summary]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
+| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
 | pre-receive | `pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES]` | stream | protocol-stream (git-hook) | Authorize a quota-bounded Git receive transaction from stdin. |

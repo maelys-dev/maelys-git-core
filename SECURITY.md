@@ -22,7 +22,8 @@ The implementation follows fourteen invariants:
     reserved for their declared wire protocol;
 11. child executables have absolute paths, receive a minimal allowlisted
     environment and run in process groups that are terminated as a unit on
-    deadline;
+    deadline; supervised Git children stay in their executor's group, which
+    is cleaned up before any terminal result, and EOF never cancels a deadline;
 12. PR apply repeats authorization and requires the reviewed target identity,
     prepared OID, policy fingerprint and, for forks, source identity;
 13. PR inputs reject object alternates, indirect repository structure and local
@@ -30,6 +31,15 @@ The implementation follows fourteen invariants:
 14. temporary quarantine and transaction directories are created privately
     with `mkdtemp` and never reused by name; lifecycle renames never replace
     an existing entry (`renameatx_np`/`renameat2` where available).
+
+The receive hook's object-directory exception is scoped to that invocation:
+it validates the quarantine beneath the selected repository's direct
+`objects` directory and reconstructs the alternate from that repository.
+Arbitrary incoming Git environment variables are never forwarded. Agent
+`update_ref` executes the complete receive authorization, including signatures,
+update kinds and quotas, before compare-and-swap.
+Commit checks use the destination reference's context; creation inspects its
+entire history even when those commits are already reachable from another ref.
 
 The executor process boundary does not by itself change Unix credentials. A
 production service definition should give the network agent no repository

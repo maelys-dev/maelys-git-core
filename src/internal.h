@@ -84,11 +84,24 @@ maelys_git_result_t mg_repository_ensure_parent_directories(
 
 int64_t mg_monotonic_ms(void);
 int mg_pipe_cloexec(int pipe_fds[2]);
+/* Status-returning helpers retain a bounded diagnostic in error->message on
+ * nonzero exit. Convert it into a structured failure without losing detail. */
+void mg_process_status_error(maelys_git_error_t *error, const char *operation, int status);
+/* Only the SSH hook enables receive-pack's validated, repository-local
+ * quarantine. The scope is thread-local and must be cleared after receive. */
+maelys_git_result_t mg_receive_objects_begin(const char *repository_path,
+                                             maelys_git_error_t *error);
+void mg_receive_objects_end(void);
 maelys_git_result_t mg_spawn_isolated(
     pid_t *out_pid,
     const char *executable,
     const posix_spawn_file_actions_t *actions,
     char *const argv[],
+    maelys_git_error_t *error);
+/* Starts a group leader whose Git children remain in the supervised group. */
+maelys_git_result_t mg_spawn_executor(
+    pid_t *out_pid, const char *executable,
+    const posix_spawn_file_actions_t *actions, char *const argv[],
     maelys_git_error_t *error);
 void mg_terminate_process_group(pid_t pid);
 maelys_git_result_t mg_process_run_with_timeout(
@@ -143,5 +156,28 @@ maelys_git_result_t mg_process_filter_spool_status(const char *executable,
                                                    size_t max_length,
                                                    int *out_exit_status,
                                                    maelys_git_error_t *error);
+
+/* Shared receive authorization for the hook and the agent's update_ref.
+ * Optional outputs expose the aggregate count and the last policy decision. */
+maelys_git_result_t mg_receive_authorize(
+    maelys_git_policy_t *policy, const char *git, const char *repository_path,
+    const char *repository_name, const char *principal,
+    const maelys_git_inspection_limits_t *limits,
+    const maelys_git_inspector_t *inspectors, size_t inspector_count,
+    FILE *input, FILE *diagnostics, maelys_git_change_summary_t *out_summary,
+    maelys_git_policy_decision_t *out_decision, maelys_git_error_t *error);
+
+/* Internal receive budget: zero means no remaining consumption is allowed. */
+maelys_git_result_t mg_repository_visit_changes_with_budget(
+    const char *git, const char *repository_path, const char *old_oid, const char *new_oid,
+    const maelys_git_inspection_limits_t *limits,
+    maelys_git_change_visitor_t visitor, void *context,
+    maelys_git_change_summary_t *summary, maelys_git_error_t *error);
+
+#ifdef MAELYS_GIT_POLICY_TESTING
+maelys_git_result_t mg_policy_authorize_fresh(
+    maelys_git_policy_t *policy, const maelys_git_policy_request_t *request,
+    maelys_git_policy_decision_t *decision, maelys_git_error_t *error);
+#endif
 
 #endif

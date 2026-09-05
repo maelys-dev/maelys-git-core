@@ -124,7 +124,22 @@
           "hidden": false,
           "id": "describe",
           "input": {
-            "constraints": [],
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--prefix",
+                  "--summary"
+                ]
+              },
+              {
+                "kind": "at-most-one",
+                "options": [
+                  "--prefix",
+                  "COMMAND_ID"
+                ]
+              }
+            ],
             "operands": [
               {
                 "name": "COMMAND_ID",
@@ -141,10 +156,27 @@
                 "required": false,
                 "requires": [],
                 "summary": "Return the compact command inventory without output schemas."
+              },
+              {
+                "argument": {
+                  "name": "PREFIX",
+                  "pattern": "^[a-z](?:[a-z0-9.-]*[a-z0-9-])?$",
+                  "type": "string"
+                },
+                "conflictsWith": [
+                  "COMMAND_ID"
+                ],
+                "long": "--prefix",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--summary"
+                ],
+                "summary": "Restrict the summary to one command namespace: the command named PREFIX and every command whose identifier starts with PREFIX followed by a dot."
               }
             ],
             "passthrough": false,
-            "synopsis": "describe [COMMAND_ID] [--summary]"
+            "synopsis": "describe [COMMAND_ID] [--summary] [--prefix PREFIX]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -162,7 +194,7 @@
             "describe"
           ],
           "purpose": "Return the machine-readable catalog, summary or one descriptor.",
-          "usage": "describe [COMMAND_ID] [--summary]"
+          "usage": "describe [COMMAND_ID] [--summary] [--prefix PREFIX]"
         },
         {
           "available": true,
@@ -3015,7 +3047,22 @@
           "hidden": false,
           "id": "describe",
           "input": {
-            "constraints": [],
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--prefix",
+                  "--summary"
+                ]
+              },
+              {
+                "kind": "at-most-one",
+                "options": [
+                  "--prefix",
+                  "COMMAND_ID"
+                ]
+              }
+            ],
             "operands": [
               {
                 "name": "COMMAND_ID",
@@ -3032,10 +3079,27 @@
                 "required": false,
                 "requires": [],
                 "summary": "Return the compact command inventory without output schemas."
+              },
+              {
+                "argument": {
+                  "name": "PREFIX",
+                  "pattern": "^[a-z](?:[a-z0-9.-]*[a-z0-9-])?$",
+                  "type": "string"
+                },
+                "conflictsWith": [
+                  "COMMAND_ID"
+                ],
+                "long": "--prefix",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--summary"
+                ],
+                "summary": "Restrict the summary to one command namespace: the command named PREFIX and every command whose identifier starts with PREFIX followed by a dot."
               }
             ],
             "passthrough": false,
-            "synopsis": "describe [COMMAND_ID] [--summary]"
+            "synopsis": "describe [COMMAND_ID] [--summary] [--prefix PREFIX]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -3053,7 +3117,7 @@
             "describe"
           ],
           "purpose": "Return the machine-readable catalog, summary or one descriptor.",
-          "usage": "describe [COMMAND_ID] [--summary]"
+          "usage": "describe [COMMAND_ID] [--summary] [--prefix PREFIX]"
         },
         {
           "available": true,
@@ -3717,7 +3781,22 @@
           "hidden": false,
           "id": "describe",
           "input": {
-            "constraints": [],
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--prefix",
+                  "--summary"
+                ]
+              },
+              {
+                "kind": "at-most-one",
+                "options": [
+                  "--prefix",
+                  "COMMAND_ID"
+                ]
+              }
+            ],
             "operands": [
               {
                 "name": "COMMAND_ID",
@@ -3734,10 +3813,27 @@
                 "required": false,
                 "requires": [],
                 "summary": "Return the compact command inventory without output schemas."
+              },
+              {
+                "argument": {
+                  "name": "PREFIX",
+                  "pattern": "^[a-z](?:[a-z0-9.-]*[a-z0-9-])?$",
+                  "type": "string"
+                },
+                "conflictsWith": [
+                  "COMMAND_ID"
+                ],
+                "long": "--prefix",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--summary"
+                ],
+                "summary": "Restrict the summary to one command namespace: the command named PREFIX and every command whose identifier starts with PREFIX followed by a dot."
               }
             ],
             "passthrough": false,
-            "synopsis": "describe [COMMAND_ID] [--summary]"
+            "synopsis": "describe [COMMAND_ID] [--summary] [--prefix PREFIX]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -3755,7 +3851,7 @@
             "describe"
           ],
           "purpose": "Return the machine-readable catalog, summary or one descriptor.",
-          "usage": "describe [COMMAND_ID] [--summary]"
+          "usage": "describe [COMMAND_ID] [--summary] [--prefix PREFIX]"
         },
         {
           "available": true,
@@ -4161,7 +4257,22 @@
           "hidden": false,
           "id": "describe",
           "input": {
-            "constraints": [],
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--prefix",
+                  "--summary"
+                ]
+              },
+              {
+                "kind": "at-most-one",
+                "options": [
+                  "--prefix",
+                  "COMMAND_ID"
+                ]
+              }
+            ],
             "operands": [
               {
                 "name": "COMMAND_ID",
@@ -4178,10 +4289,27 @@
                 "required": false,
                 "requires": [],
                 "summary": "Return the compact command inventory without output schemas."
+              },
+              {
+                "argument": {
+                  "name": "PREFIX",
+                  "pattern": "^[a-z](?:[a-z0-9.-]*[a-z0-9-])?$",
+                  "type": "string"
+                },
+                "conflictsWith": [
+                  "COMMAND_ID"
+                ],
+                "long": "--prefix",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--summary"
+                ],
+                "summary": "Restrict the summary to one command namespace: the command named PREFIX and every command whose identifier starts with PREFIX followed by a dot."
               }
             ],
             "passthrough": false,
-            "synopsis": "describe [COMMAND_ID] [--summary]"
+            "synopsis": "describe [COMMAND_ID] [--summary] [--prefix PREFIX]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -4199,7 +4327,7 @@
             "describe"
           ],
           "purpose": "Return the machine-readable catalog, summary or one descriptor.",
-          "usage": "describe [COMMAND_ID] [--summary]"
+          "usage": "describe [COMMAND_ID] [--summary] [--prefix PREFIX]"
         },
         {
           "available": true,
@@ -4757,7 +4885,22 @@
           "hidden": false,
           "id": "describe",
           "input": {
-            "constraints": [],
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--prefix",
+                  "--summary"
+                ]
+              },
+              {
+                "kind": "at-most-one",
+                "options": [
+                  "--prefix",
+                  "COMMAND_ID"
+                ]
+              }
+            ],
             "operands": [
               {
                 "name": "COMMAND_ID",
@@ -4774,10 +4917,27 @@
                 "required": false,
                 "requires": [],
                 "summary": "Return the compact command inventory without output schemas."
+              },
+              {
+                "argument": {
+                  "name": "PREFIX",
+                  "pattern": "^[a-z](?:[a-z0-9.-]*[a-z0-9-])?$",
+                  "type": "string"
+                },
+                "conflictsWith": [
+                  "COMMAND_ID"
+                ],
+                "long": "--prefix",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--summary"
+                ],
+                "summary": "Restrict the summary to one command namespace: the command named PREFIX and every command whose identifier starts with PREFIX followed by a dot."
               }
             ],
             "passthrough": false,
-            "synopsis": "describe [COMMAND_ID] [--summary]"
+            "synopsis": "describe [COMMAND_ID] [--summary] [--prefix PREFIX]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -4795,7 +4955,7 @@
             "describe"
           ],
           "purpose": "Return the machine-readable catalog, summary or one descriptor.",
-          "usage": "describe [COMMAND_ID] [--summary]"
+          "usage": "describe [COMMAND_ID] [--summary] [--prefix PREFIX]"
         },
         {
           "available": true,

@@ -41,6 +41,22 @@ static int descendant_mode(const char *marker) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--diagnostics") == 0) {
+        (void)fputs("diagnostic prefix: ", stderr);
+        (void)fputc(255, stderr);
+        (void)fputc(0, stderr);
+        char block[4096];
+        memset(block, 'x', sizeof(block));
+        for (size_t i = 0; i < 64u; ++i) (void)fwrite(block, 1u, sizeof(block), stderr);
+        (void)fputs("captured\n", stdout);
+        return 7;
+    }
+    if (argc == 2 && strcmp(argv[1], "--closed-output") == 0) {
+        (void)close(STDOUT_FILENO);
+        (void)close(STDERR_FILENO);
+        pause_ms(5000);
+        return 0;
+    }
     if (argc == 3 && strcmp(argv[1], "--descendant") == 0)
         return descendant_mode(argv[2]);
 
@@ -67,6 +83,26 @@ int main(int argc, char **argv) {
 
     char executable[4096];
     if (!realpath(argv[0], executable)) return fail("cannot resolve test executable");
+    char *noisy_argv[] = {executable, "--diagnostics", NULL};
+    unsigned char *data = NULL;
+    size_t length = 0u;
+    int child_status = 0;
+    result = mg_process_capture_status(executable, noisy_argv, &data, &length,
+                                       32u, &child_status, &error);
+    if (result != MAELYS_GIT_OK || child_status != 7 || length != 9u ||
+        strcmp((char *)data, "captured\n") ||
+        !strstr(error.message, "diagnostic prefix:   x") || strlen(error.message) > 255u)
+        return fail("stderr was not drained into a bounded sanitized diagnostic");
+    free(data);
+    result = mg_process_capture(executable, noisy_argv, &data, &length, 32u, &error);
+    if (result != MAELYS_GIT_ERR_PROCESS || data || length ||
+        !strstr(error.message, "diagnostic prefix:"))
+        return fail("captured failure lost its diagnostic or returned stale output");
+    char *closed_argv[] = {executable, "--closed-output", NULL};
+    int64_t started = mg_monotonic_ms();
+    result = mg_process_run_with_timeout(executable, closed_argv, 150u, NULL, &error);
+    if (result != MAELYS_GIT_ERR_PROCESS || mg_monotonic_ms() - started > 1500)
+        return fail("closed output bypassed the subprocess deadline");
     char directory[] = "/tmp/maelys-process-test-XXXXXX";
     if (!mkdtemp(directory)) return fail("cannot create temporary directory");
     char marker[4096];

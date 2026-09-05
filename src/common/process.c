@@ -1,6 +1,6 @@
 /* Isolated subprocess execution. Every child runs from an absolute path with
- * an allowlisted environment, in its own process group, under a wall-clock
- * budget; the group is terminated as a unit when the budget expires. */
+ * an allowlisted environment and a wall-clock budget. Git children join their
+ * supervised executor's group; standalone children get a new group. */
 #include "internal.h"
 
 #include <errno.h>
@@ -29,6 +29,64 @@ static char *const isolated_environment[] = {
     NULL
 };
 
+static _Thread_local char receive_objects[PATH_MAX + 32u];
+static _Thread_local char receive_alternates[4u * PATH_MAX + 48u];
+
+void mg_receive_objects_end(void) {
+    receive_objects[0] = receive_alternates[0] = '\0';
+}
+
+maelys_git_result_t mg_receive_objects_begin(const char *repository_path,
+                                             maelys_git_error_t *error) {
+    mg_receive_objects_end();
+    const char *objects = getenv("GIT_OBJECT_DIRECTORY");
+    const char *quarantine = getenv("GIT_QUARANTINE_PATH");
+    if (!objects && !quarantine && !getenv("GIT_ALTERNATE_OBJECT_DIRECTORIES"))
+        return MAELYS_GIT_OK;
+    char repository[PATH_MAX], main_objects[PATH_MAX], incoming[PATH_MAX], actual[PATH_MAX];
+    struct stat status;
+    if (!objects || !quarantine || !repository_path ||
+        !realpath(repository_path, repository)) goto denied;
+    int length = snprintf(main_objects, sizeof(main_objects), "%s/objects", repository);
+    if (length < 0 || (size_t)length >= sizeof(main_objects) ||
+        lstat(main_objects, &status) != 0 || !S_ISDIR(status.st_mode) ||
+        !realpath(quarantine, incoming) || !realpath(objects, actual) ||
+        strcmp(incoming, actual) != 0) goto denied;
+    size_t prefix = strlen(main_objects);
+    if (strncmp(incoming, main_objects, prefix) != 0 ||
+        incoming[prefix] != '/' || !incoming[prefix + 1u] ||
+        strchr(incoming + prefix + 1u, '/') ||
+        lstat(quarantine, &status) != 0 || !S_ISDIR(status.st_mode) ||
+        status.st_uid != geteuid()) goto denied;
+    (void)snprintf(receive_objects, sizeof(receive_objects), "GIT_OBJECT_DIRECTORY=%s", incoming);
+    /* Git accepts C-quoted entries in its colon-separated alternate list.
+     * Reconstruct the only permitted alternate, never copy the incoming list. */
+    size_t used = (size_t)snprintf(receive_alternates, sizeof(receive_alternates),
+                                  "GIT_ALTERNATE_OBJECT_DIRECTORIES=\"");
+    for (const unsigned char *p = (const unsigned char *)main_objects; *p; ++p) {
+        if (*p == '\\' || *p == '"') receive_alternates[used++] = '\\';
+        if (*p < 32u || *p == 127u) {
+            int count = snprintf(receive_alternates + used, sizeof(receive_alternates) - used,
+                                  "\\%03o", (unsigned)*p);
+            used += (size_t)count;
+        } else receive_alternates[used++] = (char)*p;
+    }
+    receive_alternates[used++] = '"';
+    receive_alternates[used] = '\0';
+    return MAELYS_GIT_OK;
+denied:
+    mg_error_set(error, MAELYS_GIT_ERR_DENIED, 0,
+                 "receive quarantine must be a direct incoming directory of this repository");
+    return MAELYS_GIT_ERR_DENIED;
+}
+
+/* This marker is emitted only by mg_spawn_executor and is not forwarded to
+ * Git. A supervised executor is the leader of the group owned by the agent. */
+static pid_t supervised_group(void) {
+    const char *marker = getenv("MAELYS_GIT_SUPERVISED");
+    return marker && strcmp(marker, "1") == 0 && getpgrp() == getpid() ? getpid() : 0;
+}
+
 int64_t mg_monotonic_ms(void) {
     struct timespec now;
     if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return -1;
@@ -50,18 +108,19 @@ int mg_pipe_cloexec(int pipe_fds[2]) {
     return 1;
 }
 
-maelys_git_result_t mg_spawn_isolated(
+static maelys_git_result_t spawn_isolated(
     pid_t *out_pid,
     const char *executable,
     const posix_spawn_file_actions_t *actions,
     char *const argv[],
+    int executor,
     maelys_git_error_t *error) {
     if (!out_pid || !executable || !argv || executable[0] != '/')
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     posix_spawnattr_t attributes;
     int rc = posix_spawnattr_init(&attributes);
     int initialized = rc == 0;
-    if (rc == 0) rc = posix_spawnattr_setpgroup(&attributes, 0);
+    if (rc == 0) rc = posix_spawnattr_setpgroup(&attributes, executor ? 0 : supervised_group());
     if (rc == 0) rc = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
     /* Only the absolute service-account HOME survives: Git reads signature
      * trust stores from it. Everything else comes from the allowlist. */
@@ -71,11 +130,16 @@ maelys_git_result_t mg_spawn_isolated(
         snprintf(home_entry, sizeof(home_entry), "HOME=%s", home) : -1;
     if (home_length < 0 || (size_t)home_length >= sizeof(home_entry))
         (void)snprintf(home_entry, sizeof(home_entry), "HOME=/nonexistent");
-    char *environment[sizeof(isolated_environment) / sizeof(isolated_environment[0]) + 1u];
+    char *environment[sizeof(isolated_environment) / sizeof(isolated_environment[0]) + 4u];
     size_t environment_index = 0u;
     environment[environment_index++] = home_entry;
     for (size_t i = 0u; isolated_environment[i]; ++i)
         environment[environment_index++] = isolated_environment[i];
+    if (executor) environment[environment_index++] = "MAELYS_GIT_SUPERVISED=1";
+    else if (receive_objects[0]) {
+        environment[environment_index++] = receive_objects;
+        environment[environment_index++] = receive_alternates;
+    }
     environment[environment_index] = NULL;
     if (rc == 0)
         rc = posix_spawn(out_pid, executable, actions, &attributes, argv, environment);
@@ -88,12 +152,29 @@ maelys_git_result_t mg_spawn_isolated(
     return MAELYS_GIT_OK;
 }
 
+maelys_git_result_t mg_spawn_isolated(
+    pid_t *out_pid, const char *executable,
+    const posix_spawn_file_actions_t *actions, char *const argv[],
+    maelys_git_error_t *error) {
+    return spawn_isolated(out_pid, executable, actions, argv, 0, error);
+}
+
+maelys_git_result_t mg_spawn_executor(
+    pid_t *out_pid, const char *executable,
+    const posix_spawn_file_actions_t *actions, char *const argv[],
+    maelys_git_error_t *error) {
+    return spawn_isolated(out_pid, executable, actions, argv, 1, error);
+}
+
 void mg_terminate_process_group(pid_t pid) {
     if (pid <= 0) return;
-    (void)kill(-pid, SIGTERM);
+    /* Inside a supervised executor the agent owns group cleanup, including
+     * after a local Git failure. Do not terminate ourselves while encoding it. */
+    pid_t target = supervised_group() ? pid : -pid;
+    if (kill(target, SIGTERM) != 0 && errno == ESRCH) return;
     struct timespec pause = {.tv_sec = 0, .tv_nsec = 100000000L};
     (void)nanosleep(&pause, NULL);
-    (void)kill(-pid, SIGKILL);
+    (void)kill(target, SIGKILL);
 }
 
 static void reap_child(pid_t pid) {
@@ -104,7 +185,7 @@ static void reap_child(pid_t pid) {
 
 static int deadline_elapsed(int64_t started, uint64_t timeout_ms) {
     int64_t now = mg_monotonic_ms();
-    return started >= 0 && now >= 0 && (uint64_t)(now - started) >= timeout_ms;
+    return started < 0 || now < started || (uint64_t)(now - started) >= timeout_ms;
 }
 
 static maelys_git_result_t timeout_failure(maelys_git_error_t *error, uint64_t timeout_ms) {
@@ -147,56 +228,33 @@ static maelys_git_result_t wait_child(pid_t pid,
     return MAELYS_GIT_OK;
 }
 
-maelys_git_result_t mg_process_run_with_timeout(
-    const char *executable,
-    char *const argv[],
-    uint64_t timeout_ms,
-    int *out_exit_status,
-    maelys_git_error_t *error) {
-    if (!executable || !argv || timeout_ms == 0u)
-        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
-    pid_t pid = 0;
-    maelys_git_result_t result = mg_spawn_isolated(&pid, executable, NULL, argv, error);
-    if (result != MAELYS_GIT_OK) return result;
-    return wait_child(pid, timeout_ms, out_exit_status, 1, error);
-}
-
-maelys_git_result_t mg_process_run(const char *executable,
-                                   char *const argv[],
-                                   int *out_exit_status,
-                                   maelys_git_error_t *error) {
-    return mg_process_run_with_timeout(executable, argv, MG_PROCESS_TIMEOUT_MS,
-                                       out_exit_status, error);
-}
-
-maelys_git_result_t mg_process_run_status(const char *executable,
-                                          char *const argv[],
-                                          int *out_exit_status,
-                                          maelys_git_error_t *error) {
-    if (!executable || !argv || !out_exit_status) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
-    pid_t pid = 0;
-    maelys_git_result_t result = mg_spawn_isolated(&pid, executable, NULL, argv, error);
-    if (result != MAELYS_GIT_OK) return result;
-    return wait_child(pid, MG_PROCESS_TIMEOUT_MS, out_exit_status, 0, error);
-}
-
 /* ---- children whose stdout is consumed by the parent ---------------------- */
 
 typedef struct {
     pid_t pid;
     int output_fd;
+    int diagnostic_fd;
+    char diagnostic[256];
 } child_output_t;
 
-/* Spawns the child with stdout on a private pipe and, when input_fd is not
- * negative, stdin redirected from that descriptor. */
+/* Private stdout/stderr pipes keep child diagnostics out of CLI envelopes.
+ * Protocol streams use the lower-level spawn interface instead. */
 static maelys_git_result_t spawn_with_output_pipe(const char *executable,
                                                   char *const argv[],
                                                   int input_fd,
                                                   child_output_t *out,
                                                   maelys_git_error_t *error) {
-    int pipe_fds[2];
+    memset(out, 0, sizeof(*out));
+    int pipe_fds[2], diagnostic_fds[2];
     if (!mg_pipe_cloexec(pipe_fds)) {
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "pipe failed: %s", strerror(errno));
+        return MAELYS_GIT_ERR_IO;
+    }
+    if (!mg_pipe_cloexec(diagnostic_fds)) {
+        int saved = errno;
+        (void)close(pipe_fds[0]);
+        (void)close(pipe_fds[1]);
+        mg_error_set(error, MAELYS_GIT_ERR_IO, saved, "diagnostic pipe failed: %s", strerror(saved));
         return MAELYS_GIT_ERR_IO;
     }
     posix_spawn_file_actions_t actions;
@@ -209,10 +267,15 @@ static maelys_git_result_t spawn_with_output_pipe(const char *executable,
     if (rc == 0) rc = posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDOUT_FILENO);
     if (rc == 0) rc = posix_spawn_file_actions_addclose(&actions, pipe_fds[0]);
     if (rc == 0) rc = posix_spawn_file_actions_addclose(&actions, pipe_fds[1]);
+    if (rc == 0) rc = posix_spawn_file_actions_adddup2(&actions, diagnostic_fds[1], STDERR_FILENO);
+    if (rc == 0) rc = posix_spawn_file_actions_addclose(&actions, diagnostic_fds[0]);
+    if (rc == 0) rc = posix_spawn_file_actions_addclose(&actions, diagnostic_fds[1]);
     if (rc != 0) {
         if (actions_initialized) (void)posix_spawn_file_actions_destroy(&actions);
         (void)close(pipe_fds[0]);
         (void)close(pipe_fds[1]);
+        (void)close(diagnostic_fds[0]);
+        (void)close(diagnostic_fds[1]);
         mg_error_set(error, MAELYS_GIT_ERR_PROCESS, rc,
                      "spawn action setup failed: %s", strerror(rc));
         return MAELYS_GIT_ERR_PROCESS;
@@ -221,12 +284,15 @@ static maelys_git_result_t spawn_with_output_pipe(const char *executable,
     maelys_git_result_t result = mg_spawn_isolated(&pid, executable, &actions, argv, error);
     (void)posix_spawn_file_actions_destroy(&actions);
     (void)close(pipe_fds[1]);
+    (void)close(diagnostic_fds[1]);
     if (result != MAELYS_GIT_OK) {
         (void)close(pipe_fds[0]);
+        (void)close(diagnostic_fds[0]);
         return result;
     }
     out->pid = pid;
     out->output_fd = pipe_fds[0];
+    out->diagnostic_fd = diagnostic_fds[0];
     return MAELYS_GIT_OK;
 }
 
@@ -241,21 +307,24 @@ typedef sink_status_t (*sink_fn)(void *context,
                                  size_t count,
                                  maelys_git_error_t *error);
 
-/* Reads the child's stdout until EOF, feeding each chunk to the sink. On any
+/* Drain both streams concurrently, keeping only a bounded diagnostic prefix.
+ * Even oversized stderr must be drained so it cannot block the child. On any
  * failure the process group is terminated and reaped; the descriptor is
  * always closed before returning. */
-static maelys_git_result_t pump_output(pid_t pid,
-                                       int fd,
+static maelys_git_result_t pump_output(child_output_t *child,
+                                       int64_t started,
                                        uint64_t timeout_ms,
                                        sink_fn sink,
                                        void *sink_context,
                                        maelys_git_error_t *error) {
     unsigned char buffer[16384];
-    int64_t started = mg_monotonic_ms();
+    struct pollfd descriptors[2] = {
+        {.fd = child->output_fd, .events = POLLIN | POLLHUP},
+        {.fd = child->diagnostic_fd, .events = POLLIN | POLLHUP}};
+    size_t diagnostic_used = 0u;
     maelys_git_result_t failure = MAELYS_GIT_OK;
-    for (;;) {
-        struct pollfd descriptor = {.fd = fd, .events = POLLIN | POLLHUP};
-        int ready = poll(&descriptor, 1u, 100);
+    while (descriptors[0].fd >= 0 || descriptors[1].fd >= 0) {
+        int ready = poll(descriptors, 2u, 100);
         if (ready < 0 && errno == EINTR) continue;
         if (ready < 0) {
             mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
@@ -268,23 +337,109 @@ static maelys_git_result_t pump_output(pid_t pid,
             break;
         }
         if (ready == 0) continue;
-        ssize_t count = read(fd, buffer, sizeof(buffer));
-        if (count < 0 && errno == EINTR) continue;
-        if (count < 0) {
-            mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
-                         "read from child failed: %s", strerror(errno));
-            failure = MAELYS_GIT_ERR_IO;
-            break;
+        for (size_t i = 0u; i < 2u; ++i) {
+            if (descriptors[i].fd < 0 || !descriptors[i].revents) continue;
+            ssize_t count = read(descriptors[i].fd, buffer, sizeof(buffer));
+            if (count < 0 && errno == EINTR) continue;
+            if (count < 0) {
+                mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                             "read from child failed: %s", strerror(errno));
+                failure = MAELYS_GIT_ERR_IO;
+                break;
+            }
+            if (count == 0) {
+                (void)close(descriptors[i].fd);
+                descriptors[i].fd = -1;
+            } else if (i == 0u) {
+                sink_status_t status = sink(sink_context, buffer, (size_t)count, error);
+                if (status == SINK_ABORT) failure = MAELYS_GIT_ERR_LIMIT;
+                if (status == SINK_FAILED) failure = MAELYS_GIT_ERR_IO;
+            } else {
+                for (size_t j = 0u; j < (size_t)count &&
+                     diagnostic_used < sizeof(child->diagnostic) - 1u; ++j) {
+                    unsigned char byte = buffer[j];
+                    /* Diagnostics can contain filenames with arbitrary bytes.
+                     * Only printable ASCII reaches the strict CLI writer. */
+                    child->diagnostic[diagnostic_used++] =
+                        byte >= 32u && byte < 127u ? (char)byte : ' ';
+                }
+            }
+            if (failure != MAELYS_GIT_OK) break;
         }
-        if (count == 0) break;
-        sink_status_t status = sink(sink_context, buffer, (size_t)count, error);
-        if (status == SINK_ABORT) { failure = MAELYS_GIT_ERR_LIMIT; break; }
-        if (status == SINK_FAILED) { failure = MAELYS_GIT_ERR_IO; break; }
+        if (failure != MAELYS_GIT_OK) break;
     }
-    if (failure != MAELYS_GIT_OK) mg_terminate_process_group(pid);
-    (void)close(fd);
-    if (failure != MAELYS_GIT_OK) reap_child(pid);
+    child->diagnostic[diagnostic_used] = '\0';
+    if (failure != MAELYS_GIT_OK) mg_terminate_process_group(child->pid);
+    for (size_t i = 0u; i < 2u; ++i)
+        if (descriptors[i].fd >= 0) (void)close(descriptors[i].fd);
+    if (failure != MAELYS_GIT_OK) reap_child(child->pid);
     return failure;
+}
+
+static maelys_git_result_t finish_child(child_output_t *child, int64_t started,
+                                        uint64_t timeout_ms, int *status,
+                                        maelys_git_error_t *error) {
+    int64_t now = mg_monotonic_ms();
+    uint64_t elapsed = started >= 0 && now >= started ? (uint64_t)(now - started) : timeout_ms;
+    if (elapsed >= timeout_ms) {
+        mg_terminate_process_group(child->pid);
+        reap_child(child->pid);
+        return timeout_failure(error, timeout_ms);
+    }
+    maelys_git_result_t result = wait_child(child->pid, timeout_ms - elapsed, status, 0, error);
+    if (result == MAELYS_GIT_OK)
+        mg_error_set(error, MAELYS_GIT_OK, 0, "%s", *status ? child->diagnostic : "");
+    return result;
+}
+
+void mg_process_status_error(maelys_git_error_t *error, const char *operation, int status) {
+    char diagnostic[256] = {0};
+    if (error && error->code == MAELYS_GIT_OK)
+        (void)snprintf(diagnostic, sizeof(diagnostic), "%.255s", error->message);
+    mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0, "%s failed with status %d%s%s",
+                 operation, status, diagnostic[0] ? ": " : "", diagnostic);
+}
+
+static sink_status_t discard_sink(void *context, const unsigned char *bytes,
+                                   size_t count, maelys_git_error_t *error) {
+    (void)context; (void)bytes; (void)count; (void)error;
+    return SINK_CONTINUE;
+}
+
+static maelys_git_result_t run_process(const char *executable, char *const argv[],
+                                      uint64_t timeout_ms, int require_success,
+                                      int *out_exit_status, maelys_git_error_t *error) {
+    if (!executable || !argv || timeout_ms == 0u) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    child_output_t child;
+    maelys_git_result_t result = spawn_with_output_pipe(executable, argv, -1, &child, error);
+    if (result != MAELYS_GIT_OK) return result;
+    int64_t started = mg_monotonic_ms();
+    result = pump_output(&child, started, timeout_ms, discard_sink, NULL, error);
+    int status = 0;
+    if (result == MAELYS_GIT_OK) result = finish_child(&child, started, timeout_ms, &status, error);
+    if (result != MAELYS_GIT_OK) return result;
+    if (out_exit_status) *out_exit_status = status;
+    if (require_success && status != 0) {
+        mg_process_status_error(error, "child process", status);
+        return MAELYS_GIT_ERR_PROCESS;
+    }
+    return MAELYS_GIT_OK;
+}
+
+maelys_git_result_t mg_process_run_with_timeout(const char *executable, char *const argv[],
+    uint64_t timeout_ms, int *out_exit_status, maelys_git_error_t *error) {
+    return run_process(executable, argv, timeout_ms, 1, out_exit_status, error);
+}
+
+maelys_git_result_t mg_process_run(const char *executable, char *const argv[],
+    int *out_exit_status, maelys_git_error_t *error) {
+    return run_process(executable, argv, MG_PROCESS_TIMEOUT_MS, 1, out_exit_status, error);
+}
+
+maelys_git_result_t mg_process_run_status(const char *executable, char *const argv[],
+    int *out_exit_status, maelys_git_error_t *error) {
+    if (!out_exit_status) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    return run_process(executable, argv, MG_PROCESS_TIMEOUT_MS, 0, out_exit_status, error);
 }
 
 typedef struct {
@@ -333,11 +488,12 @@ static maelys_git_result_t capture(const char *executable,
         return result;
     }
     capture_sink_t sink = {.data = data, .max_length = max_length};
-    result = pump_output(child.pid, child.output_fd, MG_PROCESS_TIMEOUT_MS,
+    int64_t started = mg_monotonic_ms();
+    result = pump_output(&child, started, MG_PROCESS_TIMEOUT_MS,
                          capture_sink, &sink, error);
     int exit_status = 0;
     if (result == MAELYS_GIT_OK)
-        result = wait_child(child.pid, MG_PROCESS_TIMEOUT_MS, &exit_status, 0, error);
+        result = finish_child(&child, started, MG_PROCESS_TIMEOUT_MS, &exit_status, error);
     if (result == MAELYS_GIT_OK && reject_overflow &&
         (sink.overflow || sink.used == max_length)) {
         mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0,
@@ -391,8 +547,7 @@ maelys_git_result_t mg_process_capture(const char *executable,
         free(*out_data);
         *out_data = NULL;
         *out_length = 0u;
-        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
-                     "child process failed with status %d", status);
+        mg_process_status_error(error, "child process", status);
         return MAELYS_GIT_ERR_PROCESS;
     }
     return MAELYS_GIT_OK;
@@ -439,10 +594,11 @@ static maelys_git_result_t spool(const char *executable,
         executable, argv, input_fd, &child, error);
     if (result != MAELYS_GIT_OK) return result;
     spool_sink_t sink = {.output = output, .max_length = max_length};
-    result = pump_output(child.pid, child.output_fd, MG_PROCESS_TIMEOUT_MS,
+    int64_t started = mg_monotonic_ms();
+    result = pump_output(&child, started, MG_PROCESS_TIMEOUT_MS,
                          spool_sink, &sink, error);
     if (result != MAELYS_GIT_OK) return result;
-    result = wait_child(child.pid, MG_PROCESS_TIMEOUT_MS, out_exit_status, 0, error);
+    result = finish_child(&child, started, MG_PROCESS_TIMEOUT_MS, out_exit_status, error);
     if (result == MAELYS_GIT_OK && fflush(output) != 0) {
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
                      "flush child output failed: %s", strerror(errno));
