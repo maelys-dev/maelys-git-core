@@ -1,6 +1,6 @@
 # MAELYS-GIT-PREPARED-AUTH-RECEIPTS-v1
 
-Statut : proposée, amendée le 2026-09-02.
+Statut : proposée, amendée le 2026-09-05.
 
 État d'implémentation au 2026-09-05 : `matchedPolicy: null` est déjà livré dans
 `src/cli/admin.c` et `schemas/authorize.json`. Le constructeur de faits unique,
@@ -10,6 +10,9 @@ erreur et les contextes parallèles. Les révisions consommées sont enregistré
 dans `cmake/dependencies.cmake`. Les reçus, leur sérialisation, leur propagation
 et le benchmark restent une proposition, et ne sont pas annoncés comme livrés.
 Les chemins historiques cités plus bas décrivent l'état lors de la rédaction.
+Le découpage JSON est désormais fixé module par module dans
+[Frontières JSON](json-boundaries.md) : coexistence durable de maelys-json et
+Jansson, sans projet de remplacement général.
 
 Cette directive remplace la première ébauche du même nom. Elle intègre les
 vérifications faites dans les dépôts réels et fixe la frontière JSON entre
@@ -22,6 +25,12 @@ Jansson, maelys-json et le noyau de politique.
 | `maelys-git-core` | `main` propre, `51120d1` | Point de départ. |
 | `maelys-datalog` | `main` = `origin/main` = `8c8fad1` | C68 (sessions préparées) et C69 (why-false borné) sont publiés et déjà consommés via `../maelys-datalog`. |
 | `maelys-json` | `0.1.0` non publié, Makefile seul | Utilisable pour du code neuf après ajout d'un CMake et de tests du writer. |
+
+Actualisation au 2026-09-05 : le dépôt local maelys-json est en version 0.1.2
+(`f0cb977`). CMake, la cible `maelys::json`, les tests et le harnais de fuzz
+du writer, `writer_value` et les drapeaux de présentation sont présents.
+Leur qualification et l'épinglage dans git-core restent à faire lors de
+l'intégration ; le tableau ci-dessus conserve le constat historique.
 
 L'ébauche précédente considérait C69 comme bloquant parce que non fusionné.
 Ce n'est plus vrai. Le seul reste est le qualificatif « Experimental » sur
@@ -58,8 +67,9 @@ qualification à prendre dans maelys-datalog, pas une dépendance.
 
 - Évaluation incrémentale et re-saturation.
 - Toute modification de l'interaction avec `git cat-file --batch`.
-- Remplacement de Jansson dans le protocole, les enveloppes, la configuration
-  et la CLI. Cette migration est décrite en section 10 et se fait séparément.
+- Migration des lecteurs JSON externes, menée séparément selon la section 10.
+  Jansson reste utilisé pour les arbres internes et les enveloppes ; son
+  remplacement général est exclu du découpage retenu.
 - Signature cryptographique du reçu. Le reçu est conçu pour être signable,
   mais aucune signature n'est produite ici.
 
@@ -179,13 +189,13 @@ l'utilise comme référence de coût.
 
 Le reçu est sérialisé par maelys-json en **Maelys Canonical JSON v1**, profil
 `RFC8259` : les principaux, dépôts et chemins ne sont pas garantis ASCII.
-Clés triées par octets décodés, entiers minimaux, un seul épellement
+Clés triées par unités UTF-16 non échappées, entiers minimaux, un seul épellement
 d'échappement, aucun blanc, LF final non demandé.
 
 Les octets canoniques sont la seule forme de référence du reçu. Toute
 empreinte du reçu se calcule sur eux, avant insertion dans une enveloppe
 Jansson. Une fois insérés puis ré-émis par Jansson, les octets ne sont plus
-canoniques ; l'enveloppe porte donc `receiptSha256` calculée sur la forme
+garantis canoniques ; l'enveloppe porte donc `receiptSha256` calculée sur la forme
 canonique, et l'audit SQLite conserve la forme canonique brute.
 
 Le noyau de politique ne dépend pas de Jansson. Il expose une structure C
@@ -221,8 +231,9 @@ même reçu, sérialisé deux fois, produit les mêmes octets.
 ### 7.1 `maelys-git authorize`
 
 L'enveloppe normalisée gagne `receipt` (objet) et `receiptSha256`.
-`matchedPolicy` devient `["integer","null"]` avec `minimum: 0`. Le schéma dans
-`src/cli/catalog.c` et `docs/cli-contract.json` sont mis à jour ensemble ; le
+`matchedPolicy` est déjà `["integer","null"]` avec `minimum: 0`. Le schéma
+`schemas/authorize.json`, son usage dans `src/cli/admin.c` et le contrat généré
+`docs/cli-contract.json` sont mis à jour ensemble pour les nouveaux champs ; le
 test `maelys-git-cli-docs` les maintient alignés.
 
 ### 7.2 Agent
@@ -267,20 +278,22 @@ dans le hook.
 
 ### 8.2 maelys-json
 
-1. Ajouter un `CMakeLists.txt` minimal permettant `add_subdirectory` depuis un
-   répertoire frère, sur le modèle de maelys-datalog.
-2. Tester le writer : tri des clés sur préfixes partagés, dépassement d'octets,
-   de profondeur et de nœuds, clés dupliquées à l'écriture.
-3. Fuzzer le writer par aller-retour : parse d'une entrée, ré-émission,
-   re-parse, égalité structurelle.
-4. Fixer et épingler la version consommée.
+1. Intégrer la cible CMake existante `maelys::json`, en fixant la version et
+   le commit consommés dans `cmake/dependencies.cmake`.
+2. Qualifier les tests existants du writer sur la révision retenue : tri
+   UTF-16 et préfixes partagés, dépassement d'octets, de profondeur et de
+   nœuds, clés dupliquées à l'écriture.
+3. Exécuter le harnais de fuzz existant et compléter si nécessaire le corpus
+   d'aller-retour pour les reçus. La présence du harnais n'est pas une preuve
+   de qualification de l'intégration.
 
 ### 8.3 maelys-git-core
 
-1. Corriger `matchedPolicy: -1` en `null`, schéma et contrat inclus.
-2. Préserver l'absence de Jansson sur le chemin receive du hook. Aujourd'hui
-   seule la commande `version` de `maelys-git-hook` l'utilise ; la
-   sérialisation des reçus ne doit pas l'introduire dans `pre_receive.c`.
+1. Préserver le correctif déjà livré `matchedPolicy: null`, schéma et contrat
+   inclus.
+2. Préserver l'absence de Jansson dans les cibles CLI communes au shell et au
+   hook. La sérialisation des reçus utilise maelys-json et ne doit pas
+   introduire Jansson dans `src/hooks/pre_receive.c`.
 
 ## 9. Validation
 
@@ -304,33 +317,31 @@ dans le hook.
 - **Benchmark** : temps total, coût par autorisation, faits dérivés, fresh
   contre prepared, rapporté hors CTest. Aucun seuil temporel dans CTest.
 
-## 10. Frontière JSON et migration ultérieure
+## 10. Frontière JSON et coexistence
 
-Cette directive introduit maelys-json uniquement pour le reçu et le hook.
-Jansson reste l'implémentation du protocole, des enveloppes, de la
-configuration et de la CLI.
+Le découpage normatif et l'inventaire du code sont dans
+[Frontières JSON : maelys-json et Jansson](json-boundaries.md). Ils remplacent
+le projet antérieur de migration complète : les deux bibliothèques répondent
+à des modèles différents.
 
-git-core n'est pas écrit contre une abstraction JSON : les chaînes de format
-`json_pack`, le type `json_t` exposé dans `include/maelys_git_cli.h` et les
-flags de Jansson sont des sémantiques propres. Aucun changement de backend
-n'est transparent tant que cela reste vrai. Les bibliothèques courantes,
-json-c, cJSON, yyjson, ne rejettent pas les clés dupliquées et ne trient pas
-les clés ; elles ne satisfont pas le contrat de sécurité et ne sont pas des
-candidates.
+maelys-json prend en charge les lectures JSON aux frontières de confiance
+(configuration, requêtes, lots Cloud, réponses de l'exécuteur, manifestes en
+coordination avec maelys-datalog) et les octets JSON hachés ou signés. Jansson
+reste pour les constructions de réponses et d'enveloppes et les arbres
+internes mutables. Le choix se fait par opération : migrer le lecteur de
+configuration n'impose pas de réécrire son writer.
 
-La couture retenue est l'API opaque de maelys-json. La migration complète se
-fait en étapes livrables et vérifiables par différentiel contre la sortie
-Jansson, après cette directive :
+Le chantier des reçus introduit son writer dédié. Les migrations des lecteurs
+restent des livraisons séparées avec limites explicites, validation typée,
+durée de vie des documents et compatibilité du journal d'idempotence. Le
+préparse actuel des manifestes utilise yyjson puis le chargeur maelys-datalog
+rouvre le fichier : sécuriser seulement le préparse ne traite pas toute cette
+frontière.
 
-1. **Lecteurs** : parseur de protocole, configuration, superviseur, corps HTTP
-   du Cloud. Gain de stricte immédiat, risque faible. L'écart d'un octet entre
-   le défaut de 65 535 octets et la ligne de 64 Kio est réglé ici.
-2. **En-tête public** : `maelys_git_cli.h` cesse d'exposer `json_t`.
-3. **Écrivains** : exécuteur, CLI, catalogue. Réécriture du modèle de
-   construction d'arbres en émission ordonnée. Nécessite d'abord dans
-   maelys-json un mode indenté pour la sortie humaine et une copie document
-   vers writer.
-4. **Retrait de Jansson** du CMake et des tests.
+`include/maelys_git_cli.h` n'expose déjà plus `json_t`. Les constructeurs
+Jansson internes et leur dépendance CMake sont conservés. Ni leur nombre ni
+la disponibilité de nouveaux helpers maelys-json ne justifient une migration
+générale.
 
 ## 11. Ordre de livraison
 

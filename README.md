@@ -336,6 +336,12 @@ durably accepted the idempotency key.
 
 ## Security boundary
 
+The JSON architecture decision in [docs/json-boundaries.md](docs/json-boundaries.md)
+maps each reader and writer: maelys-json is planned for external JSON inputs and
+canonical bytes to hash or sign, while Jansson remains for mutable internal
+trees and ordinary responses. This is a documented target; the migration is
+not implemented yet.
+
 The SSH shell and hook should run under a dedicated Unix account that owns only
 the intended repositories. The agent should use a separate service account when
 possible. Filesystem permissions remain a second line of defence behind Datalog
