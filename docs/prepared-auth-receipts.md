@@ -26,11 +26,13 @@ Jansson, maelys-json et le noyau de politique.
 | `maelys-datalog` | `main` = `origin/main` = `8c8fad1` | C68 (sessions préparées) et C69 (why-false borné) sont publiés et déjà consommés via `../maelys-datalog`. |
 | `maelys-json` | `0.1.0` non publié, Makefile seul | Utilisable pour du code neuf après ajout d'un CMake et de tests du writer. |
 
-Actualisation au 2026-09-05 : le dépôt local maelys-json est en version 0.1.2
-(`f0cb977`). CMake, la cible `maelys::json`, les tests et le harnais de fuzz
-du writer, `writer_value` et les drapeaux de présentation sont présents.
-Leur qualification et l'épinglage dans git-core restent à faire lors de
-l'intégration ; le tableau ci-dessus conserve le constat historique.
+Actualisation au 2026-09-05 : la cible d'intégration maelys-json est le tag
+`v0.1.3`, version `0.1.3`, commit
+`0e60ec313388957739968a69c6a78c323b9dd67d`. CMake, la cible `maelys::json`, les
+tests et le harnais de fuzz du writer, `writer_value`,
+`maelys_json_document_is_canonical` et les drapeaux de présentation sont
+présents. Leur qualification et l'épinglage dans git-core restent à faire
+lors de l'intégration ; le tableau ci-dessus conserve le constat historique.
 
 L'ébauche précédente considérait C69 comme bloquant parce que non fusionné.
 Ce n'est plus vrai. Le seul reste est le qualificatif « Experimental » sur
@@ -198,6 +200,16 @@ Jansson. Une fois insérés puis ré-émis par Jansson, les octets ne sont plus
 garantis canoniques ; l'enveloppe porte donc `receiptSha256` calculée sur la forme
 canonique, et l'audit SQLite conserve la forme canonique brute.
 
+À réception d'un reçu canonique brut, parser les octets avec les limites du
+reçu et valider le schéma, puis exiger que
+`maelys_json_document_is_canonical(document, 0, &is_canonical)` retourne
+`MAELYS_JSON_OK` avec `is_canonical != 0`. Hacher ensuite les octets d'entrée,
+sans les réémettre ; refuser une forme non canonique plutôt que la corriger.
+Le transport de ces octets bruts devra être défini avec les reçus : l'objet
+de présentation réémis par Jansson ne s'y substitue pas. La forme de
+déduplication v1 des commandes reste un contrat Jansson distinct, décrit dans
+[Frontières JSON](json-boundaries.md).
+
 Le noyau de politique ne dépend pas de Jansson. Il expose une structure C
 `maelys_git_receipt_t` entièrement matérialisée. Un module de sérialisation
 séparé, lié à maelys-json, produit les octets canoniques. Ce module est le
@@ -278,8 +290,10 @@ dans le hook.
 
 ### 8.2 maelys-json
 
-1. Intégrer la cible CMake existante `maelys::json`, en fixant la version et
-   le commit consommés dans `cmake/dependencies.cmake`.
+1. Intégrer la cible CMake existante `maelys::json`, en épinglant le tag
+   `v0.1.3` : version `0.1.3` et commit résolu
+   `0e60ec313388957739968a69c6a78c323b9dd67d` dans
+   `cmake/dependencies.cmake`.
 2. Qualifier les tests existants du writer sur la révision retenue : tri
    UTF-16 et préfixes partagés, dépassement d'octets, de profondeur et de
    nœuds, clés dupliquées à l'écriture.
