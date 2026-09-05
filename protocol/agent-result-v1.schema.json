@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maelys.dev/schemas/git-agent-result-v1.json",
+  "title": "Maelys Git agent result envelope v1",
+  "description": "Exactly one JSONL result. Runtime: at most 65536 JSON bytes excluding LF/CRLF, depth 32 and 32768 tokens including keys. message_id, agent_id and command must equal the submitted command. The payload is an opaque bounded object at the transport boundary; consumers validate command-specific data before interpreting it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "message_id", "agent_id", "type", "command", "status", "payload"],
+  "properties": {
+    "protocol": {"const": "maelys-git-agent/1"},
+    "message_id": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,127}$"},
+    "agent_id": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,127}$"},
+    "type": {"const": "result"},
+    "command": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,63}$"},
+    "status": {"enum": ["ok", "denied", "failed"]},
+    "payload": {"type": "object"}
+  }
+}

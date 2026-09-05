@@ -259,8 +259,10 @@ bounds JSON to 65,536 bytes, 32 nesting levels and 32,768 tokens, and rejects
 decoded duplicates, U+0000 and invalid Unicode. Integer fields retain their
 signed 64-bit ranges and reject fractions and exponents. The message owns its
 document throughout execution. Jansson builds results and preserves the durable
-v1 command deduplication bytes; the outer Cloud and supervisor readers remain
-to migrate. These JSON libraries stay out of the SSH shell and receive-hook
+v1 command deduplication bytes. Cloud validates bounded polls before creating
+its transient Jansson compatibility tree. The supervisor validates and
+correlates result envelopes before persistence. These JSON libraries stay out
+of the SSH shell and receive-hook
 hot paths. See the [protocol contract](protocol/README.md) for framing and limits.
 
 Supported executor commands are:
@@ -359,8 +361,8 @@ durably accepted the idempotency key.
 
 The JSON architecture decision in [docs/json-boundaries.md](docs/json-boundaries.md)
 maps each reader and writer. Configuration, command envelopes and executor
-payload reads now use maelys-json. The outer Cloud poll responses, supervisor
-results, coordinated manifest loading and canonical receipts remain planned
+payload reads, Cloud polls and supervisor result validation now use
+maelys-json. Coordinated manifest loading and canonical receipts remain planned
 migration work. Jansson remains for mutable internal trees and ordinary
 responses, including the existing command deduplication representation.
 

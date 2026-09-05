@@ -38,9 +38,15 @@ It contains at most 32 commands. The cursor is committed only after every
 command in the response has been durably processed. HTTP 204 means no command
 and does not alter the cursor.
 
-The outer Cloud poll response and supervisor result readers still use Jansson;
-their migration is a separate lot. Individual Cloud commands pass through the
-maelys-json command reader after the existing Jansson normalization.
+The Cloud poll reader uses maelys-json on the exact HTTP body: at most 65,536
+bytes, depth 34 (two containers around a command), 32,768 tokens and a cursor
+shorter than 1,024 UTF-8 bytes. Before processing any command, it validates the
+poll shape and refuses every fractional/exponent lexeme and every integer
+outside `[INT64_MIN, INT64_MAX]`, including nested payload values. A transient
+Jansson tree then rereads the same bytes solely to produce deduplication v1.
+Each command still passes envelope, payload and authorization checks; validating
+the poll alone does not authorize its commands. A rejected poll leaves its
+cursor unchanged.
 
 The durable idempotency key is `message_id`. Its stored comparison value is the
 **deduplication form v1, produced by Jansson** with
@@ -51,7 +57,21 @@ compare a maelys-json serialization against the journal's `raw_json`.
 
 Results reuse the command's `message_id`, set `type` to `result`, and carry a
 terminal `status` (`ok`, `denied`, or `failed`) plus an object `payload`.
-Clients POST results with `Idempotency-Key: <message_id>`. The server must not
+The envelope is specified in `agent-result-v1.schema.json`. The supervisor
+requires exactly one LF- or CRLF-terminated result, with at most 65,536 JSON
+bytes excluding that delimiter, depth 32 and 32,768 tokens. Its maelys-json
+reader checks the exact envelope fields, protocol and type, and requires
+`message_id`, `agent_id` and `command` to match the submitted command. Extra or
+missing fields, invalid status, non-object payload, malformed Unicode, NUL,
+trailing data and multiple frames are rejected. The payload remains an opaque
+bounded object here; its command-specific semantics belong to its consumers.
+
+Only the validated status determines journal success; Cloud does not reparse
+it with Jansson. Invalid executor output is replaced by a locally constructed,
+correlated `failed` result with code `executor_failed`. The rejected output is
+never persisted or posted as a command result. Cached results are revalidated
+against the command and journal state before re-enqueue; a corrupt cached result
+blocks replay and cursor advancement. Clients POST results with `Idempotency-Key: <message_id>`. The server must not
 return 2xx until the key and result are durable.
 
 This agent JSONL protocol is distinct from the process CLI envelope. Human and

@@ -228,6 +228,7 @@ static maelys_git_result_t process_command(const maelys_git_agent_config_t *conf
                                            maelys_git_agent_store_t *store,
                                            json_t *command_json,
                                            maelys_git_error_t *error) {
+    /* Durable deduplication v1: preserve Jansson flags and bytes exactly. */
     char *raw = json_dumps(command_json, JSON_COMPACT | JSON_ENSURE_ASCII | JSON_SORT_KEYS);
     if (!raw) return MAELYS_GIT_ERR_IO;
     mg_agent_message_t message;
@@ -243,9 +244,21 @@ static maelys_git_result_t process_command(const maelys_git_agent_config_t *conf
     result = mg_store_record_command(store, &message, raw, &state, &stored_result, error);
     if (result == MAELYS_GIT_OK &&
         (state == MG_STORE_COMMAND_COMPLETE || state == MG_STORE_COMMAND_FAILED)) {
-        if (stored_result)
-            result = mg_store_enqueue(store, message.message_id, "command_result",
-                                      stored_result, mg_now_ms(), error);
+        int succeeded = 0;
+        if (!stored_result) {
+            mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "completed command has no stored result");
+            result = MAELYS_GIT_ERR_PROTOCOL;
+        } else {
+            result = mg_protocol_validate_result(stored_result, strlen(stored_result),
+                                                  &message, &succeeded, error);
+            if (result == MAELYS_GIT_OK && succeeded != (state == MG_STORE_COMMAND_COMPLETE)) {
+                mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "stored result disagrees with command state");
+                result = MAELYS_GIT_ERR_PROTOCOL;
+            }
+            if (result == MAELYS_GIT_OK)
+                result = mg_store_enqueue(store, message.message_id, "command_result",
+                                          stored_result, mg_now_ms(), error);
+        }
     } else if (result == MAELYS_GIT_OK && state == MG_STORE_COMMAND_RUNNING) {
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "command is already running");
         result = MAELYS_GIT_ERR_PROTOCOL;
@@ -255,17 +268,13 @@ static maelys_git_result_t process_command(const maelys_git_agent_config_t *conf
         if (result == MAELYS_GIT_OK) {
             char *response = NULL;
             maelys_git_error_t executor_error = {0};
-            result = mg_supervisor_execute(config, raw, &response, &executor_error);
+            int succeeded = 0;
+            result = mg_supervisor_execute(config, &message, raw, &response, &succeeded, &executor_error);
             if (result != MAELYS_GIT_OK) {
                 response = executor_failure(&message, executor_error.message);
                 result = response ? MAELYS_GIT_OK : MAELYS_GIT_ERR_IO;
             }
             if (result == MAELYS_GIT_OK) {
-                json_error_t json_error;
-                json_t *root = json_loads(response, JSON_REJECT_DUPLICATES, &json_error);
-                json_t *status = root ? json_object_get(root, "status") : NULL;
-                int succeeded = json_is_string(status) && strcmp(json_string_value(status), "ok") == 0;
-                json_decref(root);
                 result = mg_store_complete_command(store, message.message_id, succeeded,
                                                    response, mg_now_ms(), error);
                 free(response);
@@ -276,14 +285,6 @@ static maelys_git_result_t process_command(const maelys_git_agent_config_t *conf
     mg_protocol_message_clear(&message);
     free(raw);
     return result;
-}
-
-static int poll_object_valid(json_t *root) {
-    if (!json_is_object(root) || json_object_size(root) != 2u) return 0;
-    json_t *cursor = json_object_get(root, "cursor");
-    json_t *commands = json_object_get(root, "commands");
-    return json_is_string(cursor) && json_string_length(cursor) < 1024u &&
-           json_is_array(commands) && json_array_size(commands) <= 32u;
 }
 
 static maelys_git_result_t poll_commands(cloud_clients_t *clients,
@@ -317,23 +318,16 @@ static maelys_git_result_t poll_commands(cloud_clients_t *clients,
         mg_error_set(error, MAELYS_GIT_ERR_IO, (int)status, "command endpoint returned HTTP %u", status);
         return MAELYS_GIT_ERR_IO;
     }
-    json_error_t json_error;
-    json_t *root = json_loadb((const char *)capture.bytes, capture.length,
-                              JSON_REJECT_DUPLICATES, &json_error);
-    if (!poll_object_valid(root)) {
-        json_decref(root);
-        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "invalid command poll response");
-        return MAELYS_GIT_ERR_PROTOCOL;
-    }
-    json_t *commands = json_object_get(root, "commands");
-    size_t index;
-    json_t *command;
-    json_array_foreach(commands, index, command) {
+    mg_agent_poll_t poll;
+    result = mg_protocol_poll_parse((const char *)capture.bytes, capture.length, &poll, error);
+    if (result != MAELYS_GIT_OK) return result;
+    for (size_t index = 0u; index < poll.command_count; ++index) {
+        json_t *command = json_array_get(poll.deduplication_commands, index);
         result = process_command(config, store, command, error);
         if (result != MAELYS_GIT_OK) {
             char event_id[1200];
             (void)snprintf(event_id, sizeof(event_id), "poll:%s:%zu",
-                           json_string_value(json_object_get(root, "cursor")), index);
+                           poll.cursor.data, index);
             char *raw = json_dumps(command, JSON_COMPACT | JSON_ENSURE_ASCII | JSON_SORT_KEYS);
             if (raw) {
                 maelys_git_error_t ignored = {0};
@@ -345,9 +339,8 @@ static maelys_git_result_t poll_commands(cloud_clients_t *clients,
         }
     }
     if (result == MAELYS_GIT_OK)
-        result = mg_store_set_cursor(store,
-            json_string_value(json_object_get(root, "cursor")), error);
-    json_decref(root);
+        result = mg_store_set_cursor(store, poll.cursor.data, error);
+    mg_protocol_poll_clear(&poll);
     return result;
 }
 

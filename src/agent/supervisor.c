@@ -101,11 +101,15 @@ static int write_all_until(int fd, const void *bytes, size_t length,
 }
 
 maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *config,
+                                          const mg_agent_message_t *command,
                                           const char *request_json,
                                           char **out_response_json,
+                                          int *out_succeeded,
                                           maelys_git_error_t *error) {
-    if (!config || !request_json || !out_response_json) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    if (!out_response_json || !out_succeeded) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     *out_response_json = NULL;
+    *out_succeeded = 0;
+    if (!config || !command || !request_json) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     int input_pipe[2] = {-1, -1};
     int output_pipe[2] = {-1, -1};
     if (!open_request_channel(input_pipe) || !mg_pipe_cloexec(output_pipe)) {
@@ -163,10 +167,12 @@ maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *confi
                                 deadline, &timed_out) &&
                 write_all_until(input_pipe[1], "\n", 1u, deadline, &timed_out);
     close_fd(&input_pipe[1]);
-    char *response = malloc(MAELYS_GIT_MAX_PROTOCOL_LINE + 2u);
+    /* JSON bytes plus CRLF and one probe byte to detect overflow. */
+    const size_t wire_capacity = MAELYS_GIT_MAX_PROTOCOL_LINE + 3u;
+    char *response = malloc(wire_capacity + 1u);
     size_t used = 0u;
     int read_failed = 0;
-    while (wrote && response && used < MAELYS_GIT_MAX_PROTOCOL_LINE + 1u) {
+    while (wrote && response && used < wire_capacity) {
         int timeout = 0;
         if (!remaining_timeout(deadline, &timeout)) { read_failed = 1; break; }
         if (timeout == 0) { timed_out = 1; break; }
@@ -177,14 +183,14 @@ maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *confi
         if (ready == 0) { timed_out = 1; break; }
         if (ready < 0) { read_failed = 1; break; }
         ssize_t count = read(output_pipe[0], response + used,
-                             MAELYS_GIT_MAX_PROTOCOL_LINE + 1u - used);
+                             wire_capacity - used);
         if (count < 0 && errno == EINTR) continue;
         if (count < 0) { read_failed = 1; break; }
         if (count == 0) break;
         used += (size_t)count;
     }
     close_fd(&output_pipe[0]);
-    int oversized = used > MAELYS_GIT_MAX_PROTOCOL_LINE;
+    int oversized = used > MAELYS_GIT_MAX_PROTOCOL_LINE + 2u;
     if (!wrote || !response || timed_out || read_failed || oversized)
         mg_terminate_process_group(child);
     int status = 0;
@@ -217,17 +223,21 @@ maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *confi
                      read_failed ? "executor response read failed" : "executor failed");
         return result;
     }
-    while (used > 0u && (response[used - 1u] == '\n' || response[used - 1u] == '\r')) --used;
-    response[used] = '\0';
-    json_error_t json_error;
-    json_t *root = json_loadb(response, used, JSON_REJECT_DUPLICATES, &json_error);
-    if (!root || !json_is_object(root)) {
-        json_decref(root);
+    /* Exactly one JSONL response: no missing delimiter or second frame. */
+    if (response[used - 1u] != '\n' || memchr(response, '\n', used - 1u)) {
         free(response);
-        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "executor returned invalid JSON");
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "executor must return one complete JSONL result");
         return MAELYS_GIT_ERR_PROTOCOL;
     }
-    json_decref(root);
+    --used;
+    if (used > 0u && response[used - 1u] == '\r') --used;
+    response[used] = '\0';
+    maelys_git_result_t validated = mg_protocol_validate_result(
+        response, used, command, out_succeeded, error);
+    if (validated != MAELYS_GIT_OK) {
+        free(response);
+        return validated;
+    }
     *out_response_json = response;
     return MAELYS_GIT_OK;
 }

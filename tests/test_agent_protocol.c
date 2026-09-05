@@ -209,11 +209,130 @@ static int test_deduplication_v1(void) {
     return 1;
 }
 
+static int test_poll_reader(void) {
+    const char *invalid[] = {
+        "{}", "[]", "{\"cursor\":null,\"commands\":[]}",
+        "{\"cursor\":\"\",\"commands\":{},\"extra\":1}",
+        "{\"cursor\":\"a\\u0000b\",\"commands\":[]}",
+        "{\"cursor\":\"\",\"cur\\u0073or\":\"\",\"commands\":[]}",
+        "\xef\xbb\xbf{\"cursor\":\"\",\"commands\":[]}",
+        "{\"cursor\":\"\xff\",\"commands\":[]}",
+        "{\"cursor\":\"\\ud800\",\"commands\":[]}",
+        "{\"cursor\":\"\",\"commands\":[]}{}"
+    };
+    mg_agent_poll_t poll;
+    for (size_t i = 0u; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        CHECK(mg_protocol_poll_parse(invalid[i], strlen(invalid[i]), &poll, NULL) == MAELYS_GIT_ERR_PROTOCOL);
+        CHECK(poll.document == NULL && poll.deduplication_commands == NULL && poll.cursor.data == NULL);
+        mg_protocol_poll_clear(&poll);
+    }
+    const char *numbers[] = {"-9223372036854775808", "9223372036854775807", "0",
+        "9223372036854775808", "18446744073709551615", "18446744073709551616",
+        "-9223372036854775809", "1.0", "1e0", "1e100000"};
+    for (size_t i = 0u; i < sizeof(numbers) / sizeof(numbers[0]); ++i) {
+        char bytes[200];
+        (void)snprintf(bytes, sizeof(bytes), "{\"cursor\":\"\",\"commands\":[{\"nested\":[%s]}]}", numbers[i]);
+        CHECK(mg_protocol_poll_parse(bytes, strlen(bytes), &poll, NULL) ==
+              (i < 3u ? MAELYS_GIT_OK : MAELYS_GIT_ERR_PROTOCOL));
+        if (i < 3u) {
+            maelys_json_value_t commands;
+            CHECK(maelys_json_object_get(poll.document, maelys_json_document_root(poll.document),
+                                         "commands", &commands) == MAELYS_JSON_OK);
+            CHECK(same_value(poll.document, commands, poll.deduplication_commands));
+        }
+        mg_protocol_poll_clear(&poll);
+    }
+    char *bytes = malloc(MAELYS_GIT_MAX_PROTOCOL_LINE + 2u);
+    CHECK(bytes != NULL);
+    const char *empty = "{\"cursor\":\"\",\"commands\":[]}";
+    memset(bytes, ' ', MAELYS_GIT_MAX_PROTOCOL_LINE + 2u);
+    memcpy(bytes, empty, strlen(empty));
+    CHECK(mg_protocol_poll_parse(bytes, MAELYS_GIT_MAX_PROTOCOL_LINE, &poll, NULL) == MAELYS_GIT_OK);
+    mg_protocol_poll_clear(&poll);
+    CHECK(mg_protocol_poll_parse(bytes, MAELYS_GIT_MAX_PROTOCOL_LINE + 1u, &poll, NULL) == MAELYS_GIT_ERR_LIMIT);
+    bytes[strlen(empty)] = '\0';
+    CHECK(mg_protocol_poll_parse(bytes, strlen(empty) + 1u, &poll, NULL) == MAELYS_GIT_ERR_PROTOCOL);
+    free(bytes);
+    json_t *commands = json_array();
+    for (size_t i = 0u; i < 32u; ++i) {
+        json_t *values = json_array();
+        for (size_t j = 0u; j < 300u; ++j) CHECK(json_array_append_new(values, json_integer(0)) == 0);
+        CHECK(json_array_append_new(commands, json_pack("{s:o}", "values", values)) == 0);
+    }
+    json_t *root = json_pack("{s:s,s:o}", "cursor", "caf\xc3\xa9", "commands", commands);
+    bytes = json_dumps(root, JSON_COMPACT);
+    CHECK(bytes != NULL && strlen(bytes) < MAELYS_GIT_MAX_PROTOCOL_LINE);
+    CHECK(mg_protocol_poll_parse(bytes, strlen(bytes), &poll, NULL) == MAELYS_GIT_OK);
+    memset(bytes, '!', strlen(bytes)); free(bytes);
+    CHECK(poll.command_count == 32u && !strcmp(poll.cursor.data, "caf\xc3\xa9"));
+    maelys_json_value_t parsed_commands;
+    CHECK(maelys_json_object_get(poll.document, maelys_json_document_root(poll.document),
+                                 "commands", &parsed_commands) == MAELYS_JSON_OK);
+    CHECK(same_value(poll.document, parsed_commands, commands));
+    CHECK(json_equal(poll.deduplication_commands, commands));
+    mg_protocol_poll_clear(&poll);
+    CHECK(json_array_append_new(commands, json_object()) == 0);
+    bytes = json_dumps(root, JSON_COMPACT);
+    CHECK(mg_protocol_poll_parse(bytes, strlen(bytes), &poll, NULL) == MAELYS_GIT_ERR_PROTOCOL);
+    free(bytes); json_decref(root);
+    for (size_t depth = MG_POLL_MAX_DEPTH; depth <= MG_POLL_MAX_DEPTH + 1u; ++depth) {
+        json_t *nested = json_integer(0);
+        for (size_t j = 2u; j < depth; ++j) {
+            json_t *array = json_array();
+            CHECK(json_array_append_new(array, nested) == 0); nested = array;
+        }
+        root = json_pack("{s:s,s:[o]}", "cursor", "", "commands", nested);
+        bytes = json_dumps(root, JSON_COMPACT);
+        CHECK(mg_protocol_poll_parse(bytes, strlen(bytes), &poll, NULL) ==
+              (depth == MG_POLL_MAX_DEPTH ? MAELYS_GIT_OK : MAELYS_GIT_ERR_LIMIT));
+        free(bytes); json_decref(root); mg_protocol_poll_clear(&poll);
+    }
+    return 1;
+}
+
+static int test_result_envelope(void) {
+    mg_agent_message_t command = {.message_id = "result-1", .agent_id = "agent-1", .command = "health"};
+    json_t *payload = json_object();
+    const char *statuses[] = {"ok", "denied", "failed", "pending", "", "OK"};
+    int succeeded;
+    for (size_t i = 0u; i < sizeof(statuses) / sizeof(statuses[0]); ++i) {
+        char *encoded = mg_protocol_encode_result(&command, statuses[i], payload, NULL);
+        CHECK(encoded != NULL);
+        succeeded = 1;
+        CHECK(mg_protocol_validate_result(encoded, strlen(encoded), &command, &succeeded, NULL) ==
+              (i < 3u ? MAELYS_GIT_OK : MAELYS_GIT_ERR_PROTOCOL));
+        CHECK(succeeded == (i == 0u)); free(encoded);
+    }
+    char *encoded = mg_protocol_encode_result(&command, "ok", payload, NULL);
+    json_t *root = json_loads(encoded, 0u, NULL);
+    CHECK(root != NULL); free(encoded); json_decref(payload);
+    const char *fields[] = {"protocol", "message_id", "agent_id", "type", "command", "status", "payload"};
+    for (size_t i = 0u; i < sizeof(fields) / sizeof(fields[0]); ++i) {
+        for (size_t variant = 0u; variant < 3u; ++variant) {
+            json_t *wrong = json_deep_copy(root);
+            if (variant == 0u) CHECK(json_object_del(wrong, fields[i]) == 0);
+            else CHECK(json_object_set_new(wrong, fields[i],
+                variant == 1u ? json_string("wrong") : json_null()) == 0);
+            encoded = json_dumps(wrong, JSON_COMPACT);
+            succeeded = 1;
+            CHECK(mg_protocol_validate_result(encoded, strlen(encoded), &command, &succeeded, NULL) == MAELYS_GIT_ERR_PROTOCOL);
+            CHECK(succeeded == 0); free(encoded); json_decref(wrong);
+        }
+    }
+    CHECK(json_object_set_new(root, "extra", json_true()) == 0);
+    encoded = json_dumps(root, JSON_COMPACT);
+    CHECK(mg_protocol_validate_result(encoded, strlen(encoded), &command, &succeeded, NULL) == MAELYS_GIT_ERR_PROTOCOL);
+    free(encoded); json_decref(root);
+    return 1;
+}
+
 int main(void) {
     int passed = test_owned_documents();
     passed += test_structure_budgets();
     passed += test_deduplication_v1();
-    if (passed != 3) return 1;
+    passed += test_poll_reader();
+    passed += test_result_envelope();
+    if (passed != 5) return 1;
     (void)printf("ok: %d protocol ownership and compatibility groups passed\n", passed);
     return 0;
 }

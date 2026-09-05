@@ -27,6 +27,9 @@
  * The token ceiling admits every JSON shape fitting the 64 KiB byte cap. */
 #define MG_PROTOCOL_MAX_DEPTH 32u
 #define MG_PROTOCOL_MAX_TOKENS ((MAELYS_GIT_MAX_PROTOCOL_LINE + 1u) / 2u)
+/* The poll object and commands array add two levels around a command. */
+#define MG_POLL_MAX_DEPTH (MG_PROTOCOL_MAX_DEPTH + 2u)
+#define MG_POLL_MAX_COMMANDS 32u
 
 typedef struct {
     char protocol[32];
@@ -43,6 +46,14 @@ typedef struct {
     maelys_json_document_t *document;
     maelys_json_value_t payload;
 } mg_agent_message_t;
+
+typedef struct {
+    maelys_json_document_t *document;
+    maelys_json_view_t cursor; /* Borrowed from document. */
+    size_t command_count;
+    /* Trusted compatibility tree, used only to produce deduplication v1. */
+    json_t *deduplication_commands;
+} mg_agent_poll_t;
 
 struct maelys_git_agent_config {
     char agent_id[MG_AGENT_ID_MAX];
@@ -89,6 +100,14 @@ maelys_git_result_t mg_protocol_parse(const char *bytes,
                                       mg_agent_message_t *out,
                                       maelys_git_error_t *error);
 void mg_protocol_message_clear(mg_agent_message_t *message);
+maelys_git_result_t mg_protocol_poll_parse(const char *bytes, size_t length,
+                                           mg_agent_poll_t *out,
+                                           maelys_git_error_t *error);
+void mg_protocol_poll_clear(mg_agent_poll_t *poll);
+maelys_git_result_t mg_protocol_validate_result(const char *bytes, size_t length,
+                                                const mg_agent_message_t *command,
+                                                int *out_succeeded,
+                                                maelys_git_error_t *error);
 char *mg_protocol_encode_result(const mg_agent_message_t *command,
                                 const char *status,
                                 json_t *payload,
@@ -175,8 +194,10 @@ maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
 
 #ifdef MAELYS_GIT_ENABLE_CLOUD_AGENT
 maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *config,
+                                          const mg_agent_message_t *command,
                                           const char *request_json,
                                           char **out_response_json,
+                                          int *out_succeeded,
                                           maelys_git_error_t *error);
 maelys_git_result_t mg_cloud_run(const maelys_git_agent_config_t *config,
                                  int run_once,

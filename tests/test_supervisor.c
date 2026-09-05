@@ -11,6 +11,11 @@
 #include <time.h>
 #include <unistd.h>
 
+static const char valid_result[] =
+    "{\"protocol\":\"maelys-git-agent/1\",\"message_id\":\"supervised\","
+    "\"agent_id\":\"agent-1\",\"type\":\"result\",\"command\":\"health\","
+    "\"status\":\"ok\",\"payload\":{}}";
+
 static void pause_ms(long milliseconds) {
     struct timespec delay = {
         .tv_sec = milliseconds / 1000,
@@ -27,12 +32,23 @@ static int ends_with(const char *value, const char *suffix) {
 }
 
 static int executor_mode(const char *executable, const char *marker) {
+    if (ends_with(marker, "/reply")) {
+        char buffer[4096];
+        while (fread(buffer, 1u, sizeof(buffer), stdin) > 0u) {}
+        FILE *reply = fopen(marker, "rb");
+        if (!reply) return 2;
+        size_t count;
+        while ((count = fread(buffer, 1u, sizeof(buffer), reply)) > 0u)
+            if (fwrite(buffer, 1u, count, stdout) != count) { fclose(reply); return 2; }
+        return fclose(reply) == 0 ? 0 : 2;
+    }
     /* An executor that exits before reading its request. */
     if (ends_with(marker, "/exit-early")) return 0;
     if (ends_with(marker, "/stdout-closed")) {
         char request[16];
         if (!fgets(request, sizeof(request), stdin)) return 2;
-        (void)fputs("{}\n", stdout);
+        (void)fputs(valid_result, stdout);
+        (void)fputc('\n', stdout);
         (void)fflush(stdout);
         (void)close(STDOUT_FILENO);
         pause_ms(5000);
@@ -59,7 +75,8 @@ static int executor_mode(const char *executable, const char *marker) {
         _exit(0);
     }
     if (ends_with(marker, "/success-descendant")) {
-        (void)fputs("{}\n", stdout);
+        (void)fputs(valid_result, stdout);
+        (void)fputc('\n', stdout);
         return 0;
     }
     pause_ms(5000);
@@ -98,6 +115,8 @@ int main(int argc, char **argv) {
     (void)snprintf(config.repository_root, sizeof(config.repository_root), "/tmp");
     (void)snprintf(config.git_executable, sizeof(config.git_executable), "/usr/bin/git");
     config.request_timeout_ms = 100u;
+    mg_agent_message_t command = {.message_id = "supervised", .agent_id = "agent-1", .command = "health"};
+    int succeeded = 0;
     char *response = NULL;
     char *request = malloc(MAELYS_GIT_MAX_PROTOCOL_LINE + 1u);
     if (!request) return fail("cannot allocate supervisor request");
@@ -105,7 +124,7 @@ int main(int argc, char **argv) {
     request[MAELYS_GIT_MAX_PROTOCOL_LINE] = '\0';
     maelys_git_error_t error = {0};
     maelys_git_result_t result = mg_supervisor_execute(
-        &config, request, &response, &error);
+        &config, &command, request, &response, &succeeded, &error);
     free(request);
     free(response);
     if (result != MAELYS_GIT_ERR_LIMIT)
@@ -127,7 +146,7 @@ int main(int argc, char **argv) {
     request[MAELYS_GIT_MAX_PROTOCOL_LINE] = '\0';
     response = NULL;
     memset(&error, 0, sizeof(error));
-    result = mg_supervisor_execute(&config, request, &response, &error);
+    result = mg_supervisor_execute(&config, &command, request, &response, &succeeded, &error);
     free(request);
     free(response);
     if (result == MAELYS_GIT_OK)
@@ -139,7 +158,7 @@ int main(int argc, char **argv) {
         config.request_timeout_ms = i == 2u ? 2000u : 200u;
         response = NULL;
         int64_t started = mg_monotonic_ms();
-        result = mg_supervisor_execute(&config, "{}", &response, &error);
+        result = mg_supervisor_execute(&config, &command, "{}", &response, &succeeded, &error);
         free(response);
         if (result != (i == 2u ? MAELYS_GIT_OK : MAELYS_GIT_ERR_LIMIT))
             return fail("closed stdout or nested subprocess bypassed supervision");
@@ -149,6 +168,43 @@ int main(int argc, char **argv) {
         if (access(config.manifest_path, F_OK) == 0)
             return fail("descendant survived a terminal executor result");
     }
+    (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/reply", directory);
+    config.request_timeout_ms = 5000u;
+    char *wire = malloc(MAELYS_GIT_MAX_PROTOCOL_LINE + 4u);
+    if (!wire) return fail("cannot allocate response fixture");
+    for (size_t test = 0u; test < 8u; ++test) {
+        size_t size = strlen(valid_result);
+        memcpy(wire, valid_result, size);
+        maelys_git_result_t expected = MAELYS_GIT_OK;
+        if (test <= 2u) {
+            memset(wire + size, ' ', MAELYS_GIT_MAX_PROTOCOL_LINE - size);
+            size = MAELYS_GIT_MAX_PROTOCOL_LINE;
+            if (test == 1u) wire[size++] = '\r';
+            if (test == 2u) { wire[size++] = ' '; expected = MAELYS_GIT_ERR_LIMIT; }
+        } else if (test == 3u) {
+            wire[size++] = '\0'; expected = MAELYS_GIT_ERR_PROTOCOL;
+        } else if (test == 4u) {
+            wire[size++] = '\n'; expected = MAELYS_GIT_ERR_PROTOCOL;
+        } else if (test == 5u) {
+            memcpy(wire + size, "{}", 2u); size += 2u; expected = MAELYS_GIT_ERR_PROTOCOL;
+        } else if (test == 6u) {
+            wire[0] = '['; expected = MAELYS_GIT_ERR_PROTOCOL;
+        } else {
+            expected = MAELYS_GIT_ERR_PROTOCOL; /* No final newline. */
+        }
+        if (test != 7u) wire[size++] = '\n';
+        FILE *file = fopen(config.manifest_path, "wb");
+        if (!file || fwrite(wire, 1u, size, file) != size || fclose(file) != 0)
+            return fail("cannot write response fixture");
+        succeeded = 1;
+        result = mg_supervisor_execute(&config, &command, "{}", &response, &succeeded, &error);
+        if (result != expected || succeeded != (expected == MAELYS_GIT_OK) ||
+            (response != NULL) != (expected == MAELYS_GIT_OK))
+            return fail("response framing, limit or success state was not enforced");
+        free(response);
+    }
+    free(wire);
+    if (unlink(config.manifest_path) != 0) return fail("cannot remove response fixture");
     if (rmdir(directory) != 0) return fail("cannot remove temporary directory");
     return 0;
 }
