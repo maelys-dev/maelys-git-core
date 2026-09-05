@@ -35,6 +35,7 @@ The default Cloud-enabled layout expects these repositories to be siblings:
 GitHubDocuments/
 ├── maelys-cli/
 ├── maelys-datalog/
+├── maelys-json/
 ├── maelys-http/
 ├── maelys-system/
 └── maelys-git-core/
@@ -68,8 +69,10 @@ recorded version exactly. HTTP/System objects are also private to each build,
 and inherit its compiler and sanitizer flags. Project headers take precedence
 over older installed headers in `CPPFLAGS`.
 Only the dependency-free core of `maelys-cli` is linked; its extension
-archive and `maelys` dispatcher (which need `maelys-json`) are not built
-here.
+archive and `maelys` dispatcher are not built here. The agent configuration
+reader links maelys-json separately, pinned to release `v0.1.3`. Its source
+checkout can be selected with `-DMAELYS_JSON_SOURCE_DIR=/absolute/path/to/maelys-json`.
+Jansson still builds the configuration output, CLI data and agent messages.
 
 ## Policy model
 
@@ -329,6 +332,20 @@ build/maelys-git-agent provision \
 build/maelys-git-agent run --config /etc/maelys-git/agent.json
 ```
 
+The v1 agent configuration is a flat JSON object with exactly 14 required
+scalar fields. maelys-json parses at most 65,536 bytes, including whitespace,
+with depth 1 and 29 tokens (root, keys and values). Duplicate decoded keys,
+unknown or missing fields, invalid UTF-8, U+0000, BOM and trailing data are
+rejected. `version` must be the integer 1; both timeout fields must be integers
+from 1,000 through 120,000 milliseconds, without fractions or exponents.
+Paths and strings retain their field-specific validation and size limits.
+
+The configuration must be a regular file owned by the agent or root, without
+group/world write permission or a final symlink. The loader opens it once,
+checks that descriptor with `fstat`, and reads a bounded byte buffer from the
+same descriptor. FIFOs and other non-regular files are rejected without waiting
+for input. Provisioning continues to write the configuration with Jansson.
+
 The Cloud command endpoint returns an exact object shaped as
 `{"cursor":"...","commands":[...]}` or HTTP 204. The event endpoint accepts
 one result object per POST and should return any 2xx response only after it has
@@ -337,10 +354,10 @@ durably accepted the idempotency key.
 ## Security boundary
 
 The JSON architecture decision in [docs/json-boundaries.md](docs/json-boundaries.md)
-maps each reader and writer: maelys-json is planned for external JSON inputs and
-canonical bytes to hash or sign, while Jansson remains for mutable internal
-trees and ordinary responses. This is a documented target; the migration is
-not implemented yet.
+maps each reader and writer. The configuration reader now uses maelys-json;
+the remaining external JSON readers and canonical bytes to hash or sign are
+planned migration work. Jansson remains for mutable internal trees and ordinary
+responses, including the existing command deduplication representation.
 
 The SSH shell and hook should run under a dedicated Unix account that owns only
 the intended repositories. The agent should use a separate service account when

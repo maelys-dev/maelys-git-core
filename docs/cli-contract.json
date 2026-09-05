@@ -3449,7 +3449,7 @@
                 "repeatable": false,
                 "required": true,
                 "requires": [],
-                "summary": "Agent configuration file."
+                "summary": "Agent configuration file (v1, at most 64 KiB)."
               },
               {
                 "conflictsWith": [],

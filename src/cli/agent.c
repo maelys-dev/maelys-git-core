@@ -23,7 +23,7 @@ static const maelys_cli_option_t provision_options[] = {
 };
 
 static const maelys_cli_option_t run_options[] = {
-    {MAELYS_CLI_PATH("config", "FILE", "Agent configuration file."), .required = 1},
+    {MAELYS_CLI_PATH("config", "FILE", "Agent configuration file (v1, at most 64 KiB)."), .required = 1},
     {MAELYS_CLI_FLAG("once", "Run one synchronization cycle.")},
 };
 

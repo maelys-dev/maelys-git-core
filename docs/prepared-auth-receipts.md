@@ -31,8 +31,9 @@ Actualisation au 2026-09-05 : la cible d'intégration maelys-json est le tag
 `0e60ec313388957739968a69c6a78c323b9dd67d`. CMake, la cible `maelys::json`, les
 tests et le harnais de fuzz du writer, `writer_value`,
 `maelys_json_document_is_canonical` et les drapeaux de présentation sont
-présents. Leur qualification et l'épinglage dans git-core restent à faire
-lors de l'intégration ; le tableau ci-dessus conserve le constat historique.
+présents. Git-core épingle désormais cette révision pour le lecteur de
+configuration ; la qualification du writer pour les reçus reste à faire.
+Le tableau ci-dessus conserve le constat historique.
 
 L'ébauche précédente considérait C69 comme bloquant parce que non fusionné.
 Ce n'est plus vrai. Le seul reste est le qualificatif « Experimental » sur
@@ -290,7 +291,8 @@ dans le hook.
 
 ### 8.2 maelys-json
 
-1. Intégrer la cible CMake existante `maelys::json`, en épinglant le tag
+1. Épinglage déjà réalisé pour le lecteur de configuration : cible CMake
+   `maelys::json`, tag
    `v0.1.3` : version `0.1.3` et commit résolu
    `0e60ec313388957739968a69c6a78c323b9dd67d` dans
    `cmake/dependencies.cmake`.

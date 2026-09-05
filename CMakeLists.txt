@@ -19,6 +19,9 @@ set(MAELYS_DATALOG_SOURCE_DIR
 set(MAELYS_CLI_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../maelys-cli"
     CACHE PATH "Path to the maelys-cli source tree (used when no installed copy is found)")
+set(MAELYS_JSON_SOURCE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../maelys-json"
+    CACHE PATH "Path to the maelys-json source tree")
 set(MAELYS_HTTP_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../maelys-http"
     CACHE PATH "Path to the maelys-http source tree")
@@ -82,7 +85,7 @@ else()
             "maelys-cli was not found: install it (find_package(maelys-cli)) or set "
             "MAELYS_CLI_SOURCE_DIR to its source tree")
     endif()
-    # Core only: the extension archive and dispatcher would pull maelys-json.
+    # Core only: git-core manages its own JSON dependency separately.
     set(MAELYS_CLI_BUILD_DISPATCHER OFF)
     set(MAELYS_CLI_BUILD_EXTENSION OFF)
     set(MAELYS_CLI_BUILD_TESTS OFF)
@@ -101,6 +104,21 @@ foreach(tool IN ITEMS MAELYS_CLI_EMBED MAELYS_CLI_REFERENCE)
         message(FATAL_ERROR "${tool} was not found at ${${tool}}")
     endif()
 endforeach()
+
+# ---- maelys-json ------------------------------------------------------------
+# External configuration is parsed by the pinned, bounded reader. Jansson
+# remains the builder for internal messages and configuration output.
+maelys_git_resolve_dependency(JSON MAELYS_JSON_SOURCE_DIR)
+if(NOT EXISTS "${MAELYS_JSON_SOURCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR
+        "maelys-json was not found at ${MAELYS_JSON_SOURCE_DIR}; set MAELYS_JSON_SOURCE_DIR")
+endif()
+set(MAELYS_JSON_BUILD_TESTS OFF)
+set(MAELYS_JSON_WERROR ${MAELYS_GIT_WERROR})
+add_subdirectory("${MAELYS_JSON_SOURCE_DIR}"
+                 "${CMAKE_CURRENT_BINARY_DIR}/maelys-json" EXCLUDE_FROM_ALL)
+unset(MAELYS_JSON_BUILD_TESTS)
+unset(MAELYS_JSON_WERROR)
 
 # ---- core library -----------------------------------------------------------
 add_library(maelys_git_core STATIC
@@ -137,7 +155,7 @@ target_include_directories(maelys_git_agent_core
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(maelys_git_agent_core
     PUBLIC maelys_git_core
-    PRIVATE PkgConfig::JANSSON SQLite::SQLite3 maelys_git_build_flags)
+    PRIVATE maelys::json PkgConfig::JANSSON SQLite::SQLite3 maelys_git_build_flags)
 
 # ---- command-line interface -------------------------------------------------
 # Output schemas are plain JSON Schema files embedded at build time; the C
@@ -305,6 +323,13 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_compile_definitions(test-maelys-git-agent PRIVATE
         TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}")
     add_test(NAME maelys-git-agent COMMAND test-maelys-git-agent)
+
+    add_executable(test-maelys-git-agent-config tests/test_agent_config.c)
+    target_include_directories(test-maelys-git-agent-config PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-maelys-git-agent-config PRIVATE
+        maelys_git_agent_core PkgConfig::JANSSON maelys_git_build_flags)
+    add_test(NAME maelys-git-agent-config COMMAND test-maelys-git-agent-config)
+    set_tests_properties(maelys-git-agent-config PROPERTIES TIMEOUT 15)
 
     add_executable(test-maelys-git-cli tests/test_cli.c)
     target_link_libraries(test-maelys-git-cli PRIVATE

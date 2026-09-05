@@ -1,6 +1,9 @@
 # Tested source revisions. Update these and the generated CLI reference together.
 set(MAELYS_GIT_CLI_VERSION "0.5.11")
 set(MAELYS_GIT_CLI_REVISION "e347740560480da1b09f8fee6c028b4f7d1b6c03")
+# Release tag v0.1.3, resolved to its immutable commit.
+set(MAELYS_GIT_JSON_VERSION "0.1.3")
+set(MAELYS_GIT_JSON_REVISION "0e60ec313388957739968a69c6a78c323b9dd67d")
 set(MAELYS_GIT_DATALOG_VERSION "0.1.0-alpha.1")
 set(MAELYS_GIT_DATALOG_REVISION "ffe7746e6a67a17c956ba8f3c4320ebf2d30d461")
 set(MAELYS_GIT_HTTP_VERSION "0.1.4")

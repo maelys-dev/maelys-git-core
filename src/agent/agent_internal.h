@@ -15,6 +15,13 @@
 #define MG_TARGET_MAX 1024u
 #define MG_TOKEN_MAX 4096u
 
+/* Config v1 is a flat object of 14 required scalar fields. Parser tokens
+ * count the root, each key and each value. Whitespace counts toward bytes. */
+#define MG_CONFIG_MAX_BYTES (64u * 1024u)
+#define MG_CONFIG_MAX_DEPTH 1u
+#define MG_CONFIG_FIELD_COUNT 14u
+#define MG_CONFIG_MAX_TOKENS (1u + 2u * MG_CONFIG_FIELD_COUNT)
+
 typedef struct {
     char protocol[32];
     char message_id[MG_MESSAGE_ID_MAX];

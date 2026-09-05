@@ -21,7 +21,7 @@ jobs:
           python3 - <<'PY'
           import pathlib, re, subprocess
           pins = pathlib.Path('maelys-git-core/cmake/dependencies.cmake').read_text()
-          for name in ['CLI', 'DATALOG', 'HTTP', 'SYSTEM']:
+          for name in ['CLI', 'JSON', 'DATALOG', 'HTTP', 'SYSTEM']:
               revision = re.search(r'set\(MAELYS_GIT_' + name + r'_REVISION "([0-9a-f]{40})"\)', pins)[1]
               directory = 'maelys-' + name.lower()
               subprocess.run(['git', 'init', directory], check=True)

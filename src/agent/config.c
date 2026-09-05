@@ -1,5 +1,7 @@
 #include "agent_internal.h"
 
+#include <maelys/json.h>
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -7,15 +9,19 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#ifndef O_NOFOLLOW
-#define O_NOFOLLOW 0
-#endif
-
 typedef enum {
     FILE_TRUST_CONFIG,  /* owned by the agent or root, not writable by others */
     FILE_TRUST_SECRET,  /* owned by the agent, no group or world permissions */
     FILE_TRUST_SYSTEM   /* trusted input that may be reached through a symlink */
 } file_trust_t;
+
+static int file_status_secure(const struct stat *status, file_trust_t kind) {
+    mode_t forbidden = kind == FILE_TRUST_SECRET ? 077u : 022u;
+    int owner_ok = kind == FILE_TRUST_SECRET ? status->st_uid == geteuid() :
+                   (status->st_uid == geteuid() || status->st_uid == 0u);
+    return S_ISREG(status->st_mode) && owner_ok &&
+           (status->st_mode & forbidden) == 0;
+}
 
 static int secure_regular_file(const char *path, file_trust_t kind, maelys_git_error_t *error) {
     struct stat status;
@@ -24,11 +30,7 @@ static int secure_regular_file(const char *path, file_trust_t kind, maelys_git_e
                      "cannot inspect %s: %s", path, strerror(errno));
         return 0;
     }
-    mode_t forbidden = kind == FILE_TRUST_SECRET ? 077u : 022u;
-    int owner_ok = kind == FILE_TRUST_SECRET ? status.st_uid == geteuid() :
-                   (status.st_uid == geteuid() || status.st_uid == 0u);
-    if (!S_ISREG(status.st_mode) || !owner_ok ||
-        (status.st_mode & forbidden) != 0) {
+    if (!file_status_secure(&status, kind)) {
         mg_error_set(error, MAELYS_GIT_ERR_DENIED, 0,
                      "%s must be a regular file owned by the agent%s",
                      path, kind == FILE_TRUST_SECRET ? " with no group/world permissions" :
@@ -38,15 +40,104 @@ static int secure_regular_file(const char *path, file_trust_t kind, maelys_git_e
     return 1;
 }
 
-static int copy_json_string(json_t *root,
+static int copy_config_string(const maelys_json_document_t *document,
+                            maelys_json_value_t root,
                             const char *name,
                             char *out,
-                            size_t capacity,
-                            int required) {
-    json_t *value = json_object_get(root, name);
-    if (!value && !required) return 1;
-    return json_is_string(value) && json_string_length(value) > 0u &&
-           mg_copy_string(out, capacity, json_string_value(value));
+                            size_t capacity) {
+    maelys_json_view_t value;
+    if (maelys_json_object_get_string(document, root, name, &value) != MAELYS_JSON_OK ||
+        value.size == 0u || value.size >= capacity) return 0;
+    memcpy(out, value.data, value.size);
+    out[value.size] = '\0';
+    return 1;
+}
+
+static maelys_git_result_t read_config_document(const char *path,
+                                               maelys_json_document_t **out,
+                                               maelys_git_error_t *error) {
+    /* O_NONBLOCK lets fstat reject a FIFO without waiting for a writer.
+     * Never reopen the path after inspecting this descriptor. */
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0) {
+        int saved = errno;
+        maelys_git_result_t result = saved == ENOENT || saved == ENOTDIR ?
+            MAELYS_GIT_ERR_NOT_FOUND :
+            saved == ELOOP || saved == EACCES || saved == EPERM ?
+            MAELYS_GIT_ERR_DENIED : MAELYS_GIT_ERR_IO;
+        mg_error_set(error, result, saved, "cannot open config: %s", strerror(saved));
+        return result;
+    }
+    maelys_git_result_t result = MAELYS_GIT_OK;
+    char *bytes = NULL;
+    struct stat status;
+    if (fstat(fd, &status) != 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "cannot inspect opened config");
+        result = MAELYS_GIT_ERR_IO;
+        goto done;
+    }
+    if (!file_status_secure(&status, FILE_TRUST_CONFIG)) {
+        mg_error_set(error, MAELYS_GIT_ERR_DENIED, 0,
+                     "opened config must be a regular file owned by the agent or root"
+                     " and not group/world-writable");
+        result = MAELYS_GIT_ERR_DENIED;
+        goto done;
+    }
+    if (status.st_size > (off_t)MG_CONFIG_MAX_BYTES) {
+        mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0, "config exceeds 64 KiB");
+        result = MAELYS_GIT_ERR_LIMIT;
+        goto done;
+    }
+    /* One extra byte also detects growth after fstat. */
+    bytes = malloc(MG_CONFIG_MAX_BYTES + 1u);
+    if (!bytes) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, ENOMEM, "cannot allocate config buffer");
+        result = MAELYS_GIT_ERR_IO;
+        goto done;
+    }
+    size_t size = 0u;
+    while (size < MG_CONFIG_MAX_BYTES + 1u) {
+        ssize_t count = read(fd, bytes + size, MG_CONFIG_MAX_BYTES + 1u - size);
+        if (count < 0 && errno == EINTR) continue;
+        if (count < 0) {
+            mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "cannot read config");
+            result = MAELYS_GIT_ERR_IO;
+            goto done;
+        }
+        if (count == 0) break;
+        size += (size_t)count;
+    }
+    if (size > MG_CONFIG_MAX_BYTES) {
+        mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0, "config exceeds 64 KiB");
+        result = MAELYS_GIT_ERR_LIMIT;
+        goto done;
+    }
+    const maelys_json_limits_t limits = {
+        .maximum_bytes = MG_CONFIG_MAX_BYTES,
+        .maximum_depth = MG_CONFIG_MAX_DEPTH,
+        .maximum_tokens = MG_CONFIG_MAX_TOKENS
+    };
+    maelys_json_error_t json_error;
+    maelys_json_result_t parsed = maelys_json_document_parse(
+        bytes, size, MAELYS_JSON_PROFILE_RFC8259, &limits, out, &json_error);
+    if (parsed != MAELYS_JSON_OK) {
+        char diagnostic[192];
+        (void)maelys_json_error_format(&json_error, diagnostic, sizeof(diagnostic));
+        result = parsed == MAELYS_JSON_ERR_LIMIT ? MAELYS_GIT_ERR_LIMIT :
+                 parsed == MAELYS_JSON_ERR_MEMORY ? MAELYS_GIT_ERR_IO : MAELYS_GIT_ERR_PROTOCOL;
+        mg_error_set(error, result, parsed == MAELYS_JSON_ERR_MEMORY ? ENOMEM : 0,
+                     "invalid config: %s", diagnostic);
+    }
+done:
+    free(bytes);
+    if (close(fd) != 0 && result == MAELYS_GIT_OK) {
+        int saved = errno;
+        maelys_json_document_release(*out);
+        *out = NULL;
+        mg_error_set(error, MAELYS_GIT_ERR_IO, saved, "cannot close config");
+        result = MAELYS_GIT_ERR_IO;
+    }
+    return result;
 }
 
 static int absolute_path(const char *path) { return path && path[0] == '/'; }
@@ -82,42 +173,40 @@ static int target_valid(const char *target) {
 maelys_git_result_t mg_config_load(const char *path,
                                    maelys_git_agent_config_t **out,
                                    maelys_git_error_t *error) {
-    static const char *const allowed[] = {
-        "version", "agent_id", "authority", "ca_file", "token_file",
-        "database_path", "manifest_path", "repository_root", "git_executable",
-        "executor_path", "command_target", "event_target", "poll_timeout_ms",
-        "request_timeout_ms", NULL
-    };
     if (!path || !out) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     *out = NULL;
-    if (!secure_regular_file(path, FILE_TRUST_CONFIG, error)) return error ? error->code : MAELYS_GIT_ERR_DENIED;
-    json_error_t json_error;
-    json_t *root = json_load_file(path, JSON_REJECT_DUPLICATES, &json_error);
-    if (!root) {
-        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "invalid config: %.180s", json_error.text);
-        return MAELYS_GIT_ERR_PROTOCOL;
-    }
+    maelys_json_document_t *document = NULL;
+    maelys_git_result_t result = read_config_document(path, &document, error);
+    if (result != MAELYS_GIT_OK) return result;
     maelys_git_agent_config_t *config = calloc(1u, sizeof(*config));
-    json_t *version = json_object_get(root, "version");
-    json_t *poll = json_object_get(root, "poll_timeout_ms");
-    json_t *request = json_object_get(root, "request_timeout_ms");
-    int valid = config && json_is_object(root) && mg_json_object_has_only(root, allowed) &&
-                json_is_integer(version) && json_integer_value(version) == 1 &&
-                copy_json_string(root, "agent_id", config->agent_id, sizeof(config->agent_id), 1) &&
-                copy_json_string(root, "authority", config->authority, sizeof(config->authority), 1) &&
-                copy_json_string(root, "ca_file", config->ca_file, sizeof(config->ca_file), 1) &&
-                copy_json_string(root, "token_file", config->token_file, sizeof(config->token_file), 1) &&
-                copy_json_string(root, "database_path", config->database_path, sizeof(config->database_path), 1) &&
-                copy_json_string(root, "manifest_path", config->manifest_path, sizeof(config->manifest_path), 1) &&
-                copy_json_string(root, "repository_root", config->repository_root, sizeof(config->repository_root), 1) &&
-                copy_json_string(root, "git_executable", config->git_executable, sizeof(config->git_executable), 1) &&
-                copy_json_string(root, "executor_path", config->executor_path, sizeof(config->executor_path), 1) &&
-                copy_json_string(root, "command_target", config->command_target, sizeof(config->command_target), 1) &&
-                copy_json_string(root, "event_target", config->event_target, sizeof(config->event_target), 1) &&
-                json_is_integer(poll) && json_is_integer(request);
+    if (!config) {
+        maelys_json_document_release(document);
+        mg_error_set(error, MAELYS_GIT_ERR_IO, ENOMEM, "cannot allocate config");
+        return MAELYS_GIT_ERR_IO;
+    }
+    maelys_json_value_t root = maelys_json_document_root(document);
+    size_t fields = 0u;
+    uint64_t version = 0u;
+    /* Unique keys, exactly 14 members and all required getters together
+     * reject both missing and unknown fields without a second key catalog. */
+    int valid = maelys_json_object_size(document, root, &fields) == MAELYS_JSON_OK &&
+                fields == MG_CONFIG_FIELD_COUNT &&
+                maelys_json_object_get_u64(document, root, "version", &version) == MAELYS_JSON_OK &&
+                version == 1u &&
+                copy_config_string(document, root, "agent_id", config->agent_id, sizeof(config->agent_id)) &&
+                copy_config_string(document, root, "authority", config->authority, sizeof(config->authority)) &&
+                copy_config_string(document, root, "ca_file", config->ca_file, sizeof(config->ca_file)) &&
+                copy_config_string(document, root, "token_file", config->token_file, sizeof(config->token_file)) &&
+                copy_config_string(document, root, "database_path", config->database_path, sizeof(config->database_path)) &&
+                copy_config_string(document, root, "manifest_path", config->manifest_path, sizeof(config->manifest_path)) &&
+                copy_config_string(document, root, "repository_root", config->repository_root, sizeof(config->repository_root)) &&
+                copy_config_string(document, root, "git_executable", config->git_executable, sizeof(config->git_executable)) &&
+                copy_config_string(document, root, "executor_path", config->executor_path, sizeof(config->executor_path)) &&
+                copy_config_string(document, root, "command_target", config->command_target, sizeof(config->command_target)) &&
+                copy_config_string(document, root, "event_target", config->event_target, sizeof(config->event_target)) &&
+                maelys_json_object_get_u64(document, root, "poll_timeout_ms", &config->poll_timeout_ms) == MAELYS_JSON_OK &&
+                maelys_json_object_get_u64(document, root, "request_timeout_ms", &config->request_timeout_ms) == MAELYS_JSON_OK;
     if (valid) {
-        config->poll_timeout_ms = (uint64_t)json_integer_value(poll);
-        config->request_timeout_ms = (uint64_t)json_integer_value(request);
         valid = identifier_valid(config->agent_id) && authority_valid(config->authority) &&
                 absolute_path(config->ca_file) &&
                 absolute_path(config->token_file) && absolute_path(config->database_path) &&
@@ -127,7 +216,7 @@ maelys_git_result_t mg_config_load(const char *path,
                 config->poll_timeout_ms >= 1000u && config->poll_timeout_ms <= 120000u &&
                 config->request_timeout_ms >= 1000u && config->request_timeout_ms <= 120000u;
     }
-    json_decref(root);
+    maelys_json_document_release(document);
     if (!valid) {
         free(config);
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "configuration does not match version 1 schema");

@@ -1,11 +1,14 @@
 # Frontières JSON : maelys-json et Jansson
 
-Décision d'architecture du 2026-09-05. Inventaire du code git-core établi sur
+Décision d'architecture du 2026-09-05. Inventaire initial du code git-core établi sur
 `4024956` (`v0.1.0`). Le contrat maelys-json et la cible d'intégration sont ceux
 du tag **`v0.1.3`**, version `0.1.3`, résolu au commit
 `0e60ec313388957739968a69c6a78c323b9dd67d`.
-Ce document fixe le découpage à mettre en œuvre ; il n'annonce aucune
-migration de code. Git-core ne lie pas encore maelys-json.
+Premier lot implémenté : git-core épingle cette révision et lie maelys-json
+au lecteur de configuration, qui vérifie et lit un même descripteur avant
+le parse. Les autres lecteurs, les reçus et leur sérialisation restent à
+migrer selon le découpage ci-dessous. Jansson reste utilisé par leurs
+constructeurs et par le writer de configuration.
 
 ## Décision
 
@@ -64,7 +67,7 @@ de nouvelle API dans maelys-json.
 
 | Module et opération actuelle | Origine et état actuel | Cible et couture |
 |---|---|---|
-| [`src/agent/config.c`](../src/agent/config.c), `mg_config_load` | Fichier de configuration ; contrôle par `lstat`, puis ouverture indépendante par `json_load_file` avec rejet des doublons. Pas de plafond explicite de taille à ce point. | Ouvrir une fois, vérifier les attributs et lire sur ce même descripteur, puis parser les octets bornés avec `maelys_json_document_parse`. Valider le schéma et copier dans `maelys_git_agent_config_t` ; conserver les contrôles de chemins et de plages. |
+| [`src/agent/config.c`](../src/agent/config.c), `mg_config_load` | **Migré** : fichier ouvert une fois, contrôlé par `fstat` puis lu sur ce descripteur ; parse maelys-json limité à 65 536 octets, profondeur 1 et 29 valeurs. | Validation des 14 champs scalaires requis, des chemins et des plages numériques ; copie dans `maelys_git_agent_config_t`, puis libération du document. Writer de configuration conservé en Jansson. |
 | [`src/protocol/protocol.c`](../src/protocol/protocol.c), `mg_protocol_parse` | Commande JSONL ou commande Cloud ; `json_loadb`, plafond de 65 536 octets, validation de l'enveloppe, conservation du `payload` par `json_incref`. | Le message possède ensemble le document et le handle `maelys_json_value_t` du payload, valide seulement avec ce document. L'exécuteur ne conserve aucun handle après libération du message. Une matérialisation typée peut remplacer ce couple. |
 | [`src/agent/agent.c`](../src/agent/agent.c), `maelys_git_agent_serve` | Cadrage des lignes sur stdin, puis délégation au parseur de protocole. | Garder le cadrage borné et transmettre la longueur exacte. Faire refuser U+0000 et toute donnée après le JSON sans troncature par une opération de chaîne C. |
 | [`src/agent/cloud.c`](../src/agent/cloud.c), `poll_commands` / `process_command` | Corps HTTP limité à 65 536 octets ; parse Jansson du lot, puis sérialisation et second parse de chaque commande. | Parser le lot avec maelys-json, avec un plafond de 32 768 valeurs pour tout le lot, et valider chaque commande. Conserver les limites du lot (32 commandes, curseur inférieur à 1 024 octets), la vérification de l'agent destinataire et la forme de déduplication v1. |
@@ -84,13 +87,18 @@ Si un handle pointe dans le document du lot Cloud, ce document doit lui aussi
 rester vivant jusqu'à la fin de tous ses consommateurs, ou les données doivent
 être copiées dans un document ou une structure possédés par le message.
 
-Pour la configuration, la séquence cible est ouverture avec les protections
+Pour la configuration, la séquence implémentée est ouverture avec les protections
 adaptées contre les liens symboliques, `fstat` du descripteur, vérification du
 type, du propriétaire et des permissions, lecture bornée sur ce descripteur,
 puis parse du tampon avec sa longueur exacte. `parse_file` rouvrirait le chemin
 et séparerait de nouveau le contrôle de la lecture ; il ne convient pas à cette
-séquence. Le code actuel n'applique pas encore cette vérification sur un même
-descripteur.
+séquence. L'ouverture est non bloquante afin de pouvoir refuser un FIFO avant
+toute lecture. Les trois limites sont explicites : 65 536 octets, profondeur
+1 et 29 valeurs (la racine, 14 clés et 14 scalaires). Une configuration valide
+d'exactement 65 536 octets reste acceptée, blancs compris ; un octet de plus
+est refusé. Les champs numériques sont lus comme entiers sans fraction ni
+exposant, puis contrôlés : `version` vaut 1, les deux délais sont compris entre
+1 000 et 120 000 ms. Les contrôles des fichiers référencés restent applicables.
 
 Pour les manifestes, l'intégration doit coordonner les lectures et le parseur
 réel de la dépendance, par exemple via une interface consommant les mêmes
@@ -186,7 +194,8 @@ Les empreintes existantes ne sont pas à réécrire dans ce chantier :
 
 ## Conditions de mise en œuvre
 
-1. Retenir le tag maelys-json `v0.1.3` ; enregistrer la version `0.1.3` et son
+1. **Épinglage réalisé pour le lecteur de configuration.** Retenir le tag
+   maelys-json `v0.1.3` ; enregistrer la version `0.1.3` et son
    commit résolu `0e60ec313388957739968a69c6a78c323b9dd67d` dans
    [`cmake/dependencies.cmake`](../cmake/dependencies.cmake). Vérifier leur
    correspondance lors de l'intégration et utiliser le mécanisme existant
@@ -198,7 +207,9 @@ Les empreintes existantes ne sont pas à réécrire dans ce chantier :
    8 192 valeurs) : le protocole admet 65 536 octets et la prélecture du
    manifeste 1 Mio. Préciser séparément les octets du JSON et ceux du
    terminateur JSONL ; qualifier toute nouvelle limite de structure ou de
-   configuration sur les contrats existants. Pour le lot Cloud entier, fixer
+   configuration sur les contrats existants. La configuration v1 utilise
+   maintenant les limites de son objet plat décrites ci-dessus. Pour le lot
+   Cloud entier, fixer
    `maximum_tokens` à **32 768**, clés et conteneurs compris. Cette borne
    conservatrice découle du plafond de 65 536 octets : un document JSON de
    `T` tokens nécessite au moins `2*T - 1` octets, donc
@@ -207,7 +218,7 @@ Les empreintes existantes ne sont pas à réécrire dans ce chantier :
    le défaut de 8 192 au lot ; qualifier la profondeur séparément et couvrir
    les lots dépassant 8 192 valeurs dans les tests de migration.
 3. Traiter ensemble le parseur de protocole, la propriété du document et
-   les lecteurs de payload. Migrer la configuration indépendamment ; traiter
+   les lecteurs de payload. La configuration est migrée indépendamment ; traiter
    les lectures Cloud et superviseur avec leur validation de résultat.
    Coordonner le chantier manifeste avec le chargeur maelys-datalog.
 4. Préserver la clé `message_id` et la **forme de déduplication v1, produite
