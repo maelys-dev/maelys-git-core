@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://maelys.dev/schemas/git-agent-v1.json",
   "title": "Maelys Git agent command v1",
+  "description": "Runtime limits: 65536 JSON bytes excluding LF/CRLF, depth 32, 32768 tokens including keys. Integer fields require signed 64-bit lexemes without fractions or exponents; size_t counts must also fit the platform. See README.md for additional wire constraints.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -24,8 +25,8 @@
     },
     "repository": {"type": "string", "minLength": 1, "maxLength": 511},
     "principal": {"type": "string", "minLength": 1, "maxLength": 511},
-    "issued_at_ms": {"type": "integer", "minimum": 1},
-    "expires_at_ms": {"type": "integer", "minimum": 1},
+    "issued_at_ms": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+    "expires_at_ms": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
     "payload": {"type": "object"}
   },
   "oneOf": [
@@ -115,8 +116,8 @@
             "message": {"type": "string", "minLength": 1, "maxLength": 65536},
             "source_repository": {"type": "string", "minLength": 1, "maxLength": 511},
             "source_ref": {"type": "string", "pattern": "^refs/heads/", "maxLength": 511},
-            "max_source_objects": {"type": "integer", "minimum": 1},
-            "max_source_bytes": {"type": "integer", "minimum": 1}
+            "max_source_objects": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+            "max_source_bytes": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807}
           },
           "dependentRequired": {
             "source_repository": ["source_ref"],
@@ -142,12 +143,12 @@
             "pr_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,127}$"},
             "source_repository": {"type": "string", "minLength": 1, "maxLength": 511},
             "source_ref": {"type": "string", "pattern": "^refs/heads/", "maxLength": 511},
-            "max_source_objects": {"type": "integer", "minimum": 1},
-            "max_source_bytes": {"type": "integer", "minimum": 1},
+            "max_source_objects": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+            "max_source_bytes": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
             "expected_source_identity": {"type": "string", "pattern": "^[0-9a-f]+:[0-9a-f]+$"},
             "expected_target_identity": {"type": "string", "pattern": "^[0-9a-f]+:[0-9a-f]+$"},
-            "approvals": {"type": "integer", "minimum": 0},
-            "required_approvals": {"type": "integer", "minimum": 0},
+            "approvals": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+            "required_approvals": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
             "status_checks_passed": {"type": "boolean"},
             "blocking_review": {"type": "boolean"},
             "expected_prepared_oid": {"type": "string", "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$"},

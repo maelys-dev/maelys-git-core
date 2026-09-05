@@ -154,8 +154,8 @@ target_include_directories(maelys_git_agent_core
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(maelys_git_agent_core
-    PUBLIC maelys_git_core
-    PRIVATE maelys::json PkgConfig::JANSSON SQLite::SQLite3 maelys_git_build_flags)
+    PUBLIC maelys_git_core maelys::json
+    PRIVATE PkgConfig::JANSSON SQLite::SQLite3 maelys_git_build_flags)
 
 # ---- command-line interface -------------------------------------------------
 # Output schemas are plain JSON Schema files embedded at build time; the C
@@ -330,6 +330,17 @@ if(MAELYS_GIT_BUILD_TESTS)
         maelys_git_agent_core PkgConfig::JANSSON maelys_git_build_flags)
     add_test(NAME maelys-git-agent-config COMMAND test-maelys-git-agent-config)
     set_tests_properties(maelys-git-agent-config PROPERTIES TIMEOUT 15)
+
+    add_executable(test-maelys-git-agent-protocol tests/test_agent_protocol.c)
+    target_include_directories(test-maelys-git-agent-protocol PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-maelys-git-agent-protocol PRIVATE
+        maelys_git_agent_core PkgConfig::JANSSON SQLite::SQLite3 maelys_git_build_flags)
+    add_test(NAME maelys-git-agent-protocol COMMAND test-maelys-git-agent-protocol)
+    add_test(NAME maelys-git-protocol-reader
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_protocol_reader.py
+            $<TARGET_FILE:maelys-git-agent> $<TARGET_FILE:maelys-git-executor>
+            ${MAELYS_GIT_TEST_MANIFEST})
+    set_tests_properties(maelys-git-agent-protocol maelys-git-protocol-reader PROPERTIES TIMEOUT 60)
 
     add_executable(test-maelys-git-cli tests/test_cli.c)
     target_link_libraries(test-maelys-git-cli PRIVATE

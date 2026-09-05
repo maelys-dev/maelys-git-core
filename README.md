@@ -19,7 +19,7 @@ The project is a security-oriented foundation. Its current capabilities are:
   source imports, deterministic FF/merge/squash plans, Datalog reauthorization
   and compare-and-swap;
 - deterministic, atomic compilation of forced-command `authorized_keys`;
-- a strict, versioned JSON protocol implemented with Jansson;
+- a strict, versioned JSON protocol read with bounded maelys-json documents;
 - a durable SQLite command journal, idempotency table, audit log and outbox;
 - a persistent HTTPS/1.1 Cloud agent built on Maelys HTTP and Maelys System;
 - a separate, time-bounded Git executor process;
@@ -70,7 +70,7 @@ and inherit its compiler and sanitizer flags. Project headers take precedence
 over older installed headers in `CPPFLAGS`.
 Only the dependency-free core of `maelys-cli` is linked; its extension
 archive and `maelys` dispatcher are not built here. The agent configuration
-reader links maelys-json separately, pinned to release `v0.1.3`. Its source
+and command readers link maelys-json separately, pinned to release `v0.1.3`. Its source
 checkout can be selected with `-DMAELYS_JSON_SOURCE_DIR=/absolute/path/to/maelys-json`.
 Jansson still builds the configuration output, CLI data and agent messages.
 
@@ -253,11 +253,15 @@ Every command is at most 64 KiB and has this envelope:
 
 The machine-readable schema and transport contract live in `protocol/`.
 
-Jansson parses exact schemas with duplicate-key rejection. Unknown envelope and
-command fields fail closed. Jansson is a good fit here because it is a small C
-library already used by the surrounding Maelys projects, supports bounded
-buffer parsing and preserves 64-bit JSON integers. It is deliberately kept out
-of the SSH shell and receive-hook hot paths.
+maelys-json reads command envelopes and the executor validates their typed
+payloads. Unknown envelope and command fields fail closed. The reader explicitly
+bounds JSON to 65,536 bytes, 32 nesting levels and 32,768 tokens, and rejects
+decoded duplicates, U+0000 and invalid Unicode. Integer fields retain their
+signed 64-bit ranges and reject fractions and exponents. The message owns its
+document throughout execution. Jansson builds results and preserves the durable
+v1 command deduplication bytes; the outer Cloud and supervisor readers remain
+to migrate. These JSON libraries stay out of the SSH shell and receive-hook
+hot paths. See the [protocol contract](protocol/README.md) for framing and limits.
 
 Supported executor commands are:
 
@@ -354,9 +358,10 @@ durably accepted the idempotency key.
 ## Security boundary
 
 The JSON architecture decision in [docs/json-boundaries.md](docs/json-boundaries.md)
-maps each reader and writer. The configuration reader now uses maelys-json;
-the remaining external JSON readers and canonical bytes to hash or sign are
-planned migration work. Jansson remains for mutable internal trees and ordinary
+maps each reader and writer. Configuration, command envelopes and executor
+payload reads now use maelys-json. The outer Cloud poll responses, supervisor
+results, coordinated manifest loading and canonical receipts remain planned
+migration work. Jansson remains for mutable internal trees and ordinary
 responses, including the existing command deduplication representation.
 
 The SSH shell and hook should run under a dedicated Unix account that owns only
@@ -392,4 +397,4 @@ with ASan/UBSan.
 This code has not received an external security audit. Before production use,
 run the network agent and executor under distinct least-privilege service
 accounts (or add a narrow Unix socket handoff), and fuzz the
-SSH parser plus all Jansson schemas.
+SSH parser and all external JSON readers and command schemas.

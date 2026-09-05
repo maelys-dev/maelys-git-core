@@ -4,13 +4,41 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *required_string(json_t *object, const char *name) {
-    json_t *value = json_object_get(object, name);
-    return json_is_string(value) && json_string_length(value) > 0u ? json_string_value(value) : NULL;
+static int payload_has_only(const mg_agent_message_t *message, const char *const *allowed) {
+    return mg_document_object_has_only(message->document, message->payload, allowed);
 }
 
-static maelys_git_merge_style_t required_style(json_t *object) {
-    const char *style = required_string(object, "style");
+static const char *required_string(const mg_agent_message_t *message, const char *name) {
+    maelys_json_view_t view;
+    return maelys_json_object_get_string(message->document, message->payload, name, &view) == MAELYS_JSON_OK &&
+           view.size > 0u ? view.data : NULL;
+}
+
+/* Absent is valid; a present field must be a nonempty string. */
+static const char *optional_string(const mg_agent_message_t *message, const char *name,
+                                   int *valid) {
+    maelys_json_view_t view;
+    maelys_json_result_t result = maelys_json_object_get_string(
+        message->document, message->payload, name, &view);
+    if (result == MAELYS_JSON_ERR_NOT_FOUND) return NULL;
+    if (result != MAELYS_JSON_OK || view.size == 0u) { *valid = 0; return NULL; }
+    return view.data;
+}
+
+static int optional_positive(const mg_agent_message_t *message, const char *name,
+                             uint64_t *out, int *present) {
+    int64_t value;
+    maelys_json_result_t result = maelys_json_object_get_i64(
+        message->document, message->payload, name, &value);
+    *present = result != MAELYS_JSON_ERR_NOT_FOUND;
+    if (!*present) return 1;
+    if (result != MAELYS_JSON_OK || value <= 0) return 0;
+    *out = (uint64_t)value;
+    return 1;
+}
+
+static maelys_git_merge_style_t required_style(const mg_agent_message_t *message) {
+    const char *style = required_string(message, "style");
     if (style && strcmp(style, "ff") == 0) return MAELYS_GIT_MERGE_FAST_FORWARD;
     if (style && strcmp(style, "merge") == 0) return MAELYS_GIT_MERGE_COMMIT;
     if (style && strcmp(style, "squash") == 0) return MAELYS_GIT_MERGE_SQUASH;
@@ -18,52 +46,49 @@ static maelys_git_merge_style_t required_style(json_t *object) {
 }
 
 static maelys_git_result_t pr_source_from_payload(
-    json_t *payload,
+    const mg_agent_message_t *message,
     const char *root,
     char source_path[4096],
     maelys_git_pr_source_t *source,
     const maelys_git_pr_source_t **out_source,
     maelys_git_error_t *error) {
-    json_t *repository_json = json_object_get(payload, "source_repository");
-    json_t *ref_json = json_object_get(payload, "source_ref");
-    json_t *objects_json = json_object_get(payload, "max_source_objects");
-    json_t *bytes_json = json_object_get(payload, "max_source_bytes");
-    json_t *identity_json = json_object_get(payload, "expected_source_identity");
+    int valid = 1;
+    const char *repository = optional_string(message, "source_repository", &valid);
+    const char *ref = optional_string(message, "source_ref", &valid);
+    const char *identity = optional_string(message, "expected_source_identity", &valid);
+    uint64_t objects = MAELYS_GIT_PR_DEFAULT_MAX_SOURCE_OBJECTS;
+    uint64_t bytes = MAELYS_GIT_PR_DEFAULT_MAX_SOURCE_BYTES;
+    int objects_present = 0, bytes_present = 0;
+    valid = optional_positive(message, "max_source_objects", &objects, &objects_present) && valid;
+    valid = optional_positive(message, "max_source_bytes", &bytes, &bytes_present) && valid;
     *out_source = NULL;
     memset(source, 0, sizeof(*source));
-    if (!repository_json && !ref_json) {
-        if (objects_json || bytes_json || identity_json) {
+    if (!valid || objects > SIZE_MAX) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "invalid cross-repository PR source fields");
+        return MAELYS_GIT_ERR_PROTOCOL;
+    }
+    if (!repository && !ref) {
+        if (objects_present || bytes_present || identity) {
             mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
                          "source quota or identity requires a source repository and ref");
             return MAELYS_GIT_ERR_PROTOCOL;
         }
         return MAELYS_GIT_OK;
     }
-    if (!json_is_string(repository_json) || json_string_length(repository_json) == 0u ||
-        !json_is_string(ref_json) || json_string_length(ref_json) == 0u ||
-        (objects_json && (!json_is_integer(objects_json) ||
-                          json_integer_value(objects_json) <= 0 ||
-                          (uint64_t)json_integer_value(objects_json) > SIZE_MAX)) ||
-        (bytes_json && (!json_is_integer(bytes_json) ||
-                        json_integer_value(bytes_json) <= 0)) ||
-        (identity_json && (!json_is_string(identity_json) ||
-                           json_string_length(identity_json) == 0u))) {
+    if (!repository || !ref) {
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
-                     "invalid cross-repository PR source fields");
+                     "source repository and ref must be supplied together");
         return MAELYS_GIT_ERR_PROTOCOL;
     }
-    const char *repository = json_string_value(repository_json);
     maelys_git_result_t rc = maelys_git_resolve_repository(
         root, repository, source_path, 4096u, error);
     if (rc != MAELYS_GIT_OK) return rc;
     source->repository_path = source_path;
     source->repository_name = repository;
-    source->ref_name = json_string_value(ref_json);
-    source->expected_identity = identity_json ? json_string_value(identity_json) : NULL;
-    source->max_objects = objects_json ?
-        (size_t)json_integer_value(objects_json) : MAELYS_GIT_PR_DEFAULT_MAX_SOURCE_OBJECTS;
-    source->max_bytes = bytes_json ?
-        (uint64_t)json_integer_value(bytes_json) : MAELYS_GIT_PR_DEFAULT_MAX_SOURCE_BYTES;
+    source->ref_name = ref;
+    source->expected_identity = identity;
+    source->max_objects = (size_t)objects;
+    source->max_bytes = bytes;
     *out_source = source;
     return MAELYS_GIT_OK;
 }
@@ -121,26 +146,34 @@ static char *execute_authorize(maelys_git_policy_t *policy,
                                const mg_agent_message_t *message,
                                maelys_git_error_t *error) {
     static const char *const allowed[] = {"operation", "ref", "paths", NULL};
-    if (!mg_json_object_has_only(message->payload, allowed))
+    if (!payload_has_only(message, allowed))
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "unknown authorize field", error);
-    const char *operation = required_string(message->payload, "operation");
-    json_t *ref = json_object_get(message->payload, "ref");
-    json_t *paths_json = json_object_get(message->payload, "paths");
-    if (!operation || (ref && !json_is_string(ref)) || (paths_json && !json_is_array(paths_json)) ||
-        (paths_json && json_array_size(paths_json) > MAELYS_GIT_MAX_CHANGED_PATHS))
+    const char *operation = required_string(message, "operation");
+    int valid = 1;
+    const char *ref = optional_string(message, "ref", &valid);
+    maelys_json_value_t paths_value;
+    maelys_json_result_t got_paths = maelys_json_object_get(
+        message->document, message->payload, "paths", &paths_value);
+    size_t path_count = 0u;
+    if (!valid || !operation ||
+        (got_paths != MAELYS_JSON_ERR_NOT_FOUND &&
+         (got_paths != MAELYS_JSON_OK ||
+          maelys_json_array_size(message->document, paths_value, &path_count) != MAELYS_JSON_OK)) ||
+        path_count > MAELYS_GIT_MAX_CHANGED_PATHS)
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid authorize payload", error);
     const char *paths[MAELYS_GIT_MAX_CHANGED_PATHS];
-    size_t path_count = paths_json ? json_array_size(paths_json) : 0u;
     for (size_t i = 0u; i < path_count; ++i) {
-        json_t *item = json_array_get(paths_json, i);
-        if (!json_is_string(item) || json_string_length(item) == 0u) {
+        maelys_json_value_t item;
+        maelys_json_view_t view;
+        if (maelys_json_array_get(message->document, paths_value, i, &item) != MAELYS_JSON_OK ||
+            maelys_json_value_string(message->document, item, &view) != MAELYS_JSON_OK ||
+            view.size == 0u)
             return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid path", error);
-        }
-        paths[i] = json_string_value(item);
+        paths[i] = view.data;
     }
     maelys_git_policy_decision_t decision;
     maelys_git_result_t result = authorize(policy, message, operation,
-        ref ? json_string_value(ref) : NULL, paths, path_count, &decision, error);
+        ref, paths, path_count, &decision, error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
     return decision_result(message, &decision, error);
 }
@@ -150,7 +183,7 @@ static char *execute_repository_info(maelys_git_policy_t *policy,
                                      const mg_agent_message_t *message,
                                      maelys_git_error_t *error) {
     static const char *const allowed[] = {NULL};
-    if (!mg_json_object_has_only(message->payload, allowed))
+    if (!payload_has_only(message, allowed))
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "repository_info payload must be empty", error);
     maelys_git_policy_decision_t decision;
     maelys_git_result_t result = authorize(policy, message, "read", NULL, NULL, 0u, &decision, error);
@@ -172,9 +205,9 @@ static char *execute_diff(maelys_git_policy_t *policy,
                           const mg_agent_message_t *message,
                           maelys_git_error_t *error) {
     static const char *const allowed[] = {"old_oid", "new_oid", NULL};
-    const char *old_oid = required_string(message->payload, "old_oid");
-    const char *new_oid = required_string(message->payload, "new_oid");
-    if (!mg_json_object_has_only(message->payload, allowed) || !old_oid || !new_oid)
+    const char *old_oid = required_string(message, "old_oid");
+    const char *new_oid = required_string(message, "new_oid");
+    if (!payload_has_only(message, allowed) || !old_oid || !new_oid)
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid diff payload", error);
     maelys_git_policy_decision_t decision;
     maelys_git_result_t result = authorize(policy, message, "read", NULL, NULL, 0u, &decision, error);
@@ -206,10 +239,10 @@ static char *execute_update_ref(maelys_git_policy_t *policy,
                                 const mg_agent_message_t *message,
                                 maelys_git_error_t *error) {
     static const char *const allowed[] = {"ref", "old_oid", "new_oid", NULL};
-    const char *ref = required_string(message->payload, "ref");
-    const char *old_oid = required_string(message->payload, "old_oid");
-    const char *new_oid = required_string(message->payload, "new_oid");
-    if (!mg_json_object_has_only(message->payload, allowed) || !ref || !old_oid || !new_oid)
+    const char *ref = required_string(message, "ref");
+    const char *old_oid = required_string(message, "old_oid");
+    const char *new_oid = required_string(message, "new_oid");
+    if (!payload_has_only(message, allowed) || !ref || !old_oid || !new_oid)
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid update_ref payload", error);
     char repository_path[4096];
     maelys_git_result_t result = maelys_git_resolve_repository(root, message->repository,
@@ -257,7 +290,7 @@ static char *execute_create_repository(maelys_git_policy_t *policy,
                                        const mg_agent_message_t *message,
                                        maelys_git_error_t *error) {
     static const char *const allowed[] = {NULL};
-    if (!mg_json_object_has_only(message->payload, allowed))
+    if (!payload_has_only(message, allowed))
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "create_repository payload must be empty", error);
     maelys_git_policy_decision_t decision;
     maelys_git_result_t result = authorize(policy, message, "create", NULL, NULL, 0u, &decision, error);
@@ -346,14 +379,12 @@ static char *execute_pr_check(maelys_git_policy_t *policy,
     static const char *const allowed[] = {
         "base_oid", "head_oid", "style", "message", "source_repository",
         "source_ref", "max_source_objects", "max_source_bytes", NULL};
-    const char *base = required_string(message->payload, "base_oid");
-    const char *head = required_string(message->payload, "head_oid");
-    const char *merge_message = NULL;
-    json_t *message_json = json_object_get(message->payload, "message");
-    if (json_is_string(message_json)) merge_message = json_string_value(message_json);
-    maelys_git_merge_style_t style = required_style(message->payload);
-    if (!mg_json_object_has_only(message->payload, allowed) || !base || !head || !style ||
-        (message_json && !json_is_string(message_json)))
+    const char *base = required_string(message, "base_oid");
+    const char *head = required_string(message, "head_oid");
+    int valid = 1;
+    const char *merge_message = optional_string(message, "message", &valid);
+    maelys_git_merge_style_t style = required_style(message);
+    if (!valid || !payload_has_only(message, allowed) || !base || !head || !style)
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid pr_check payload", error);
     maelys_git_policy_decision_t decision;
     maelys_git_result_t result = authorize(policy, message, "read", NULL, NULL, 0u,
@@ -367,7 +398,7 @@ static char *execute_pr_check(maelys_git_policy_t *policy,
     maelys_git_pr_source_t source_storage;
     const maelys_git_pr_source_t *source = NULL;
     if (result == MAELYS_GIT_OK)
-        result = pr_source_from_payload(message->payload, root, source_path,
+        result = pr_source_from_payload(message, root, source_path,
                                         &source_storage, &source, error);
     maelys_git_pr_check_result_t check;
     if (result == MAELYS_GIT_OK)
@@ -393,33 +424,27 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
         "expected_prepared_oid", "expected_policy_fingerprint", "pr_id",
         "source_repository", "source_ref", "max_source_objects", "max_source_bytes",
         "expected_source_identity", "expected_target_identity", NULL};
-    const char *base_ref = required_string(message->payload, "base_ref");
-    const char *base = required_string(message->payload, "base_oid");
-    const char *head = required_string(message->payload, "head_oid");
-    maelys_git_merge_style_t style = required_style(message->payload);
-    json_t *approvals = json_object_get(message->payload, "approvals");
-    json_t *required = json_object_get(message->payload, "required_approvals");
-    json_t *checks = json_object_get(message->payload, "status_checks_passed");
-    json_t *blocking = json_object_get(message->payload, "blocking_review");
-    json_t *apply = json_object_get(message->payload, "apply");
-    const char *expected_prepared_oid =
-        required_string(message->payload, "expected_prepared_oid");
-    const char *expected_policy_fingerprint =
-        required_string(message->payload, "expected_policy_fingerprint");
-    const char *expected_target_identity =
-        required_string(message->payload, "expected_target_identity");
-    json_t *pr_id_json = json_object_get(message->payload, "pr_id");
-    const char *pr_id = json_is_string(pr_id_json) ? json_string_value(pr_id_json) : NULL;
-    json_t *message_json = json_object_get(message->payload, "message");
-    if (!mg_json_object_has_only(message->payload, allowed) || !base_ref || !base || !head || !style ||
-        !json_is_integer(approvals) || json_integer_value(approvals) < 0 ||
-        !json_is_integer(required) || json_integer_value(required) < 0 ||
-        !json_is_boolean(checks) || !json_is_boolean(blocking) || !json_is_boolean(apply) ||
-        (json_is_true(apply) && (!expected_target_identity ||
-                                 !expected_prepared_oid ||
-                                 !expected_policy_fingerprint)) ||
-        (pr_id_json && (!json_is_string(pr_id_json) || json_string_length(pr_id_json) == 0u)) ||
-        (message_json && !json_is_string(message_json)))
+    const char *base_ref = required_string(message, "base_ref");
+    const char *base = required_string(message, "base_oid");
+    const char *head = required_string(message, "head_oid");
+    maelys_git_merge_style_t style = required_style(message);
+    int valid = 1;
+    const char *expected_prepared_oid = optional_string(message, "expected_prepared_oid", &valid);
+    const char *expected_policy_fingerprint = optional_string(message, "expected_policy_fingerprint", &valid);
+    const char *expected_target_identity = optional_string(message, "expected_target_identity", &valid);
+    const char *pr_id = optional_string(message, "pr_id", &valid);
+    const char *merge_message = optional_string(message, "message", &valid);
+    int64_t approvals = 0, required = 0;
+    int checks = 0, blocking = 0, apply = 0;
+    if (!valid || !payload_has_only(message, allowed) || !base_ref || !base || !head || !style ||
+        maelys_json_object_get_i64(message->document, message->payload, "approvals", &approvals) != MAELYS_JSON_OK ||
+        approvals < 0 || (uint64_t)approvals > SIZE_MAX ||
+        maelys_json_object_get_i64(message->document, message->payload, "required_approvals", &required) != MAELYS_JSON_OK ||
+        required < 0 || (uint64_t)required > SIZE_MAX ||
+        maelys_json_object_get_boolean(message->document, message->payload, "status_checks_passed", &checks) != MAELYS_JSON_OK ||
+        maelys_json_object_get_boolean(message->document, message->payload, "blocking_review", &blocking) != MAELYS_JSON_OK ||
+        maelys_json_object_get_boolean(message->document, message->payload, "apply", &apply) != MAELYS_JSON_OK ||
+        (apply && (!expected_target_identity || !expected_prepared_oid || !expected_policy_fingerprint)))
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid pr_merge payload", error);
     char repository_path[4096];
     maelys_git_result_t result = maelys_git_resolve_repository(
@@ -428,30 +453,30 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
     char source_path[4096];
     maelys_git_pr_source_t source_storage;
     const maelys_git_pr_source_t *source = NULL;
-    result = pr_source_from_payload(message->payload, root, source_path,
+    result = pr_source_from_payload(message, root, source_path,
                                     &source_storage, &source, error);
     if (result != MAELYS_GIT_OK)
         return failure(message, "failed", result, error->message, error);
-    if (source && json_is_true(apply) && !source->expected_identity)
+    if (source && apply && !source->expected_identity)
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL,
                        "cross-repository apply requires expected_source_identity", error);
     maelys_git_pr_gates_t gates = {
-        .approvals = (size_t)json_integer_value(approvals),
-        .required_approvals = (size_t)json_integer_value(required),
-        .status_checks_passed = json_is_true(checks),
-        .blocking_review = json_is_true(blocking),
+        .approvals = (size_t)approvals,
+        .required_approvals = (size_t)required,
+        .status_checks_passed = checks,
+        .blocking_review = blocking,
     };
     maelys_git_pr_check_result_t merge;
     result = maelys_git_pr_merge_with_source(
         git, repository_path, message->repository, base_ref, base, head, style,
-        json_is_string(message_json) ? json_string_value(message_json) : NULL,
+        merge_message,
         message->principal, &gates, policy, pr_id, source,
         expected_target_identity, expected_prepared_oid,
-        expected_policy_fingerprint, json_is_true(apply), &merge, error);
+        expected_policy_fingerprint, apply, &merge, error);
     if (result == MAELYS_GIT_ERR_DENIED)
         return failure(message, "denied", result, error->message, error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
-    json_t *payload = pr_payload(&merge, json_is_true(apply));
+    json_t *payload = pr_payload(&merge, apply);
     maelys_git_pr_check_result_clear(&merge);
     char *encoded = payload ? mg_protocol_encode_result(message, "ok", payload, error) : NULL;
     json_decref(payload);
@@ -464,7 +489,9 @@ maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
                                         const mg_agent_message_t *message,
                                         char **out_result_json,
                                         maelys_git_error_t *error) {
-    if (!policy || !git_executable || !repository_root || !message || !out_result_json)
+    if (!policy || !git_executable || !repository_root || !message || !out_result_json ||
+        !message->document ||
+        maelys_json_value_type(message->document, message->payload) != MAELYS_JSON_TYPE_OBJECT)
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     *out_result_json = NULL;
     int64_t now = mg_now_ms();
@@ -473,7 +500,7 @@ maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
                                    "command is expired or issued too far in the future", error);
     } else if (strcmp(message->command, "health") == 0) {
         static const char *const allowed[] = {NULL};
-        if (!mg_json_object_has_only(message->payload, allowed))
+        if (!payload_has_only(message, allowed))
             *out_result_json = failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL,
                                        "health payload must be empty", error);
         else {

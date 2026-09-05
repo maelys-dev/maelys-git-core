@@ -18,6 +18,36 @@ static void write_protocol_error(FILE *output,
     }
 }
 
+/* 1 = complete line, 0 = EOF, -1 = framing/I/O failure. Count bytes rather
+ * than C-string length so embedded NULs reach the JSON parser unchanged.
+ * The 64 KiB budget excludes one LF or CRLF framing delimiter. */
+static int read_protocol_line(FILE *input, char *line, size_t *out_length,
+                              maelys_git_error_t *error) {
+    size_t length = 0u;
+    int byte;
+    while ((byte = fgetc(input)) != EOF && byte != '\n') {
+        if (length >= MAELYS_GIT_MAX_PROTOCOL_LINE + 1u) goto oversized;
+        line[length++] = (char)byte;
+        if (length > MAELYS_GIT_MAX_PROTOCOL_LINE && byte != '\r') goto oversized;
+    }
+    if (ferror(input)) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "failed to read executor input");
+        return -1;
+    }
+    if (byte == EOF) {
+        if (length == 0u) return 0;
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "protocol line requires a final newline");
+        return -1;
+    }
+    if (length > 0u && line[length - 1u] == '\r') --length;
+    line[length] = '\0';
+    *out_length = length;
+    return 1;
+oversized:
+    mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0, "protocol line exceeds 64 KiB");
+    return -1;
+}
+
 maelys_git_result_t maelys_git_agent_serve(maelys_git_policy_t *policy,
                                             const char *git_executable,
                                             const char *repository_root,
@@ -29,17 +59,18 @@ maelys_git_result_t maelys_git_agent_serve(maelys_git_policy_t *policy,
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     char *line = malloc(MAELYS_GIT_MAX_PROTOCOL_LINE + 2u);
     if (!line) return MAELYS_GIT_ERR_IO;
-    while (fgets(line, (int)MAELYS_GIT_MAX_PROTOCOL_LINE + 2, input)) {
-        size_t length = strlen(line);
-        if (length == 0u || line[length - 1u] != '\n') {
-            write_protocol_error(output, MAELYS_GIT_ERR_LIMIT, "protocol line exceeds 64 KiB");
-            free(line);
-            return MAELYS_GIT_ERR_LIMIT;
-        }
-        while (length > 0u && (line[length - 1u] == '\n' || line[length - 1u] == '\r'))
-            line[--length] = '\0';
-        mg_agent_message_t message;
+    while (1) {
+        size_t length = 0u;
         maelys_git_error_t local_error = {0};
+        int read_result = read_protocol_line(input, line, &length, &local_error);
+        if (read_result == 0) break;
+        if (read_result < 0) {
+            write_protocol_error(output, local_error.code, local_error.message);
+            if (error) *error = local_error;
+            free(line);
+            return local_error.code;
+        }
+        mg_agent_message_t message;
         maelys_git_result_t result = mg_protocol_parse(line, length, &message, &local_error);
         if (result != MAELYS_GIT_OK) {
             write_protocol_error(output, result, local_error.message);

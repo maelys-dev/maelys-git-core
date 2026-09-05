@@ -5,6 +5,7 @@
 #include "maelys_git_agent.h"
 
 #include <jansson.h>
+#include <maelys/json.h>
 #include <sqlite3.h>
 #include <stdint.h>
 
@@ -22,6 +23,11 @@
 #define MG_CONFIG_FIELD_COUNT 14u
 #define MG_CONFIG_MAX_TOKENS (1u + 2u * MG_CONFIG_FIELD_COUNT)
 
+/* Explicit protocol budgets; tokens include object keys and containers.
+ * The token ceiling admits every JSON shape fitting the 64 KiB byte cap. */
+#define MG_PROTOCOL_MAX_DEPTH 32u
+#define MG_PROTOCOL_MAX_TOKENS ((MAELYS_GIT_MAX_PROTOCOL_LINE + 1u) / 2u)
+
 typedef struct {
     char protocol[32];
     char message_id[MG_MESSAGE_ID_MAX];
@@ -32,7 +38,10 @@ typedef struct {
     char principal[512];
     int64_t issued_at_ms;
     int64_t expires_at_ms;
-    json_t *payload;
+    /* Owned document plus borrowed payload handle. No shallow ownership
+     * copies: all views expire at mg_protocol_message_clear(). */
+    maelys_json_document_t *document;
+    maelys_json_value_t payload;
 } mg_agent_message_t;
 
 struct maelys_git_agent_config {
@@ -71,7 +80,9 @@ typedef struct {
 } mg_outbox_item_t;
 
 /* 1 when every member of `object` is named in the NULL-terminated list. */
-int mg_json_object_has_only(json_t *object, const char *const *allowed);
+int mg_document_object_has_only(const maelys_json_document_t *document,
+                                maelys_json_value_t object,
+                                const char *const *allowed);
 
 maelys_git_result_t mg_protocol_parse(const char *bytes,
                                       size_t length,
