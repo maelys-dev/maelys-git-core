@@ -1,5 +1,12 @@
 <!-- maelys-cli:begin -->
-# Maelys CLI framework (maelys-cli 0.5.1)
+<!-- SPDX-License-Identifier: CC-BY-4.0
+Copyright 2026 David Bromberg.
+Source: https://github.com/maelys-dev/maelys-cli/blob/main/share/agents/instructions-block.md
+License: https://creativecommons.org/licenses/by/4.0/
+When sharing adaptations, retain attribution and indicate your changes.
+-->
+
+# Maelys CLI framework (maelys-cli 0.5.29, da983b2)
 
 This project builds its command-line interface on `libmaelys_cli`. The
 complete guide is in `docs/maelys-cli-guide.md`; this block is the summary
@@ -24,11 +31,12 @@ that must hold for every change.
   `protocol-stream`; its stdout belongs to the declared protocol. Set
   `MAELYS_CLI_FORMAT=json` in the environment to receive its failure
   envelope as JSON on stderr.
-- `describe COMMAND_ID` is minimal; `describe --summary` lists everything.
+- `describe COMMAND_ID` is minimal; `describe --summary` lists everything;
+  `describe --summary --prefix NAMESPACE` lists one namespace.
   A descriptor with `available: false` names a command this build cannot
   run (`unavailableReason`). Operands may carry `type` and `choices` like
-  options; `input.constraints` includes `requires`, `at-most-one` and
-  `all-or-none` groups.
+  options; `input.constraints` states `requires`, `at-most-one`,
+  `exactly-one` and `all-or-none` rules; `exactly-one` has no other site.
 - `PROGRAM completion bash|zsh|fish` prints the shell completion generated
   from the catalog.
 - Unknown, duplicated or foreign options are refused. Fix the invocation
@@ -42,13 +50,22 @@ one handler and one JSON Schema file. In the same change, update:
 1. the catalog entry, written with the declaration macros
    (`MAELYS_CLI_READ`, `_RECORDS`, `_TRANSACTION`, `_EXECUTE`, `_STREAM`,
    `_PROTOCOL_STREAM`, `_EXTERNAL`; `MAELYS_CLI_OPERAND`, `_OPERAND_OPTIONAL`,
-   `_OPERAND_REST`, `_OPERAND_CHOICE`, `_OPERAND_KIND`; `MAELYS_CLI_FLAG`,
+   `_OPERAND_REST`, `_OPERAND_CHOICE`, `_OPERAND_KIND`, an operand typed
+   like an argument with `.hex_digits`, `.choices`, `.pattern`; `MAELYS_CLI_FLAG`,
    `_STRING`, `_PATH`, `_ABSOLUTE_PATH`, `_UNSIGNED`, `_INTEGER`, `_SIZE`,
    `_DURATION`, `_CHOICE`, `_HEX`, `_HEX_OR`, `_DIGEST`) plus `.required`,
    `.repeatable`, `.depends_on`, `.depends_on_all`, `.conflicts_with`,
-   `.group` (all-or-none) and `.default_text` (validated at startup, returned
-   by the typed accessors: never repeat a default in the handler); a command
-   this build cannot provide declares `.unavailable = "reason"`;
+   `.group` (all-or-none), on the command `MAELYS_CLI_CONSTRAINTS` of
+   `MAELYS_CLI_CONSTRAINT(kind, options)` for `exactly-one`, `at-most-one`
+   and `requires` over several options (spec 2.5; never validated in the
+   handler), and `.default_text` (validated at startup, returned
+   by the typed accessors: never repeat a default in the handler;
+   `MAELYS_CLI_DEFAULT_OF(LIB_CONSTANT)` when the library owns the value); a command
+   this build cannot provide declares `.unavailable = "reason"`; a product
+   with build variants composes its catalog at startup with
+   `maelys_cli_catalog_concat()` (a later part may only replace an
+   `.unavailable` declaration of the same identifier; anything else is
+   `EEXIST`);
 2. the output schema: a JSON Schema file under the project's schema
    directory, embedded by `maelys-cli-embed` and referenced with
    `MAELYS_CLI_SCHEMA(symbol)`; never a hand-escaped C string;
@@ -64,6 +81,13 @@ one handler and one JSON Schema file. In the same change, update:
    exact contract;
 5. the generated CLI reference when the project keeps one.
 
+A product written in Python builds on `python/maelys_cli.py` of the same
+pinned maelys-cli (one file, standard library only): the same declarations
+(`cli.read`, `cli.records`, `cli.transaction`, `cli.stream`, `cli.external`;
+`cli.operand`, `cli.option`, `cli.flag`, `cli.argument`), the same built-ins,
+envelopes and exit codes; `docs/python.md` is its guide and the conformance
+kit of agent-cli-spec runs on the product's program in its CI.
+
 Linking: a product CLI links `libmaelys_cli.a` only (no dependency). A
 dispatcher that runs external commands from manifests adds
 `libmaelys_cli_extension.a` and one `libmaelys-json.a` (pkg-config
@@ -75,10 +99,15 @@ and refuses invalid UTF-8 in what it writes.
 Rules that must not be broken: no second usage string outside the catalog; no
 hand-written argv parsing in `main()`; no product type inside the shared
 framework; validation errors in causal order (command, options, values,
-dependencies, operands, files, syntax, schema, state); explicit
+dependencies, operands, files, syntax, schema, state); configuration,
+manifests and secrets read with `maelys_cli_read_trusted_file` (trust judged
+on the descriptor read, bounded by the bytes read) and failures reported
+with `maelys_cli_fail_file`; explicit
 `MAELYS_CLI_WRITE_REPLACE` / `MAELYS_CLI_WRITE_NO_REPLACE` on every file
 write; external programs started with absolute paths and `execve`, never a
-shell or PATH lookup.
+shell or PATH lookup, with a trusted immediate parent held open through exec;
+delegate scripts use a direct absolute interpreter never named `env`; relative
+and `env` shebangs are refused.
 <!-- maelys-cli:end -->
 
 <!-- maelys-release:begin -->
