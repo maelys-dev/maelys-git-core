@@ -138,7 +138,12 @@ add_library(maelys_git_core STATIC
     src/hooks/pre_receive.c)
 target_include_directories(maelys_git_core
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
-    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    # Until the GIT-C01 migration to <maelys/datalog.h>, policy.c, gitolite.c
+    # and mirror.c still read the engine's alpha and common headers, which
+    # maelys-datalog 0.3.0 stopped exporting: the pinned tree root is visible
+    # to this library only.
+    PRIVATE "${MAELYS_DATALOG_SOURCE_DIR}")
 target_link_libraries(maelys_git_core
     PUBLIC maelys_datalog
     PRIVATE Threads::Threads maelys_git_build_flags)
@@ -308,7 +313,9 @@ if(MAELYS_GIT_BUILD_TESTS)
 
     add_executable(test-maelys-git-policy-sessions
         tests/test_policy_sessions.c src/policy/policy.c)
-    target_include_directories(test-maelys-git-policy-sessions PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_include_directories(test-maelys-git-policy-sessions PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${MAELYS_DATALOG_SOURCE_DIR}") # recompiles policy.c: same alpha headers
     target_compile_definitions(test-maelys-git-policy-sessions PRIVATE
         MAELYS_GIT_POLICY_TESTING=1 TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}")
     target_link_libraries(test-maelys-git-policy-sessions PRIVATE

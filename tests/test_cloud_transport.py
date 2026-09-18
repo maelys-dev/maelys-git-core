@@ -49,7 +49,10 @@ with tempfile.TemporaryDirectory(prefix="maelys-cloud-test-") as temporary:
         def respond(self, code, data=None, location=None):
             body = data if isinstance(data, bytes) else json.dumps(data).encode() if data is not None else b""
             self.send_response(code)
-            self.send_header("Content-Length", str(len(body)))
+            # RFC 9110 section 6.4.1: a 1xx or 204 response carries no
+            # framing field; maelys-http refuses one as ambiguous framing.
+            if not (100 <= code < 200 or code == 204):
+                self.send_header("Content-Length", str(len(body)))
             if location:
                 self.send_header("Location", location)
             self.end_headers()

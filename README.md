@@ -70,7 +70,8 @@ and inherit its compiler and sanitizer flags. Project headers take precedence
 over older installed headers in `CPPFLAGS`.
 Only the dependency-free core of `maelys-cli` is linked; its extension
 archive and `maelys` dispatcher are not built here. The agent configuration
-and command readers link maelys-json separately, pinned to release `v0.1.3`. Its source
+and command readers link maelys-json separately, pinned to the published release
+recorded in `cmake/dependencies.cmake` (`v0.2.0`). Its source
 checkout can be selected with `-DMAELYS_JSON_SOURCE_DIR=/absolute/path/to/maelys-json`.
 Jansson still builds the configuration output, CLI data and agent messages.
 

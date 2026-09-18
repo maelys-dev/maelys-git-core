@@ -45,6 +45,10 @@ Options globales :
 - `--pretty`: --pretty=false selects compact JSON.
 - `--non-interactive`: Never prompt; fail instead of asking a question.
 - `--color auto|always|never`: Control ANSI colors on terminals.
+- `--progress auto|always|never`: Show the progress of a long run on stderr in text mode: auto only when stderr is a terminal.
+- `--verbose`: Add the details of the run on stderr in text mode; silent in JSON.
+- `--pager auto|always|never`: Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive.
+- `--field NAME`: Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules.
 - `--help`: Show the help of the selected command.
 
 ## `maelys-git-agent` (Maelys Git Agent)
@@ -68,6 +72,10 @@ Options globales :
 - `--pretty`: --pretty=false selects compact JSON.
 - `--non-interactive`: Never prompt; fail instead of asking a question.
 - `--color auto|always|never`: Control ANSI colors on terminals.
+- `--progress auto|always|never`: Show the progress of a long run on stderr in text mode: auto only when stderr is a terminal.
+- `--verbose`: Add the details of the run on stderr in text mode; silent in JSON.
+- `--pager auto|always|never`: Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive.
+- `--field NAME`: Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules.
 - `--help`: Show the help of the selected command.
 
 ## `maelys-git-executor` (Maelys Git Executor)
@@ -89,6 +97,10 @@ Options globales :
 - `--pretty`: --pretty=false selects compact JSON.
 - `--non-interactive`: Never prompt; fail instead of asking a question.
 - `--color auto|always|never`: Control ANSI colors on terminals.
+- `--progress auto|always|never`: Show the progress of a long run on stderr in text mode: auto only when stderr is a terminal.
+- `--verbose`: Add the details of the run on stderr in text mode; silent in JSON.
+- `--pager auto|always|never`: Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive.
+- `--field NAME`: Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules.
 - `--help`: Show the help of the selected command.
 
 ## `maelys-git-shell` (Maelys Git Shell)
@@ -110,6 +122,10 @@ Options globales :
 - `--pretty`: --pretty=false selects compact JSON.
 - `--non-interactive`: Never prompt; fail instead of asking a question.
 - `--color auto|always|never`: Control ANSI colors on terminals.
+- `--progress auto|always|never`: Show the progress of a long run on stderr in text mode: auto only when stderr is a terminal.
+- `--verbose`: Add the details of the run on stderr in text mode; silent in JSON.
+- `--pager auto|always|never`: Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive.
+- `--field NAME`: Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules.
 - `--help`: Show the help of the selected command.
 
 ## `maelys-git-hook` (Maelys Git Hook)
@@ -132,4 +148,8 @@ Options globales :
 - `--pretty`: --pretty=false selects compact JSON.
 - `--non-interactive`: Never prompt; fail instead of asking a question.
 - `--color auto|always|never`: Control ANSI colors on terminals.
+- `--progress auto|always|never`: Show the progress of a long run on stderr in text mode: auto only when stderr is a terminal.
+- `--verbose`: Add the details of the run on stderr in text mode; silent in JSON.
+- `--pager auto|always|never`: Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive.
+- `--field NAME`: Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules.
 - `--help`: Show the help of the selected command.

@@ -5,6 +5,20 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- The five Maelys dependencies are pinned to the commits of published tags,
+  never to a branch commit that a history rewrite can erase: maelys-cli
+  v0.5.29 (from 0.5.11), maelys-json v0.2.0 (from v0.1.3, ABI 2; nothing
+  here called the two removed functions), maelys-datalog v0.4.0 (from
+  0.1.0-alpha.1, whose pinned commit no longer exists anywhere),
+  maelys-http v0.1.14 (from 0.1.4) and maelys-system v0.9.1 (from 0.9.0).
+  maelys-datalog stopped exporting its tree root in 0.3.0; until the
+  migration to `<maelys/datalog.h>`, the core library and the policy
+  sessions test see the pinned root privately for the alpha headers they
+  still read. The maelys-cli managed blocks, guide and skill are refreshed
+  to 0.5.29 and the CLI reference regenerated with its generator.
+- The Cloud transport test server no longer sends `Content-Length` on its
+  204 replies: RFC 9110 forbids the field there and maelys-http refuses it
+  as ambiguous framing since 0.1.5. A fixture defect, not a product one.
 - Adopt the shared Maelys conventions (maelys-release v0.60.0) in
   conventions-only mode: `VERSION`, this changelog, the managed blocks of
   `AGENTS.md` and `CLAUDE.md`, `RELEASING.md` and `LICENSING.md`. The
