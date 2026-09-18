@@ -132,7 +132,7 @@ build/maelys-git repo init /srv/git example.git --apply --format json
 ```
 
 See `docs/command-conventions.md`, `docs/agent-cli.md`,
-`docs/cli-migration.md` and the generated `docs/cli-reference.md`. Regenerate
+`docs/cli-migration.md` and the generated `docs/cli.md`. Regenerate
 the Markdown and aggregate JSON catalog
 with `cmake --build build --target generate-cli-reference`.
 

@@ -12,14 +12,14 @@ endforeach()
 file(MAKE_DIRECTORY "${WORK_DIR}")
 execute_process(
     COMMAND "${PYTHON}" "${REFERENCE}" --build "${BUILD_DIR}"
-        --markdown "${WORK_DIR}/cli-reference.md"
+        --markdown "${WORK_DIR}/cli.md"
         --json "${WORK_DIR}/cli-contract.json" ${REFERENCE_ARGS} ${PROGRAMS}
     RESULT_VARIABLE status
     OUTPUT_QUIET)
 if(NOT status EQUAL 0)
     message(FATAL_ERROR "the CLI reference generator failed with status ${status}")
 endif()
-foreach(name IN ITEMS cli-reference.md cli-contract.json)
+foreach(name IN ITEMS cli.md cli-contract.json)
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E compare_files "${WORK_DIR}/${name}" "${DOCS_DIR}/${name}"
         RESULT_VARIABLE differs)

@@ -39,7 +39,7 @@ When adding or changing a command, update in the same change:
 4. the focused tests in `tests/test_cli.c` and the relevant integration
    script under `tests/`.
 
-Then regenerate `docs/cli-reference.md` and `docs/cli-contract.json` with
+Then regenerate `docs/cli.md` and `docs/cli-contract.json` with
 `cmake --build build --target generate-cli-reference` (the framework's own
 `maelys-cli-reference` generator) and run the full CTest suite; the
 `maelys-git-cli-docs` test rejects any drift. Follow

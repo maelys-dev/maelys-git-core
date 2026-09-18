@@ -438,7 +438,7 @@ if(Python3_Interpreter_FOUND)
     add_custom_target(generate-cli-reference
         COMMAND ${Python3_EXECUTABLE} ${MAELYS_CLI_REFERENCE}
             --build $<TARGET_FILE_DIR:maelys-git>
-            --markdown ${CMAKE_CURRENT_SOURCE_DIR}/docs/cli-reference.md
+            --markdown ${CMAKE_CURRENT_SOURCE_DIR}/docs/cli.md
             --json ${CMAKE_CURRENT_SOURCE_DIR}/docs/cli-contract.json
             ${MAELYS_GIT_REFERENCE_ARGS} ${MAELYS_GIT_PROGRAMS}
         DEPENDS ${MAELYS_GIT_PROGRAMS} docs/cli-reference-intro.md
