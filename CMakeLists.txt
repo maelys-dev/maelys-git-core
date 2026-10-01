@@ -321,6 +321,19 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_link_libraries(test-maelys-git-policy-sessions PRIVATE
         maelys_git_core Threads::Threads maelys_git_build_flags)
     add_test(NAME maelys-git-policy-sessions COMMAND test-maelys-git-policy-sessions)
+
+    # Decisions of a fixed request corpus, recorded on the baseline commit named
+    # in the first line of the expected file and reproduced by every build.
+    set(MAELYS_GIT_POLICY_FIXTURES "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/policies")
+    add_executable(test-maelys-git-policy-golden tests/test_policy_golden.c)
+    target_compile_definitions(test-maelys-git-policy-golden PRIVATE
+        TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}"
+        FIXTURE_DIR="${MAELYS_GIT_POLICY_FIXTURES}"
+        GOLDEN_FILE="${MAELYS_GIT_POLICY_FIXTURES}/golden.tsv"
+        GOLDEN_BASELINE="851e215")
+    target_link_libraries(test-maelys-git-policy-golden PRIVATE
+        maelys_git_core maelys_git_build_flags)
+    add_test(NAME maelys-git-policy-golden COMMAND test-maelys-git-policy-golden)
     set_tests_properties(maelys-git-policy-sessions PROPERTIES TIMEOUT 120)
 
     add_executable(test-maelys-git-agent tests/test_agent.c)

@@ -1,0 +1,444 @@
+# baseline 851e215
+example	example.git alice read - -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice read - secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice read refs/heads/main -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice read refs/heads/main secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice read refs/heads/feature -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice read refs/heads/feature secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice write - -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice write - secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice write refs/heads/main -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice write refs/heads/main secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice write refs/heads/feature -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice write refs/heads/feature secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice push - -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice push - secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice push refs/heads/main -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice push refs/heads/main secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice push refs/heads/feature -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice push refs/heads/feature secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice merge - -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice merge - secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice merge refs/heads/main -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice merge refs/heads/main secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice merge refs/heads/feature -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice merge refs/heads/feature secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice update-ref - -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice update-ref - secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice update-ref refs/heads/main -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice update-ref refs/heads/main secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice update-ref refs/heads/feature -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice update-ref refs/heads/feature secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git alice create - -	0	0	0	-	no allow rule matched; denied by default
+example	example.git alice create - secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git alice create refs/heads/main -	0	0	0	-	no allow rule matched; denied by default
+example	example.git alice create refs/heads/main secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git alice create refs/heads/feature -	0	0	0	-	no allow rule matched; denied by default
+example	example.git alice create refs/heads/feature secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git bob read - -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob read - secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob read refs/heads/main -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob read refs/heads/main secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob read refs/heads/feature -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob read refs/heads/feature secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob write - -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob write - secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob write refs/heads/main -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob write refs/heads/main secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob write refs/heads/feature -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob write refs/heads/feature secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob push - -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob push - secrets/production.env	0	0	1	0	explicit deny from policy maelys-git.example.authorization
+example	example.git bob push refs/heads/main -	0	0	1	0	explicit deny from policy maelys-git.example.authorization
+example	example.git bob push refs/heads/main secrets/production.env	0	0	1	0	explicit deny from policy maelys-git.example.authorization
+example	example.git bob push refs/heads/feature -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob push refs/heads/feature secrets/production.env	0	0	1	0	explicit deny from policy maelys-git.example.authorization
+example	example.git bob merge - -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob merge - secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob merge refs/heads/main -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob merge refs/heads/main secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob merge refs/heads/feature -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob merge refs/heads/feature secrets/production.env	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	example.git bob update-ref - -	0	0	0	-	no allow rule matched; denied by default
+example	example.git bob update-ref - secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git bob update-ref refs/heads/main -	0	0	0	-	no allow rule matched; denied by default
+example	example.git bob update-ref refs/heads/main secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git bob update-ref refs/heads/feature -	0	0	0	-	no allow rule matched; denied by default
+example	example.git bob update-ref refs/heads/feature secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git bob create - -	0	0	0	-	no allow rule matched; denied by default
+example	example.git bob create - secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git bob create refs/heads/main -	0	0	0	-	no allow rule matched; denied by default
+example	example.git bob create refs/heads/main secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git bob create refs/heads/feature -	0	0	0	-	no allow rule matched; denied by default
+example	example.git bob create refs/heads/feature secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory read - -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory read - secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory read refs/heads/main -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory read refs/heads/main secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory read refs/heads/feature -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory read refs/heads/feature secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory write - -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory write - secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory write refs/heads/main -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory write refs/heads/main secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory write refs/heads/feature -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory write refs/heads/feature secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory push - -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory push - secrets/production.env	0	0	1	0	explicit deny from policy maelys-git.example.authorization
+example	example.git mallory push refs/heads/main -	0	0	1	0	explicit deny from policy maelys-git.example.authorization
+example	example.git mallory push refs/heads/main secrets/production.env	0	0	1	0	explicit deny from policy maelys-git.example.authorization
+example	example.git mallory push refs/heads/feature -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory push refs/heads/feature secrets/production.env	0	0	1	0	explicit deny from policy maelys-git.example.authorization
+example	example.git mallory merge - -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory merge - secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory merge refs/heads/main -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory merge refs/heads/main secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory merge refs/heads/feature -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory merge refs/heads/feature secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory update-ref - -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory update-ref - secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory update-ref refs/heads/main -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory update-ref refs/heads/main secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory update-ref refs/heads/feature -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory update-ref refs/heads/feature secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory create - -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory create - secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory create refs/heads/main -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory create refs/heads/main secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory create refs/heads/feature -	0	0	0	-	no allow rule matched; denied by default
+example	example.git mallory create refs/heads/feature secrets/production.env	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git alice read - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git alice write - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git alice push - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git alice merge - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git alice update-ref - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git alice create - -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	new-project.git bob read - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git bob write - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git bob push - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git bob merge - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git bob update-ref - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git bob create - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git mallory read - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git mallory write - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git mallory push - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git mallory merge - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git mallory update-ref - -	0	0	0	-	no allow rule matched; denied by default
+example	new-project.git mallory create - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git alice read - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git alice write - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git alice push - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git alice merge - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git alice update-ref - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git alice create - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git bob read - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git bob write - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git bob push - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git bob merge - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git bob update-ref - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git bob create - -	0	1	0	0	allowed by policy maelys-git.example.authorization
+example	team-project.git mallory read - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git mallory write - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git mallory push - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git mallory merge - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git mallory update-ref - -	0	0	0	-	no allow rule matched; denied by default
+example	team-project.git mallory create - -	0	0	0	-	no allow rule matched; denied by default
+example	overflowing summary	-4	0	0	-	policy evaluation failed; request denied
+example	missing operation	-1	0	0	0	-
+gitolite-exact	alice read	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice write	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	alice push refs/heads/main create	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	alice push refs/heads/main fast_forward	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	alice push refs/heads/main force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/heads/main delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/heads/release create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/heads/release fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/heads/release force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/heads/release delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/heads/dev create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/heads/dev fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/heads/dev force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/heads/dev delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/tags/v1 create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/tags/v1 fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/tags/v1 force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/tags/v1 delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/heads/main-hotfix create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/heads/main-hotfix fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/heads/main-hotfix force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/heads/main-hotfix delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/tags/v1.0 create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/tags/v1.0 fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/tags/v1.0 force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push refs/tags/v1.0 delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	alice push summary	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	bob read	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob write	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	bob push refs/heads/main create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/heads/main fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/heads/main force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/heads/main delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/heads/release create	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	bob push refs/heads/release fast_forward	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	bob push refs/heads/release force	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	bob push refs/heads/release delete	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	bob push refs/heads/dev create	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	bob push refs/heads/dev fast_forward	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	bob push refs/heads/dev force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/heads/dev delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/tags/v1 create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/tags/v1 fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/tags/v1 force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/tags/v1 delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/heads/main-hotfix create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/heads/main-hotfix fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/heads/main-hotfix force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/heads/main-hotfix delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/tags/v1.0 create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/tags/v1.0 fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/tags/v1.0 force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push refs/tags/v1.0 delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	bob push summary	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	carol read	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol write	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	carol push refs/heads/main create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/heads/main fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/heads/main force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/heads/main delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/heads/release create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/heads/release fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/heads/release force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/heads/release delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/heads/dev create	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	carol push refs/heads/dev fast_forward	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	carol push refs/heads/dev force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/heads/dev delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/tags/v1 create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/tags/v1 fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/tags/v1 force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/tags/v1 delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/heads/main-hotfix create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/heads/main-hotfix fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/heads/main-hotfix force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/heads/main-hotfix delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/tags/v1.0 create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/tags/v1.0 fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/tags/v1.0 force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push refs/tags/v1.0 delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	carol push summary	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	dave read	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave write	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	dave push refs/heads/main create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/heads/main fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/heads/main force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/heads/main delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/heads/release create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/heads/release fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/heads/release force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/heads/release delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/heads/dev create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/heads/dev fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/heads/dev force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/heads/dev delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/tags/v1 create	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	dave push refs/tags/v1 fast_forward	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	dave push refs/tags/v1 force	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	dave push refs/tags/v1 delete	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	dave push refs/heads/main-hotfix create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/heads/main-hotfix fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/heads/main-hotfix force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/heads/main-hotfix delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/tags/v1.0 create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/tags/v1.0 fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/tags/v1.0 force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push refs/tags/v1.0 delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	dave push summary	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	mallory read	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory write	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/heads/main create	0	0	1	0	explicit deny from policy maelys-git.gitolite.authorization
+gitolite-exact	mallory push refs/heads/main fast_forward	0	0	1	0	explicit deny from policy maelys-git.gitolite.authorization
+gitolite-exact	mallory push refs/heads/main force	0	0	1	0	explicit deny from policy maelys-git.gitolite.authorization
+gitolite-exact	mallory push refs/heads/main delete	0	0	1	0	explicit deny from policy maelys-git.gitolite.authorization
+gitolite-exact	mallory push refs/heads/release create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/heads/release fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/heads/release force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/heads/release delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/heads/dev create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/heads/dev fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/heads/dev force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/heads/dev delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/tags/v1 create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/tags/v1 fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/tags/v1 force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/tags/v1 delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/heads/main-hotfix create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/heads/main-hotfix fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/heads/main-hotfix force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/heads/main-hotfix delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/tags/v1.0 create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/tags/v1.0 fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/tags/v1.0 force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push refs/tags/v1.0 delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	mallory push summary	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin read	0	1	0	0	allowed by policy maelys-git.gitolite.authorization
+gitolite-exact	erin write	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/main create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/main fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/main force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/main delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/release create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/release fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/release force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/release delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/dev create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/dev fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/dev force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/dev delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/tags/v1 create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/tags/v1 fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/tags/v1 force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/tags/v1 delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/main-hotfix create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/main-hotfix fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/main-hotfix force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/heads/main-hotfix delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/tags/v1.0 create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/tags/v1.0 fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/tags/v1.0 force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push refs/tags/v1.0 delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	erin push summary	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed read	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed write	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/main create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/main fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/main force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/main delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/release create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/release fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/release force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/release delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/dev create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/dev fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/dev force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/dev delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/tags/v1 create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/tags/v1 fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/tags/v1 force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/tags/v1 delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/main-hotfix create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/main-hotfix fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/main-hotfix force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/heads/main-hotfix delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/tags/v1.0 create	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/tags/v1.0 fast_forward	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/tags/v1.0 force	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push refs/tags/v1.0 delete	0	0	0	-	no allow rule matched; denied by default
+gitolite-exact	zed push summary	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git alice push - -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git alice push - config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git alice push refs/heads/release/1.0 -	0	1	0	0	allowed by policy fixture.filters.base
+filters	team/public-site.git alice push refs/heads/release/1.0 config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git alice push refs/heads/release -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git alice push refs/heads/release config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git alice push refs/heads/releases -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git alice push refs/heads/releases config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git alice push refs/heads/release-evil -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git alice push refs/heads/release-evil config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git alice push refs/heads/release/1.0/frozen -	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git alice push refs/heads/release/1.0/frozen config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git alice push refs/heads/topic-wip -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git alice push refs/heads/topic-wip config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git alice push refs/heads/release/next-wip -	0	1	0	0	allowed by policy fixture.filters.base
+filters	team/public-site.git alice push refs/heads/release/next-wip config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git alice read - -	0	1	0	0	allowed by policy fixture.filters.base
+filters	team/public-site.git alice read - config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git bob push - -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git bob push - config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git bob push refs/heads/release/1.0 -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git bob push refs/heads/release/1.0 config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git bob push refs/heads/release -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git bob push refs/heads/release config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git bob push refs/heads/releases -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git bob push refs/heads/releases config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git bob push refs/heads/release-evil -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git bob push refs/heads/release-evil config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git bob push refs/heads/release/1.0/frozen -	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git bob push refs/heads/release/1.0/frozen config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git bob push refs/heads/topic-wip -	0	1	0	0	allowed by policy fixture.filters.base
+filters	team/public-site.git bob push refs/heads/topic-wip config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git bob push refs/heads/release/next-wip -	0	1	0	0	allowed by policy fixture.filters.base
+filters	team/public-site.git bob push refs/heads/release/next-wip config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git bob read - -	0	1	0	0	allowed by policy fixture.filters.base
+filters	team/public-site.git bob read - config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git zed push - -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git zed push - config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git zed push refs/heads/release/1.0 -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git zed push refs/heads/release/1.0 config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git zed push refs/heads/release -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git zed push refs/heads/release config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git zed push refs/heads/releases -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git zed push refs/heads/releases config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git zed push refs/heads/release-evil -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git zed push refs/heads/release-evil config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git zed push refs/heads/release/1.0/frozen -	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git zed push refs/heads/release/1.0/frozen config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git zed push refs/heads/topic-wip -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git zed push refs/heads/topic-wip config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git zed push refs/heads/release/next-wip -	0	0	0	-	no allow rule matched; denied by default
+filters	team/public-site.git zed push refs/heads/release/next-wip config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/public-site.git zed read - -	0	1	0	0	allowed by policy fixture.filters.base
+filters	team/public-site.git zed read - config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git alice push - -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git alice push - config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git alice push refs/heads/release/1.0 -	0	1	0	0	allowed by policy fixture.filters.base
+filters	team/app.git alice push refs/heads/release/1.0 config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git alice push refs/heads/release -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git alice push refs/heads/release config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git alice push refs/heads/releases -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git alice push refs/heads/releases config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git alice push refs/heads/release-evil -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git alice push refs/heads/release-evil config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git alice push refs/heads/release/1.0/frozen -	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git alice push refs/heads/release/1.0/frozen config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git alice push refs/heads/topic-wip -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git alice push refs/heads/topic-wip config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git alice push refs/heads/release/next-wip -	0	1	0	0	allowed by policy fixture.filters.base
+filters	team/app.git alice push refs/heads/release/next-wip config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git alice read - -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git alice read - config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git bob push - -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git bob push - config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git bob push refs/heads/release/1.0 -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git bob push refs/heads/release/1.0 config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git bob push refs/heads/release -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git bob push refs/heads/release config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git bob push refs/heads/releases -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git bob push refs/heads/releases config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git bob push refs/heads/release-evil -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git bob push refs/heads/release-evil config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git bob push refs/heads/release/1.0/frozen -	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git bob push refs/heads/release/1.0/frozen config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git bob push refs/heads/topic-wip -	0	1	0	0	allowed by policy fixture.filters.base
+filters	team/app.git bob push refs/heads/topic-wip config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git bob push refs/heads/release/next-wip -	0	1	0	0	allowed by policy fixture.filters.base
+filters	team/app.git bob push refs/heads/release/next-wip config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git bob read - -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git bob read - config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git zed push - -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git zed push - config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git zed push refs/heads/release/1.0 -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git zed push refs/heads/release/1.0 config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git zed push refs/heads/release -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git zed push refs/heads/release config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git zed push refs/heads/releases -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git zed push refs/heads/releases config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git zed push refs/heads/release-evil -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git zed push refs/heads/release-evil config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git zed push refs/heads/release/1.0/frozen -	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git zed push refs/heads/release/1.0/frozen config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git zed push refs/heads/topic-wip -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git zed push refs/heads/topic-wip config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git zed push refs/heads/release/next-wip -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git zed push refs/heads/release/next-wip config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
+filters	team/app.git zed read - -	0	0	0	-	no allow rule matched; denied by default
+filters	team/app.git zed read - config/secret.env	0	0	1	1	explicit deny from policy fixture.filters.guard
