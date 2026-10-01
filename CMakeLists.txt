@@ -12,6 +12,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 option(MAELYS_GIT_BUILD_TESTS "Build the Maelys Git tests" ON)
 option(MAELYS_GIT_ENABLE_CLOUD_AGENT "Build the HTTPS Cloud agent" ON)
 option(MAELYS_GIT_WERROR "Treat compiler warnings as errors" OFF)
+option(MAELYS_GIT_DATALOG_PROFILE_LARGE "Build the policy engine with its LARGE size profile" OFF)
 include(cmake/dependencies.cmake)
 set(MAELYS_DATALOG_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../maelys-datalog"
@@ -61,6 +62,8 @@ endif()
 # The Datalog tree is built EXCLUDE_FROM_ALL for its library only; its own
 # test registration (include(CTest)) is disabled in that scope.
 set(BUILD_TESTING OFF)
+set(MAELYS_DATALOG_PROFILE_LARGE ${MAELYS_GIT_DATALOG_PROFILE_LARGE} CACHE BOOL
+    "Build with the LARGE Datalog size profile" FORCE)
 add_subdirectory("${MAELYS_DATALOG_SOURCE_DIR}"
                  "${CMAKE_CURRENT_BINARY_DIR}/maelys-datalog"
                  EXCLUDE_FROM_ALL)
@@ -335,6 +338,22 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_link_libraries(test-maelys-git-policy-facade PRIVATE
         maelys_git_core maelys::cli maelys_git_build_flags)
     add_test(NAME maelys-git-policy-facade COMMAND test-maelys-git-policy-facade)
+
+    # A consumer built against the SDK the pinned engine installs, and nothing else.
+    add_test(NAME maelys-git-facade-consumer
+        COMMAND ${CMAKE_COMMAND}
+            -DENGINE_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}/maelys-datalog
+            -DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/datalog-sdk
+            -DCC=${CMAKE_C_COMPILER}
+            "-DCFLAGS=${CMAKE_C_FLAGS}"
+            -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/test_facade_consumer.c
+            -DMANIFEST=${MAELYS_GIT_POLICY_FIXTURES}/filters/manifest.json
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_facade_consumer.cmake)
+
+    # Timing is not a test: built on demand, never run by CTest.
+    add_executable(bench-maelys-git-authorize EXCLUDE_FROM_ALL tests/bench_authorize.c)
+    target_link_libraries(bench-maelys-git-authorize PRIVATE
+        maelys_git_core maelys_git_build_flags)
 
     # Production code reaches the engine through its installed SDK only.
     add_test(NAME maelys-git-datalog-boundary
