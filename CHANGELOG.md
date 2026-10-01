@@ -15,7 +15,7 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   manifest and the test-only blocks compiled into `policy.c`. The 443
   decisions of a corpus recorded before the change and the fingerprints of
   three policy sets are identical. Load errors now carry the engine's own
-  diagnostic; exceeding a declared capacity is a limit error.
+  diagnostic: its code, the location in the policy and the capacity exceeded.
 - `maelys_git_policy_explain` renders the engine's explanation of a decision:
   the why-true witness of a derived allow or deny, or the why-false document
   of a denial by default with its `complete` or `truncated` status and the

@@ -148,8 +148,9 @@ static int test_policy_atom_limits(void) {
     atom[64] = '\0';
     (void)snprintf(source, sizeof(source), "allow(R) :- request(R), user(\"%s\").\n", atom);
     path = write_policy("atom-64", source);
-    CHECK(path && maelys_git_policy_open(path, &policy, &error) != MAELYS_GIT_OK);
-    CHECK(policy == NULL && error.message[0] != '\0');
+    CHECK(path && maelys_git_policy_open(path, &policy, &error) == MAELYS_GIT_ERR_POLICY);
+    CHECK(policy == NULL && strstr(error.message, "64 requested, limit 63") != NULL);
+    CHECK(strstr(error.message, "line 1") != NULL);
 
     /* 256 distinct constants load; the 257th is refused, atomically, and a
      * valid policy loads right after. */
@@ -166,8 +167,8 @@ static int test_policy_atom_limits(void) {
     path = write_policy("atoms-257", over);
     free(over);
     maelys_git_result_t refused = maelys_git_policy_open(path, &policy, &error);
-    CHECK(refused == MAELYS_GIT_ERR_LIMIT && policy == NULL);
-    CHECK(strstr(error.message, "limit 256") != NULL);
+    CHECK(refused == MAELYS_GIT_ERR_POLICY && policy == NULL);
+    CHECK(strstr(error.message, "257 requested, limit 256") != NULL);
     path = write_policy("after-refusal", k_policy_a);
     CHECK(path && maelys_git_policy_open(path, &policy, &error) == MAELYS_GIT_OK);
     CHECK(allowed(policy, "alice", "r.git", "push", NULL, NULL));
@@ -203,8 +204,35 @@ static int test_filter_pattern_not_an_atom(void) {
     CHECK(over != NULL);
     path = write_policy("pattern-257", over);
     free(over);
-    CHECK(path && maelys_git_policy_open(path, &policy, &error) == MAELYS_GIT_ERR_LIMIT);
+    CHECK(path && maelys_git_policy_open(path, &policy, &error) == MAELYS_GIT_ERR_POLICY);
     CHECK(policy == NULL);
+    return 1;
+}
+
+static int test_refused_manifests(void) {
+    /* A manifest that does not load is a policy error with a usable message. */
+    maelys_git_error_t error;
+    maelys_git_policy_t *policy = NULL;
+    const char *path = write_policy("unknown-predicate", "allow(R) :- request(R), nosuch(R).\n");
+    CHECK(path && maelys_git_policy_open(path, &policy, &error) == MAELYS_GIT_ERR_POLICY);
+    CHECK(policy == NULL && strstr(error.message, "parser_unknown_predicate") != NULL);
+    CHECK(strstr(error.message, "line 1 column") != NULL);
+    /* Every entry disabled: nothing to evaluate, said plainly. */
+    path = write_policy("disabled", k_policy_a);
+    CHECK(path != NULL);
+    char manifest[2048], patched[2048];
+    FILE *file = fopen(path, "r");
+    CHECK(file != NULL);
+    size_t length = fread(manifest, 1u, sizeof(manifest) - 1u, file);
+    (void)fclose(file);
+    manifest[length] = '\0';
+    char *enabled = strstr(manifest, "\"enabled\":true");
+    CHECK(enabled != NULL);
+    (void)snprintf(patched, sizeof(patched), "%.*s\"enabled\":false%s",
+                   (int)(enabled - manifest), manifest, enabled + 14);
+    CHECK(write_text(path, patched));
+    CHECK(maelys_git_policy_open(path, &policy, &error) == MAELYS_GIT_ERR_POLICY);
+    CHECK(policy == NULL && !strcmp(error.message, "manifest contains no enabled policy file"));
     return 1;
 }
 
@@ -516,7 +544,8 @@ int main(void) {
     if (!root) return 1;
     (void)snprintf(g_root, sizeof(g_root), "%s", root);
     int ok = test_two_vocabularies() && test_policy_atom_limits() &&
-             test_filter_pattern_not_an_atom() && test_fingerprints_unchanged() &&
+             test_filter_pattern_not_an_atom() && test_refused_manifests() &&
+             test_fingerprints_unchanged() &&
              test_gitolite_prefixes() && test_exact_refs_unchanged() &&
              test_unsupported_refex() && test_rule_budget_exceeded() &&
              test_explanations() && test_explain_multiple_policies();

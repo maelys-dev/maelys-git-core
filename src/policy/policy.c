@@ -161,8 +161,10 @@ static maelys_git_result_t engine_failure(maelys_git_error_t *error,
     return MAELYS_GIT_ERR_POLICY;
 }
 
-/* A refused manifest reports the engine's own diagnostic. A capacity section
- * means a declared limit was exceeded, which is a limit error here too. */
+/* A refused manifest reports the engine's own diagnostic: its code, where it
+ * is in the policy when the engine located it, and the capacity it exceeded.
+ * Whatever the cause, a manifest that does not load is a policy error: the
+ * validation report of the command line depends on that single code. */
 static maelys_git_result_t load_failure(maelys_git_error_t *error,
                                         maelys_datalog_status_t status,
                                         const maelys_datalog_diagnostic_t *diagnostic) {
@@ -171,21 +173,21 @@ static maelys_git_result_t load_failure(maelys_git_error_t *error,
                      maelys_datalog_status_name(status));
         return MAELYS_GIT_ERR_POLICY;
     }
-    maelys_git_result_t code = (diagnostic->present & MAELYS_DATALOG_DIAGNOSTIC_CAPACITY)
-                                   ? MAELYS_GIT_ERR_LIMIT : MAELYS_GIT_ERR_POLICY;
     char location[384] = "";
-    if (diagnostic->present & MAELYS_DATALOG_DIAGNOSTIC_LOCATION)
+    if ((diagnostic->present & MAELYS_DATALOG_DIAGNOSTIC_LOCATION) && diagnostic->line > 0u)
         (void)snprintf(location, sizeof(location), " in %.255s line %zu column %zu",
                        diagnostic->file[0] ? diagnostic->file : "policy", diagnostic->line,
                        diagnostic->column);
+    else if (diagnostic->file[0])
+        (void)snprintf(location, sizeof(location), " in %.255s", diagnostic->file);
     char capacity[96] = "";
     if (diagnostic->present & MAELYS_DATALOG_DIAGNOSTIC_CAPACITY)
         (void)snprintf(capacity, sizeof(capacity), " (%zu requested, limit %zu)",
                        diagnostic->observed_count, diagnostic->limit);
-    mg_error_set(error, code, 0, "policy load failed (%s)%s: %s%s%s%s",
+    mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "policy load failed (%s)%s: %s%s%s%s",
                  maelys_datalog_diag_code_name(diagnostic->code), location, diagnostic->message,
                  capacity, diagnostic->hint[0] ? "; " : "", diagnostic->hint);
-    return code;
+    return MAELYS_GIT_ERR_POLICY;
 }
 
 static maelys_git_result_t read_limit(maelys_datalog_limit_t limit, size_t *out,
@@ -254,11 +256,15 @@ maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
     }
     size_t count = 0u;
     if (result == MAELYS_GIT_OK) {
+        /* A manifest whose entries are all disabled loads into a handle that
+         * holds no policy, which the engine reports as an invalid state. */
         status = maelys_datalog_policy_count(loaded, &count);
-        if (status != MAELYS_DATALOG_STATUS_OK) result = engine_failure(error, "policy count", status);
-        else if (count == 0u) {
-            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "policy set contains no enabled policy");
+        if (status == MAELYS_DATALOG_STATUS_INVALID_STATE ||
+            (status == MAELYS_DATALOG_STATUS_OK && count == 0u)) {
+            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "manifest contains no enabled policy file");
             result = MAELYS_GIT_ERR_POLICY;
+        } else if (status != MAELYS_DATALOG_STATUS_OK) {
+            result = engine_failure(error, "policy count", status);
         }
     }
     if (result == MAELYS_GIT_OK) {
