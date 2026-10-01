@@ -5,6 +5,34 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- The policy engine is reached through the installed SDK of maelys-datalog
+  v0.16.0 (consumer API 2), `<maelys/datalog.h>` and
+  `<maelys/datalog_advanced.h>`, and no longer through structures private to
+  the engine, which 0.10.0 removed. The `maelys_git` domain declares
+  predicates only; a policy's constants are local to it; one session per
+  policy lives as long as the handle. Gone: the source scanner that collected
+  atoms, its process-wide buffer and load lock, the yyjson read of the
+  manifest and the test-only blocks compiled into `policy.c`. The 443
+  decisions of a corpus recorded before the change and the fingerprints of
+  three policy sets are identical. Load errors now carry the engine's own
+  diagnostic; exceeding a declared capacity is a limit error.
+- `maelys_git_policy_explain` renders the engine's explanation of a decision:
+  the why-true witness of a derived allow or deny, or the why-false document
+  of a denial by default with its `complete` or `truncated` status and the
+  filter evaluations. A decision carries the policy-set and session
+  fingerprints.
+- Gitolite migration converts literal ref prefixes into rules with a constant
+  `starts_with` pattern: `refs/heads/release/`, a short name completed by
+  `refs/heads/`, a final `$` as equality. A deny on a bare literal now covers
+  the names that start with it, as Gitolite does and more than the exact fact
+  it replaced; a grant on a bare literal stays exact. Regular-expression
+  syntax is refused with `unsupported refex syntax`; exceeding the engine's
+  128 rules is `rule budget exceeded`; the generated policy is loaded by the
+  engine before it is published.
+- SHA-256 comes from the public digest of the maelys-cli core instead of a
+  header private to the engine repository.
+- maelys-datalog pinned at v0.16.0 (from v0.4.0).
+
 - The five Maelys dependencies are pinned to the commits of published tags,
   never to a branch commit that a history rewrite can erase: maelys-cli
   v0.5.29 (from 0.5.11), maelys-json v0.2.0 (from v0.1.3, ABI 2; nothing

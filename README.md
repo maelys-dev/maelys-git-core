@@ -191,8 +191,23 @@ Commit inspection is relative to the destination reference. Creating a ref
 checks its entire reachable history, including commits already present on
 other refs, under the existing commit quota. Transaction quotas are inclusive:
 reaching a limit exactly still permits later refs that consume none of that
-remaining resource. Disabled manifest entries are ignored when collecting
-policy vocabulary, just as they are by the Datalog loader.
+remaining resource.
+
+The policy engine is reached through its installed SDK only,
+`<maelys/datalog.h>` and `<maelys/datalog_advanced.h>`: the engine reads the
+manifest and its sources, and nothing here scans or escapes the policy
+language. The `maelys_git` domain declares predicates and no constant; the
+constants a policy writes stay local to that policy, a filter pattern
+(`starts_with`, `ends_with`, `contains`) is policy code and counts against no
+vocabulary, and request values live in the session of one evaluation. The
+engine's capacities are read from the loaded library: 256 constants of at
+most 63 bytes and 128 rules per policy, 64 changed paths per request in the
+default size profile. `maelys_git_policy_explain` returns the engine's
+witness of a derived allow or deny and, for a denial by default, its
+why-false document, which refutes the request when complete and is only a
+partial diagnostic when truncated. A test fails if a source file includes
+another engine header or if the core library references an engine symbol the
+SDK does not declare.
 
 The same binary can be installed as `post-receive` to append versioned JSONL
 events for an audit collector or the forge agent:
