@@ -1,6 +1,6 @@
 #include "internal.h"
 
-#include "common/maelys_sha256.h"
+#include <maelys/cli/digest.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -110,12 +110,7 @@ static maelys_git_result_t mirror_fingerprint(const char *git_executable,
     memcpy(input + refs_length + kind_length, head.value, head_length);
     input[total - 1u] = '\n';
     free(refs);
-    if (maelys_sha256_hex(input, total, out) != 0) {
-        free(input);
-        mg_error_set(error, MAELYS_GIT_ERR_IO, 0,
-                     "cannot fingerprint mirror references");
-        return MAELYS_GIT_ERR_IO;
-    }
+    maelys_cli_sha256_hex(input, total, out);
     free(input);
     if (out_head) *out_head = head;
     return MAELYS_GIT_OK;

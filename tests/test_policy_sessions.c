@@ -1,16 +1,24 @@
-#include "internal.h"
+#include "maelys_git.h"
 #include "test_support.h"
 
+#include <limits.h>
 #include <pthread.h>
 
+/* The reused sessions of a long-lived handle against a handle opened for this
+ * one request: same result code and same decision, field by field. */
 static int compare(maelys_git_policy_t *policy, maelys_git_policy_request_t *request) {
-    maelys_git_policy_decision_t prepared = {0}, fresh = {0};
+    maelys_git_policy_decision_t reused = {0}, fresh = {0};
     maelys_git_error_t error = {0};
-    maelys_git_result_t actual = maelys_git_policy_authorize(policy, request, &prepared, &error);
-    maelys_git_result_t expected = mg_policy_authorize_fresh(policy, request, &fresh, &error);
+    maelys_git_policy_t *single = NULL;
+    CHECK(maelys_git_policy_open(TEST_MANIFEST_FILE, &single, &error) == MAELYS_GIT_OK);
+    maelys_git_result_t actual = maelys_git_policy_authorize(policy, request, &reused, &error);
+    maelys_git_result_t expected = maelys_git_policy_authorize(single, request, &fresh, &error);
+    maelys_git_policy_close(single);
     CHECK(actual == expected);
-    CHECK(prepared.allowed == fresh.allowed && prepared.explicit_deny == fresh.explicit_deny);
-    CHECK(prepared.matched_policy == fresh.matched_policy && !strcmp(prepared.reason, fresh.reason));
+    CHECK(reused.allowed == fresh.allowed && reused.explicit_deny == fresh.explicit_deny);
+    CHECK(reused.matched_policy == fresh.matched_policy && !strcmp(reused.reason, fresh.reason));
+    CHECK(!strcmp(reused.policy_set_fingerprint, fresh.policy_set_fingerprint));
+    CHECK(!strcmp(reused.session_fingerprint, fresh.session_fingerprint));
     return 1;
 }
 
@@ -27,7 +35,7 @@ static int sequences(size_t worker) {
     maelys_git_policy_decision_t first = {0}, last = {0};
     CHECK(maelys_git_policy_authorize(policy, &request, &first, &error) == MAELYS_GIT_OK);
     CHECK(first.allowed);
-    /* Exceed the symbol-table capacity cumulatively: each solve must reset. */
+    /* Exceed the symbol capacity cumulatively: each solve must start clean. */
     for (size_t i = 0; i < 600u; ++i) {
         char id[64];
         (void)snprintf(id, sizeof(id), "worker-%zu-request-%zu", worker, i);
@@ -74,6 +82,6 @@ int main(void) {
         if (pthread_create(&threads[i], NULL, worker_main, &workers[i]) != 0) return 1;
     for (size_t i = 0; i < 4u; ++i)
         if (pthread_join(threads[i], NULL) != 0 || !workers[i].passed) return 1;
-    puts("prepared/fresh differential, reset after error, A/B/A and independent workers: ok");
+    puts("reused/fresh handle differential, reset after error, A/B/A and independent workers: ok");
     return 0;
 }

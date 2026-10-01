@@ -1,381 +1,287 @@
 #include "internal.h"
 
-#include "include/maelys_datalog.h"
-#include "vendor/yyjson/yyjson.h"
+#include <maelys/datalog.h>
+#include <maelys/datalog_advanced.h>
+/* Only maelys_datalog_session_program() and maelys_datalog_program_info():
+ * the consumer headers give a loaded policy no name, and a decision names
+ * the policy that produced it. */
+#include <maelys/datalog_backend.h>
 
-#include <ctype.h>
-#include <errno.h>
 #include <pthread.h>
-#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define MG_POLICY_MAX_POLICIES \
-    (sizeof(((maelys_datalog_policy_set_t *)0)->policies) / \
-     sizeof(((maelys_datalog_policy_set_t *)0)->policies[0]))
+#define MG_POLICY_ID_MAX 128u
 
-/* A policy handle is thread-confined: it owns one prepared Datalog session
- * per loaded policy (an immutable snapshot of the ruleset reused by every
- * request) and one request fact buffer. Rulesets and input buffers are reused;
- * the Datalog solve result still has its own allocation. */
+/* One enabled policy of the manifest: its session, kept for the life of the
+ * handle and reused by every request, and what a decision reports about it. */
+typedef struct {
+    maelys_datalog_session_t *session;
+    char policy_id[MG_POLICY_ID_MAX];
+    char fingerprint[MAELYS_DATALOG_PUBLIC_FINGERPRINT_BYTES];
+} policy_entry_t;
+
+/* A policy handle is thread-confined. Its fact buffer and its sessions are
+ * allocated once by maelys_git_policy_open(); an authorization allocates
+ * nothing in this file. The capacities are read from the loaded engine. */
 struct maelys_git_policy {
-    maelys_datalog_policy_set_t set;
-    maelys_datalog_prepared_session_t *sessions[MG_POLICY_MAX_POLICIES];
-    maelys_datalog_input_fact_t *facts; /* MAELYS_DATALOG_MAX_EDB_FACTS entries */
-    char fingerprint[65];
+    policy_entry_t *entries;
+    size_t count;
+    maelys_datalog_fact_t *facts;
+    size_t fact_capacity;
+    size_t fact_count;
+    size_t path_limit;
+    char repository_copy[MAELYS_GIT_MAX_REPOSITORY];
+    char fingerprint[MAELYS_DATALOG_PUBLIC_FINGERPRINT_BYTES];
 };
 
-/* The Datalog domain registry accepts one registration per domain name and
- * calls install_predicates() without a context argument while a manifest
- * loads. The atom vocabulary of the manifest being loaded must therefore be
- * reachable through this file-scope buffer. s_policy_load_lock serializes
- * loads: the buffer belongs to exactly one loader at a time and is never read
- * outside maelys_git_policy_open(). */
-static char s_policy_atoms[MAELYS_DATALOG_MAX_ATOMS][64];
-static size_t s_policy_atom_count;
-static pthread_mutex_t s_policy_load_lock = PTHREAD_MUTEX_INITIALIZER;
-
-static const maelys_datalog_predicate_def_t k_git_domain[] = {
-    {.name = "request", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "user", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "repository", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "repository_segment", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "repository_depth", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "repository_leaf", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "repository_owner_namespace", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "operation", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "ref", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "path", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "old_path", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "ref_kind", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "update_kind", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "change_kind", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "changed_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "added_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "modified_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "deleted_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "renamed_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "max_new_blob_size", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "total_new_blob_size", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "commit_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "merge_commit_count", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "has_binary", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "change_blob_size", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "old_mode", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "new_mode", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "change_binary", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "change_symlink", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "change_submodule", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "change_lfs_pointer", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "commit_email", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "commit_signed", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "commit_signature_status", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "commit_signer_fingerprint", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "commit_signer_identity", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "commit_signature_trusted", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "ssh_key", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "remote_address", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_EDB},
-    {.name = "group_member", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_in_group", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "effective_group_member", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "grant_read", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "grant_write", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "grant_push", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "grant_force", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "grant_create", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_grant_read", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_grant_write", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_grant_push", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_grant_force", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_grant_create", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "delegate_namespace", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_delegate_namespace", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "owned_repository", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "namespace_creator", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_namespace_creator", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "can_create_namespace", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "owner_namespace_grant_read", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "owner_namespace_grant_write", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "owner_namespace_grant_push", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "owner_namespace_grant_force", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "admin", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "protected_ref", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "protected_branch", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "protected_tag", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "require_signed_ref", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "allowed_commit_email", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "protected_path", .arity = 1, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "vref_deny_name", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_vref_deny_name", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "vref_deny_count", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_vref_deny_count", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "vref_deny_new_count", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_vref_deny_new_count", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "vref_deny_max_new_binary", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_vref_deny_max_new_binary", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "ref_grant_push", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_ref_grant_push", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "ref_grant_force", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_ref_grant_force", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "ref_deny", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "group_ref_deny", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_POLICY_FACT},
-    {.name = "effective_ref_grant_push", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "effective_ref_grant_force", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "effective_ref_deny", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "push_request", .arity = 4, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "has_ref_write", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "has_push_access", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "effective_vref_deny_name", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "effective_vref_deny_count", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "effective_vref_deny_new_count", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "effective_vref_deny_max_new_binary", .arity = 3, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "vref_count_exceeded", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "vref_new_count_exceeded", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "vref_new_binary_exceeded", .arity = 2, .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB},
-    {.name = "allow",
-     .arity = 1,
-     .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB | MAELYS_DATALOG_PRED_KIND_QUERY},
-    {.name = "deny",
-     .arity = 1,
-     .kind_flags = MAELYS_DATALOG_PRED_KIND_IDB | MAELYS_DATALOG_PRED_KIND_QUERY},
+/* The schema of the maelys_git domain: predicates only. Constants written in
+ * a policy belong to that policy (ALLOW_UNDECLARED_POLICY_ATOMS), filter
+ * patterns to its rules, and request values to the session. */
+static const maelys_datalog_predicate_t k_git_domain[] = {
+    {"request", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"user", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"repository", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"repository_segment", 2u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"repository_depth", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"repository_leaf", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"repository_owner_namespace", 2u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"operation", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"ref", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"path", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"old_path", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"ref_kind", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"update_kind", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"change_kind", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"changed_count", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"added_count", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"modified_count", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"deleted_count", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"renamed_count", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"max_new_blob_size", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"total_new_blob_size", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"commit_count", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"merge_commit_count", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"has_binary", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"change_blob_size", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"old_mode", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"new_mode", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"change_binary", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"change_symlink", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"change_submodule", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"change_lfs_pointer", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"commit_email", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"commit_signed", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"commit_signature_status", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"commit_signer_fingerprint", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"commit_signer_identity", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"commit_signature_trusted", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"ssh_key", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"remote_address", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"group_member", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_in_group", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"effective_group_member", 2u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"grant_read", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"grant_write", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"grant_push", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"grant_force", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"grant_create", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_grant_read", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_grant_write", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_grant_push", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_grant_force", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_grant_create", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"delegate_namespace", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_delegate_namespace", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"owned_repository", 1u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"namespace_creator", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_namespace_creator", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"can_create_namespace", 2u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"owner_namespace_grant_read", 1u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"owner_namespace_grant_write", 1u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"owner_namespace_grant_push", 1u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"owner_namespace_grant_force", 1u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"admin", 1u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"protected_ref", 1u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"protected_branch", 1u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"protected_tag", 1u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"require_signed_ref", 1u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"allowed_commit_email", 1u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"protected_path", 1u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"vref_deny_name", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_vref_deny_name", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"vref_deny_count", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_vref_deny_count", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"vref_deny_new_count", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_vref_deny_new_count", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"vref_deny_max_new_binary", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_vref_deny_max_new_binary", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"ref_grant_push", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_ref_grant_push", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"ref_grant_force", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_ref_grant_force", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"ref_deny", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_ref_deny", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"effective_ref_grant_push", 3u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"effective_ref_grant_force", 3u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"effective_ref_deny", 3u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"push_request", 4u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"has_ref_write", 2u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"has_push_access", 2u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"effective_vref_deny_name", 3u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"effective_vref_deny_count", 3u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"effective_vref_deny_new_count", 3u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"effective_vref_deny_max_new_binary", 3u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"vref_count_exceeded", 2u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"vref_new_count_exceeded", 2u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"vref_new_binary_exceeded", 2u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"allow", 1u, MAELYS_DATALOG_PREDICATE_IDB | MAELYS_DATALOG_PREDICATE_QUERY},
+    {"deny", 1u, MAELYS_DATALOG_PREDICATE_IDB | MAELYS_DATALOG_PREDICATE_QUERY},
 };
 
-static maelys_result_t install_git_domain(maelys_datalog_predicate_registry_t *registry) {
-    maelys_result_t result = MAELYS_OK;
-    for (size_t i = 0u; result == MAELYS_OK && i < sizeof(k_git_domain) / sizeof(k_git_domain[0]); ++i) {
-        result = maelys_datalog_predicate_registry_add_domain(registry,
-                                                               k_git_domain[i].name,
-                                                               k_git_domain[i].arity,
-                                                               k_git_domain[i].kind_flags);
-    }
-    for (size_t i = 0u; result == MAELYS_OK && i < s_policy_atom_count; ++i) {
-        result = maelys_datalog_predicate_registry_add_atom(registry, s_policy_atoms[i]);
-    }
-    return result;
+/* The engine keeps domains for the life of the process and accepts an
+ * identical registration again; one call suffices and gives every thread the
+ * same answer. */
+static pthread_once_t s_domain_once = PTHREAD_ONCE_INIT;
+static maelys_datalog_status_t s_domain_status = MAELYS_DATALOG_STATUS_INVALID_STATE;
+
+static void register_git_domain(void) {
+    static const maelys_datalog_domain_t domain =
+        MAELYS_DATALOG_DOMAIN_NO_ATOMS("maelys_git", k_git_domain);
+    s_domain_status = maelys_datalog_domain_register(&domain);
 }
 
-static maelys_result_t register_git_domain(void) {
-    static const maelys_datalog_domain_def_t definition = {
-        .domain_name = "maelys_git",
-        .predicates = NULL,
-        .predicate_count = 0u,
-        .description = "Git authorization requests, grants, groups, refs and paths",
-        .install_predicates = install_git_domain,
-    };
-    return maelys_datalog_domain_registry_register(&definition);
-}
-
-static int add_policy_atom(const char *value, size_t length) {
-    if (length == 0u || length >= sizeof(s_policy_atoms[0])) return 0;
-    for (size_t i = 0u; i < s_policy_atom_count; ++i) {
-        if (strlen(s_policy_atoms[i]) == length && memcmp(s_policy_atoms[i], value, length) == 0) return 1;
-    }
-    if (s_policy_atom_count >= MAELYS_DATALOG_MAX_ATOMS) return 0;
-    memcpy(s_policy_atoms[s_policy_atom_count], value, length);
-    s_policy_atoms[s_policy_atom_count][length] = '\0';
-    ++s_policy_atom_count;
-    return 1;
-}
-
-static int collect_source_atoms(const char *source, maelys_git_error_t *error) {
-    for (const char *cursor = source; *cursor; ++cursor) {
-        if (*cursor != '"') continue;
-        ++cursor;
-        char value[64];
-        size_t used = 0u;
-        while (*cursor && *cursor != '"') {
-            unsigned char ch = (unsigned char)*cursor++;
-            if (ch == '\\') {
-                char escaped = *cursor++;
-                switch (escaped) {
-                    case '"': ch = '"'; break;
-                    case '\\': ch = '\\'; break;
-                    case 'n': ch = '\n'; break;
-                    case 'r': ch = '\r'; break;
-                    case 't': ch = '\t'; break;
-                    default:
-                        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "unsupported escape in policy atom");
-                        return 0;
-                }
-            }
-            if (used + 1u >= sizeof(value)) {
-                mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "policy atom exceeds 63 bytes");
-                return 0;
-            }
-            value[used++] = (char)ch;
-        }
-        if (*cursor != '"' || !add_policy_atom(value, used)) {
-            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "invalid or excessive policy atom vocabulary");
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static char *read_text_file(const char *path, size_t max_size, maelys_git_error_t *error) {
-    FILE *file = fopen(path, "rb");
-    if (!file) {
-        mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "cannot open %s: %s", path, strerror(errno));
-        return NULL;
-    }
-    char *data = malloc(max_size + 1u);
-    if (!data) { fclose(file); return NULL; }
-    size_t length = fread(data, 1u, max_size + 1u, file);
-    int failed = ferror(file);
-    fclose(file);
-    if (failed || length > max_size) {
-        free(data);
-        mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0, "%s exceeds the one-megabyte policy limit", path);
-        return NULL;
-    }
-    data[length] = '\0';
-    return data;
-}
-
-static int policy_path_is_safe(const char *path) {
-    if (!path || !*path || path[0] == '/') return 0;
-    const char *component = path;
-    for (const char *p = path;; ++p) {
-        if (*p == '/' || *p == '\0') {
-            size_t length = (size_t)(p - component);
-            if (length == 0u || (length == 1u && component[0] == '.') ||
-                (length == 2u && component[0] == '.' && component[1] == '.')) return 0;
-            if (*p == '\0') break;
-            component = p + 1u;
-        } else if (!(isalnum((unsigned char)*p) || *p == '.' || *p == '_' || *p == '-')) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static int collect_manifest_atoms(const char *manifest_path, maelys_git_error_t *error) {
-    s_policy_atom_count = 0u;
-    char *manifest = read_text_file(manifest_path, 1024u * 1024u, error);
-    if (!manifest) return 0;
-    char directory[4096];
-    if (!mg_copy_string(directory, sizeof(directory), manifest_path)) { free(manifest); return 0; }
-    char *slash = strrchr(directory, '/');
-    if (slash) *slash = '\0';
-    else (void)mg_copy_string(directory, sizeof(directory), ".");
-
-    /* Use the same JSON parser and enabled-entry selection as Datalog's
-     * loader. Disabled files and unrelated nested keys are not inputs. */
-    yyjson_doc *document = yyjson_read(manifest, strlen(manifest), 0u);
-    free(manifest);
-    yyjson_val *policies = yyjson_obj_get(yyjson_doc_get_root(document), "policies");
-    if (!yyjson_is_arr(policies)) {
-        yyjson_doc_free(document);
-        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "manifest must contain a policies array");
-        return 0;
-    }
-    size_t file_count = 0u;
-    int ok = 0;
-    yyjson_arr_iter iter = yyjson_arr_iter_with(policies);
-    yyjson_val *entry;
-    while ((entry = yyjson_arr_iter_next(&iter))) {
-        if (!yyjson_is_true(yyjson_obj_get(entry, "enabled"))) continue;
-        yyjson_val *file = yyjson_obj_get(entry, "file");
-        const char *relative = yyjson_get_str(file);
-        if (!relative || strlen(relative) != yyjson_get_len(file) ||
-            !policy_path_is_safe(relative)) {
-            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "unsafe policy file path in manifest");
-            goto done;
-        }
-        char full_path[4096];
-        int count = snprintf(full_path, sizeof(full_path), "%s/%s", directory, relative);
-        if (count < 0 || (size_t)count >= sizeof(full_path)) {
-            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "policy file path is too long");
-            goto done;
-        }
-        char *source = read_text_file(full_path, 1024u * 1024u, error);
-        if (!source || !collect_source_atoms(source, error)) {
-            free(source);
-            goto done;
-        }
-        free(source);
-        ++file_count;
-    }
-    if (file_count == 0u) {
-        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "manifest contains no enabled policy file");
-        goto done;
-    }
-    ok = 1;
-done:
-    yyjson_doc_free(document);
-    return ok;
-}
-
-static maelys_git_result_t datalog_failure(maelys_git_error_t *error,
-                                           const char *operation,
-                                           maelys_result_t result) {
-    mg_error_set(error,
-                 MAELYS_GIT_ERR_POLICY,
-                 0,
-                 "%s failed with Maelys Datalog error %d",
-                 operation,
-                 (int)result);
+static maelys_git_result_t engine_failure(maelys_git_error_t *error,
+                                          const char *operation,
+                                          maelys_datalog_status_t status) {
+    mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "%s failed: %s", operation,
+                 maelys_datalog_status_name(status));
     return MAELYS_GIT_ERR_POLICY;
 }
 
-static maelys_git_result_t policy_open_unlocked(const char *manifest_path,
-                                                 maelys_git_policy_t **out_policy,
-                                                 maelys_git_error_t *error) {
+/* A refused manifest reports the engine's own diagnostic. A capacity section
+ * means a declared limit was exceeded, which is a limit error here too. */
+static maelys_git_result_t load_failure(maelys_git_error_t *error,
+                                        maelys_datalog_status_t status,
+                                        const maelys_datalog_diagnostic_t *diagnostic) {
+    if (diagnostic->source == MAELYS_DATALOG_DIAGNOSTIC_NONE) {
+        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "policy load failed: %s",
+                     maelys_datalog_status_name(status));
+        return MAELYS_GIT_ERR_POLICY;
+    }
+    maelys_git_result_t code = (diagnostic->present & MAELYS_DATALOG_DIAGNOSTIC_CAPACITY)
+                                   ? MAELYS_GIT_ERR_LIMIT : MAELYS_GIT_ERR_POLICY;
+    char location[384] = "";
+    if (diagnostic->present & MAELYS_DATALOG_DIAGNOSTIC_LOCATION)
+        (void)snprintf(location, sizeof(location), " in %.255s line %zu column %zu",
+                       diagnostic->file[0] ? diagnostic->file : "policy", diagnostic->line,
+                       diagnostic->column);
+    char capacity[96] = "";
+    if (diagnostic->present & MAELYS_DATALOG_DIAGNOSTIC_CAPACITY)
+        (void)snprintf(capacity, sizeof(capacity), " (%zu requested, limit %zu)",
+                       diagnostic->observed_count, diagnostic->limit);
+    mg_error_set(error, code, 0, "policy load failed (%s)%s: %s%s%s%s",
+                 maelys_datalog_diag_code_name(diagnostic->code), location, diagnostic->message,
+                 capacity, diagnostic->hint[0] ? "; " : "", diagnostic->hint);
+    return code;
+}
+
+static maelys_git_result_t read_limit(maelys_datalog_limit_t limit, size_t *out,
+                                      maelys_git_error_t *error) {
+    maelys_datalog_status_t status = maelys_datalog_limit_get(limit, out);
+    return status == MAELYS_DATALOG_STATUS_OK && *out > 0u
+               ? MAELYS_GIT_OK : engine_failure(error, "engine limit query", status);
+}
+
+/* Creates the session of one policy and records its identity. */
+static maelys_git_result_t prepare_entry(const maelys_datalog_policy_t *loaded, size_t index,
+                                         policy_entry_t *entry, maelys_git_error_t *error) {
+    maelys_datalog_status_t status = maelys_datalog_session_create(loaded, index, &entry->session);
+    if (status != MAELYS_DATALOG_STATUS_OK)
+        return engine_failure(error, "policy session preparation", status);
+    status = maelys_datalog_session_fingerprint(entry->session, entry->fingerprint);
+    if (status != MAELYS_DATALOG_STATUS_OK)
+        return engine_failure(error, "policy session fingerprint", status);
+    const maelys_datalog_program_t *program = NULL;
+    maelys_datalog_program_info_t info;
+    memset(&info, 0, sizeof(info));
+    status = maelys_datalog_session_program(entry->session, &program);
+    if (status == MAELYS_DATALOG_STATUS_OK) status = maelys_datalog_program_info(program, &info);
+    if (status != MAELYS_DATALOG_STATUS_OK)
+        return engine_failure(error, "policy identity query", status);
+    if (!info.policy_id || !mg_copy_string(entry->policy_id, sizeof(entry->policy_id), info.policy_id)) {
+        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "policy %zu has no usable identifier", index);
+        return MAELYS_GIT_ERR_POLICY;
+    }
+    return MAELYS_GIT_OK;
+}
+
+maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
+                                            maelys_git_policy_t **out_policy,
+                                            maelys_git_error_t *error) {
     maelys_git_error_clear(error);
     if (!manifest_path || !out_policy) {
         mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0, "manifest path and output are required");
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     }
     *out_policy = NULL;
-    if (!collect_manifest_atoms(manifest_path, error)) return MAELYS_GIT_ERR_POLICY;
-    maelys_result_t result = register_git_domain();
-    if (result != MAELYS_OK) return datalog_failure(error, "domain registration", result);
+    if (pthread_once(&s_domain_once, register_git_domain) != 0 ||
+        s_domain_status != MAELYS_DATALOG_STATUS_OK) {
+        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "cannot register the maelys_git domain: %s",
+                     maelys_datalog_status_name(s_domain_status));
+        return MAELYS_GIT_ERR_POLICY;
+    }
+    /* The engine reads the manifest and its sources, checks their digests and
+     * is the only reader of the policy language. */
+    maelys_datalog_diagnostic_t diagnostic = MAELYS_DATALOG_DIAGNOSTIC_INIT;
+    maelys_datalog_policy_t *loaded = NULL;
+    maelys_datalog_status_t status = maelys_datalog_policy_load_manifest(
+        manifest_path, MAELYS_DATALOG_PUBLIC_ALLOW_UNDECLARED_POLICY_ATOMS, &loaded, &diagnostic);
+    if (status != MAELYS_DATALOG_STATUS_OK) return load_failure(error, status, &diagnostic);
 
+    maelys_git_result_t result = MAELYS_GIT_OK;
     maelys_git_policy_t *policy = calloc(1u, sizeof(*policy));
     if (!policy) {
         mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "unable to allocate policy engine");
-        return MAELYS_GIT_ERR_IO;
+        result = MAELYS_GIT_ERR_IO;
     }
-    maelys_datalog_diagnostic_t diagnostic;
-    result = maelys_datalog_manifest_load_ex(manifest_path, 0u, &policy->set, &diagnostic);
-    if (result != MAELYS_OK) {
-        mg_error_set(error,
-                     MAELYS_GIT_ERR_POLICY,
-                     0,
-                     "policy load failed (%s): %s%s%s",
-                     maelys_datalog_diag_code_name(diagnostic.code),
-                     diagnostic.message,
-                     diagnostic.hint[0] ? "; " : "",
-                     diagnostic.hint);
-        free(policy);
-        return MAELYS_GIT_ERR_POLICY;
-    }
-    if (policy->set.policy_count == 0u) {
-        maelys_datalog_policy_set_clear(&policy->set);
-        free(policy);
-        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "policy set contains no enabled policy");
-        return MAELYS_GIT_ERR_POLICY;
-    }
-    result = maelys_datalog_policy_set_fingerprint(&policy->set, policy->fingerprint);
-    if (result != MAELYS_OK) {
-        maelys_git_policy_close(policy);
-        return datalog_failure(error, "policy-set fingerprint", result);
-    }
-    policy->facts = calloc(MAELYS_DATALOG_MAX_EDB_FACTS, sizeof(*policy->facts));
-    if (!policy->facts) {
-        maelys_git_policy_close(policy);
-        mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "unable to allocate the request fact buffer");
-        return MAELYS_GIT_ERR_IO;
-    }
-    for (size_t i = 0u; i < policy->set.policy_count; ++i) {
-        result = maelys_datalog_prepared_session_create(&policy->set.policies[i],
-                                                        &policy->sessions[i]);
-        if (result != MAELYS_OK) {
-            maelys_git_policy_close(policy);
-            return datalog_failure(error, "policy session preparation", result);
+    size_t count = 0u;
+    if (result == MAELYS_GIT_OK) {
+        status = maelys_datalog_policy_count(loaded, &count);
+        if (status != MAELYS_DATALOG_STATUS_OK) result = engine_failure(error, "policy count", status);
+        else if (count == 0u) {
+            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "policy set contains no enabled policy");
+            result = MAELYS_GIT_ERR_POLICY;
         }
+    }
+    if (result == MAELYS_GIT_OK) {
+        status = maelys_datalog_policy_fingerprint(loaded, policy->fingerprint);
+        if (status != MAELYS_DATALOG_STATUS_OK)
+            result = engine_failure(error, "policy-set fingerprint", status);
+    }
+    if (result == MAELYS_GIT_OK)
+        result = read_limit(MAELYS_DATALOG_LIMIT_MAX_EDB_FACTS, &policy->fact_capacity, error);
+    if (result == MAELYS_GIT_OK)
+        result = read_limit(MAELYS_DATALOG_LIMIT_MAX_FACTS_PER_PRED, &policy->path_limit, error);
+    if (result == MAELYS_GIT_OK) {
+        policy->entries = calloc(count, sizeof(*policy->entries));
+        policy->facts = calloc(policy->fact_capacity, sizeof(*policy->facts));
+        if (!policy->entries || !policy->facts) {
+            mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "unable to allocate the request fact buffer");
+            result = MAELYS_GIT_ERR_IO;
+        }
+    }
+    for (size_t i = 0u; result == MAELYS_GIT_OK && i < count; ++i) {
+        result = prepare_entry(loaded, i, &policy->entries[i], error);
+        policy->count = i + 1u; /* close releases a session created before a failure */
+    }
+    /* Sessions keep their own snapshot of the policy they were created from. */
+    (void)maelys_datalog_policy_free(loaded);
+    if (result != MAELYS_GIT_OK) {
+        maelys_git_policy_close(policy);
+        return result;
     }
     *out_policy = policy;
     return MAELYS_GIT_OK;
@@ -391,281 +297,190 @@ maelys_git_result_t maelys_git_policy_fingerprint(
     return MAELYS_GIT_OK;
 }
 
-maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
-                                            maelys_git_policy_t **out_policy,
-                                            maelys_git_error_t *error) {
-    if (pthread_mutex_lock(&s_policy_load_lock) != 0) {
-        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "cannot serialize policy loading");
-        return MAELYS_GIT_ERR_POLICY;
-    }
-    maelys_git_result_t result = policy_open_unlocked(manifest_path, out_policy, error);
-    (void)pthread_mutex_unlock(&s_policy_load_lock);
-    return result;
-}
-
 void maelys_git_policy_close(maelys_git_policy_t *policy) {
     if (!policy) return;
-    for (size_t i = 0u; i < MG_POLICY_MAX_POLICIES; ++i)
-        if (policy->sessions[i])
-            (void)maelys_datalog_prepared_session_destroy(policy->sessions[i]);
+    for (size_t i = 0u; policy->entries && i < policy->count; ++i)
+        if (policy->entries[i].session)
+            (void)maelys_datalog_session_free(policy->entries[i].session);
+    free(policy->entries);
     free(policy->facts);
-    maelys_datalog_policy_set_clear(&policy->set);
     free(policy);
 }
 
 /* ---- request facts ------------------------------------------------------- */
 
-typedef struct {
-    maelys_datalog_input_fact_t *items;
-    size_t count;
-    size_t capacity;
-} fact_list_t;
-
-static maelys_datalog_input_term_t symbol_term(const char *text) {
-    maelys_datalog_input_term_t term = {.kind = MAELYS_DATALOG_TERM_SYMBOL};
-    term.as.symbol = text;
-    return term;
+static maelys_datalog_value_t symbol_value(const char *text) {
+    maelys_datalog_value_t value = {.kind = MAELYS_DATALOG_VALUE_SYMBOL};
+    value.as.symbol = text;
+    return value;
 }
 
-static maelys_datalog_input_term_t integer_term(long long value) {
-    maelys_datalog_input_term_t term = {.kind = MAELYS_DATALOG_TERM_INT};
-    term.as.integer = value;
-    return term;
+static maelys_datalog_value_t integer_value(int64_t number) {
+    maelys_datalog_value_t value = {.kind = MAELYS_DATALOG_VALUE_INTEGER};
+    value.as.integer = number;
+    return value;
 }
 
-static maelys_datalog_input_term_t boolean_term(int value) {
-    maelys_datalog_input_term_t term = {.kind = MAELYS_DATALOG_TERM_BOOL};
-    term.as.boolean = value != 0;
-    return term;
+static maelys_datalog_value_t boolean_value(int enabled) {
+    maelys_datalog_value_t value = {.kind = MAELYS_DATALOG_VALUE_BOOLEAN};
+    value.as.boolean = enabled != 0;
+    return value;
 }
 
-static maelys_result_t push_fact(fact_list_t *list,
-                                 const char *predicate,
-                                 const maelys_datalog_input_term_t *terms,
-                                 size_t arity) {
-    if (list->count >= list->capacity) return MAELYS_ERR_PAYLOAD_TOO_LARGE;
-    maelys_datalog_input_fact_t *fact = &list->items[list->count];
+static int push_fact(maelys_git_policy_t *policy, const char *predicate,
+                     const maelys_datalog_value_t *terms, size_t arity) {
+    if (policy->fact_count >= policy->fact_capacity) return 0;
+    maelys_datalog_fact_t *fact = &policy->facts[policy->fact_count];
     memset(fact, 0, sizeof(*fact));
     fact->predicate = predicate;
     fact->arity = arity;
     for (size_t i = 0u; i < arity; ++i) fact->terms[i] = terms[i];
-    ++list->count;
-    return MAELYS_OK;
+    ++policy->fact_count;
+    return 1;
 }
 
 /* Absent values add no fact, so policies can test presence. */
-static maelys_result_t push_symbol(fact_list_t *list, const char *predicate, const char *value) {
-    if (!value || !*value) return MAELYS_OK;
-    maelys_datalog_input_term_t term = symbol_term(value);
-    return push_fact(list, predicate, &term, 1u);
+static int push_symbol(maelys_git_policy_t *policy, const char *predicate, const char *text) {
+    if (!text || !*text) return 1;
+    maelys_datalog_value_t value = symbol_value(text);
+    return push_fact(policy, predicate, &value, 1u);
 }
 
-static maelys_result_t push_integer(fact_list_t *list,
-                                    const char *predicate,
-                                    unsigned long long value) {
-    if (value > INT64_MAX) return MAELYS_ERR_PAYLOAD_TOO_LARGE;
-    maelys_datalog_input_term_t term = integer_term((long long)value);
-    return push_fact(list, predicate, &term, 1u);
+static int push_integer(maelys_git_policy_t *policy, const char *predicate,
+                        unsigned long long number) {
+    if (number > INT64_MAX) return 0;
+    maelys_datalog_value_t value = integer_value((int64_t)number);
+    return push_fact(policy, predicate, &value, 1u);
 }
 
-static maelys_result_t push_boolean(fact_list_t *list, const char *predicate, int value) {
-    maelys_datalog_input_term_t term = boolean_term(value);
-    return push_fact(list, predicate, &term, 1u);
+static int push_boolean(maelys_git_policy_t *policy, const char *predicate, int enabled) {
+    maelys_datalog_value_t value = boolean_value(enabled);
+    return push_fact(policy, predicate, &value, 1u);
 }
 
 /* repository_segment/2, repository_depth/1, repository_leaf/1 and, from
- * three segments on, repository_owner_namespace/2. `copy` must outlive the
- * solve: the segment symbols point into it. */
-static maelys_result_t push_repository_structure(fact_list_t *list,
-                                                 const char *repository,
-                                                 char copy[MAELYS_GIT_MAX_REPOSITORY]) {
-    if (!repository || !maelys_git_repository_name_is_valid(repository)) return MAELYS_OK;
-    if (!mg_copy_string(copy, MAELYS_GIT_MAX_REPOSITORY, repository))
-        return MAELYS_ERR_PAYLOAD_TOO_LARGE;
+ * three segments on, repository_owner_namespace/2. The segment symbols point
+ * into the handle's repository copy, which outlives the solve. */
+static int push_repository_structure(maelys_git_policy_t *policy, const char *repository) {
+    if (!repository || !maelys_git_repository_name_is_valid(repository)) return 1;
+    if (!mg_copy_string(policy->repository_copy, sizeof(policy->repository_copy), repository))
+        return 0;
     size_t depth = 0u;
     const char *first = NULL;
     const char *second = NULL;
     const char *leaf = NULL;
     char *save = NULL;
-    for (char *segment = strtok_r(copy, "/", &save);
+    for (char *segment = strtok_r(policy->repository_copy, "/", &save);
          segment; segment = strtok_r(NULL, "/", &save)) {
-        maelys_datalog_input_term_t terms[2] = {
-            integer_term((long long)depth), symbol_term(segment)};
-        maelys_result_t rc = push_fact(list, "repository_segment", terms, 2u);
-        if (rc != MAELYS_OK) return rc;
+        maelys_datalog_value_t terms[2] = {integer_value((int64_t)depth), symbol_value(segment)};
+        if (!push_fact(policy, "repository_segment", terms, 2u)) return 0;
         leaf = segment;
         if (depth == 0u) first = segment;
         else if (depth == 1u) second = segment;
         ++depth;
     }
-    maelys_result_t rc = push_integer(list, "repository_depth", depth);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "repository_leaf", leaf);
-    if (rc == MAELYS_OK && depth >= 3u) {
-        maelys_datalog_input_term_t terms[2] = {symbol_term(first), symbol_term(second)};
-        rc = push_fact(list, "repository_owner_namespace", terms, 2u);
+    int ok = push_integer(policy, "repository_depth", depth) &&
+             push_symbol(policy, "repository_leaf", leaf);
+    if (ok && depth >= 3u) {
+        maelys_datalog_value_t terms[2] = {symbol_value(first), symbol_value(second)};
+        ok = push_fact(policy, "repository_owner_namespace", terms, 2u);
     }
-    return rc;
+    return ok;
 }
 
-static maelys_result_t build_request_facts(fact_list_t *list,
-                                           const maelys_git_policy_request_t *request,
-                                           const char *request_id,
-                                           char repository_copy[MAELYS_GIT_MAX_REPOSITORY]) {
-    list->count = 0u;
-    maelys_result_t rc = push_symbol(list, "request", request_id);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "user", request->principal);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "repository", request->repository);
-    if (rc == MAELYS_OK) rc = push_repository_structure(list, request->repository, repository_copy);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "operation", request->operation);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "ref", request->ref_name);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "ref_kind", request->ref_kind);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "update_kind", request->update_kind);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "change_kind", request->change_kind);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "old_path", request->old_path);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "ssh_key", request->ssh_key);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "remote_address", request->remote_address);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "commit_email", request->commit_email);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "commit_signature_status", request->commit_signature_status);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "commit_signer_fingerprint", request->commit_signer_fingerprint);
-    if (rc == MAELYS_OK) rc = push_symbol(list, "commit_signer_identity", request->commit_signer_identity);
-    if (rc == MAELYS_OK && request->has_commit_signed)
-        rc = push_boolean(list, "commit_signed", request->commit_signed);
-    if (rc == MAELYS_OK && request->has_commit_signature_trusted)
-        rc = push_boolean(list, "commit_signature_trusted", request->commit_signature_trusted);
-    if (request->has_summary) {
-        if (rc == MAELYS_OK) rc = push_integer(list, "changed_count", request->changed_count);
-        if (rc == MAELYS_OK) rc = push_integer(list, "added_count", request->added_count);
-        if (rc == MAELYS_OK) rc = push_integer(list, "modified_count", request->modified_count);
-        if (rc == MAELYS_OK) rc = push_integer(list, "deleted_count", request->deleted_count);
-        if (rc == MAELYS_OK) rc = push_integer(list, "renamed_count", request->renamed_count);
-        if (rc == MAELYS_OK) rc = push_integer(list, "max_new_blob_size", request->max_new_blob_size);
-        if (rc == MAELYS_OK) rc = push_integer(list, "total_new_blob_size", request->total_new_blob_size);
-        if (rc == MAELYS_OK) rc = push_integer(list, "commit_count", request->commit_count);
-        if (rc == MAELYS_OK) rc = push_integer(list, "merge_commit_count", request->merge_commit_count);
-        if (rc == MAELYS_OK) rc = push_boolean(list, "has_binary", request->has_binary);
-    }
-    if (request->has_change_details) {
-        if (rc == MAELYS_OK) rc = push_integer(list, "change_blob_size", request->change_blob_size);
-        if (rc == MAELYS_OK) rc = push_integer(list, "old_mode", request->old_mode);
-        if (rc == MAELYS_OK) rc = push_integer(list, "new_mode", request->new_mode);
-        if (rc == MAELYS_OK) rc = push_boolean(list, "change_binary", request->change_binary);
-        if (rc == MAELYS_OK) rc = push_boolean(list, "change_symlink", request->change_symlink);
-        if (rc == MAELYS_OK) rc = push_boolean(list, "change_submodule", request->change_submodule);
-        if (rc == MAELYS_OK) rc = push_boolean(list, "change_lfs_pointer", request->change_lfs_pointer);
-    }
-    if (rc == MAELYS_OK && request->path_count > MAELYS_DATALOG_MAX_FACTS_PER_PRED)
-        rc = MAELYS_ERR_PAYLOAD_TOO_LARGE;
-    for (size_t i = 0u; rc == MAELYS_OK && i < request->path_count; ++i)
-        rc = push_symbol(list, "path", request->paths[i]);
-    return rc;
+/* The single builder of request facts. They borrow the request's strings and
+ * stay valid, in the handle, until the next request. */
+static int build_request_facts(maelys_git_policy_t *policy,
+                               const maelys_git_policy_request_t *request,
+                               const char *request_id) {
+    policy->fact_count = 0u;
+    int ok = push_symbol(policy, "request", request_id) &&
+             push_symbol(policy, "user", request->principal) &&
+             push_symbol(policy, "repository", request->repository) &&
+             push_repository_structure(policy, request->repository) &&
+             push_symbol(policy, "operation", request->operation) &&
+             push_symbol(policy, "ref", request->ref_name) &&
+             push_symbol(policy, "ref_kind", request->ref_kind) &&
+             push_symbol(policy, "update_kind", request->update_kind) &&
+             push_symbol(policy, "change_kind", request->change_kind) &&
+             push_symbol(policy, "old_path", request->old_path) &&
+             push_symbol(policy, "ssh_key", request->ssh_key) &&
+             push_symbol(policy, "remote_address", request->remote_address) &&
+             push_symbol(policy, "commit_email", request->commit_email) &&
+             push_symbol(policy, "commit_signature_status", request->commit_signature_status) &&
+             push_symbol(policy, "commit_signer_fingerprint", request->commit_signer_fingerprint) &&
+             push_symbol(policy, "commit_signer_identity", request->commit_signer_identity);
+    if (ok && request->has_commit_signed)
+        ok = push_boolean(policy, "commit_signed", request->commit_signed);
+    if (ok && request->has_commit_signature_trusted)
+        ok = push_boolean(policy, "commit_signature_trusted", request->commit_signature_trusted);
+    if (ok && request->has_summary)
+        ok = push_integer(policy, "changed_count", request->changed_count) &&
+             push_integer(policy, "added_count", request->added_count) &&
+             push_integer(policy, "modified_count", request->modified_count) &&
+             push_integer(policy, "deleted_count", request->deleted_count) &&
+             push_integer(policy, "renamed_count", request->renamed_count) &&
+             push_integer(policy, "max_new_blob_size", request->max_new_blob_size) &&
+             push_integer(policy, "total_new_blob_size", request->total_new_blob_size) &&
+             push_integer(policy, "commit_count", request->commit_count) &&
+             push_integer(policy, "merge_commit_count", request->merge_commit_count) &&
+             push_boolean(policy, "has_binary", request->has_binary);
+    if (ok && request->has_change_details)
+        ok = push_integer(policy, "change_blob_size", request->change_blob_size) &&
+             push_integer(policy, "old_mode", request->old_mode) &&
+             push_integer(policy, "new_mode", request->new_mode) &&
+             push_boolean(policy, "change_binary", request->change_binary) &&
+             push_boolean(policy, "change_symlink", request->change_symlink) &&
+             push_boolean(policy, "change_submodule", request->change_submodule) &&
+             push_boolean(policy, "change_lfs_pointer", request->change_lfs_pointer);
+    if (ok && request->path_count > policy->path_limit) ok = 0;
+    for (size_t i = 0u; ok && i < request->path_count; ++i)
+        ok = push_symbol(policy, "path", request->paths[i]);
+    return ok;
 }
 
-/* Solves one policy against the request through its prepared session and
- * reads the allow/deny ground facts of the request symbol. */
-static maelys_git_result_t solve_policy(maelys_datalog_prepared_session_t *session,
-                                        fact_list_t *facts,
-                                        const maelys_git_policy_request_t *request,
-                                        int *out_allow,
-                                        int *out_deny,
-                                        maelys_git_error_t *error) {
-    const char *request_id = request->request_id && *request->request_id
-                                 ? request->request_id
-                                 : "request";
-    char repository_copy[MAELYS_GIT_MAX_REPOSITORY];
-    maelys_result_t rc = build_request_facts(facts, request, request_id, repository_copy);
-    if (rc != MAELYS_OK) return datalog_failure(error, "request fact construction", rc);
-
-    maelys_datalog_solve_result_t *solve_result = NULL;
-    maelys_datalog_solve_diagnostic_t solve_diagnostic;
-    memset(&solve_diagnostic, 0, sizeof(solve_diagnostic));
-    rc = maelys_datalog_prepared_session_solve_ex(session, facts->items, facts->count,
-                                                  &solve_result, &solve_diagnostic);
-    if (rc != MAELYS_OK) {
-        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
-                     "policy solve failed: %s (Maelys Datalog error %d)",
-                     maelys_datalog_solve_diagnostic_category_name(solve_diagnostic.category),
-                     (int)rc);
-        return MAELYS_GIT_ERR_POLICY;
-    }
-    maelys_datalog_symbol_id_t request_symbol = MAELYS_DATALOG_SYMBOL_ID_INVALID;
-    int found = 0;
-    rc = maelys_datalog_prepared_session_lookup_symbol(session, request_id, &request_symbol, &found);
-    if (rc == MAELYS_OK && !found) rc = MAELYS_ERR_INTERNAL;
-    maelys_datalog_term_t query = {.kind = MAELYS_DATALOG_TERM_SYMBOL};
-    query.as.symbol = request_symbol;
-    bool allow = false;
-    bool deny = false;
-    if (rc == MAELYS_OK)
-        rc = maelys_datalog_query_solved_ground_fact(solve_result, "deny", &query, 1u, &deny);
-    if (rc == MAELYS_OK)
-        rc = maelys_datalog_query_solved_ground_fact(solve_result, "allow", &query, 1u, &allow);
-    maelys_datalog_solve_result_free(solve_result);
-    if (rc != MAELYS_OK) return datalog_failure(error, "decision query", rc);
-    *out_allow = allow ? 1 : 0;
-    *out_deny = deny ? 1 : 0;
-    return MAELYS_GIT_OK;
+static const char *request_identifier(const maelys_git_policy_request_t *request) {
+    return request->request_id && *request->request_id ? request->request_id : "request";
 }
 
-#ifdef MAELYS_GIT_POLICY_TESTING
-/* Test oracle: rebuild the EDB and ruleset, using the same request facts as
- * the prepared path. This code is absent from production libraries. */
-static maelys_git_result_t solve_policy_fresh(
-    const maelys_datalog_ruleset_t *source, fact_list_t *facts,
-    const maelys_git_policy_request_t *request, int *out_allow, int *out_deny,
-    maelys_git_error_t *error) {
-    const char *id = request->request_id && *request->request_id ? request->request_id : "request";
-    char repository_copy[MAELYS_GIT_MAX_REPOSITORY];
-    maelys_result_t rc = build_request_facts(facts, request, id, repository_copy);
-    if (rc != MAELYS_OK) return datalog_failure(error, "fresh facts", rc);
-    maelys_datalog_ruleset_t *ruleset = malloc(sizeof(*ruleset));
-    maelys_datalog_edb_t *edb = calloc(1u, sizeof(*edb));
-    maelys_datalog_fact_t *pool = calloc(MAELYS_DATALOG_MAX_EDB_FACTS, sizeof(*pool));
-    if (!ruleset || !edb || !pool) {
-        free(ruleset); free(edb); free(pool);
-        return MAELYS_GIT_ERR_IO;
-    }
-    *ruleset = *source;
-    rc = maelys_datalog_edb_init(edb, pool, MAELYS_DATALOG_MAX_EDB_FACTS,
-                                &ruleset->symbols, &ruleset->registry);
-    maelys_datalog_symbol_id_t request_symbol = MAELYS_DATALOG_SYMBOL_ID_INVALID;
-    if (rc == MAELYS_OK) rc = maelys_datalog_edb_intern_runtime_symbol(edb, id, &request_symbol);
-    for (size_t i = 0u; rc == MAELYS_OK && i < facts->count; ++i) {
-        const maelys_datalog_input_fact_t *fact = &facts->items[i];
-        maelys_datalog_term_t terms[MAELYS_DATALOG_MAX_ARITY] = {0};
-        for (size_t j = 0u; rc == MAELYS_OK && j < fact->arity; ++j) {
-            terms[j].kind = fact->terms[j].kind;
-            if (terms[j].kind == MAELYS_DATALOG_TERM_SYMBOL)
-                rc = maelys_datalog_edb_intern_runtime_symbol(edb, fact->terms[j].as.symbol,
-                                                             &terms[j].as.symbol);
-            else if (terms[j].kind == MAELYS_DATALOG_TERM_INT)
-                terms[j].as.integer = fact->terms[j].as.integer;
-            else terms[j].as.boolean = fact->terms[j].as.boolean;
-        }
-        if (rc == MAELYS_OK) rc = maelys_datalog_edb_add_fact(edb, fact->predicate, terms, fact->arity);
-    }
-    if (rc == MAELYS_OK) rc = maelys_datalog_edb_finalize(edb);
-    maelys_datalog_solve_result_t *solved = NULL;
-    if (rc == MAELYS_OK) rc = maelys_datalog_solve_once_ex(ruleset, edb, &solved, NULL);
-    maelys_datalog_term_t query = {.kind = MAELYS_DATALOG_TERM_SYMBOL};
-    query.as.symbol = request_symbol;
-    bool allow = false, deny = false;
-    if (rc == MAELYS_OK) rc = maelys_datalog_query_solved_ground_fact(solved, "deny", &query, 1u, &deny);
-    if (rc == MAELYS_OK) rc = maelys_datalog_query_solved_ground_fact(solved, "allow", &query, 1u, &allow);
-    maelys_datalog_solve_result_free(solved);
-    free(pool); free(edb); free(ruleset);
-    if (rc != MAELYS_OK) return datalog_failure(error, "fresh solve", rc);
-    *out_allow = allow ? 1 : 0;
-    *out_deny = deny ? 1 : 0;
-    return MAELYS_GIT_OK;
-}
-#endif
+/* ---- evaluation ---------------------------------------------------------- */
 
-static maelys_git_result_t policy_authorize(maelys_git_policy_t *policy,
-                                                 const maelys_git_policy_request_t *request,
-                                                 maelys_git_policy_decision_t *out_decision,
-                                                 int fresh,
-                                                 maelys_git_error_t *error) {
-    (void)fresh;
+/* Solves one policy against the request facts of the handle. The result is
+ * returned alive: the caller releases it before the next solve of the session. */
+static maelys_git_result_t solve_entry(maelys_git_policy_t *policy, const policy_entry_t *entry,
+                                       maelys_datalog_result_t **out_result,
+                                       maelys_git_error_t *error) {
+    maelys_datalog_diagnostic_t diagnostic = MAELYS_DATALOG_DIAGNOSTIC_INIT;
+    maelys_datalog_status_t status = maelys_datalog_session_solve(
+        entry->session, policy->facts, policy->fact_count, out_result, &diagnostic);
+    if (status == MAELYS_DATALOG_STATUS_OK) return MAELYS_GIT_OK;
+    mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "policy solve failed: %s (%s)",
+                 diagnostic.source == MAELYS_DATALOG_DIAGNOSTIC_NONE
+                     ? "no diagnostic" : maelys_datalog_diag_code_name(diagnostic.code),
+                 maelys_datalog_status_name(status));
+    return MAELYS_GIT_ERR_POLICY;
+}
+
+/* Reads deny then allow for the request and lets the engine rank them. */
+static maelys_git_result_t classify(const maelys_datalog_result_t *result, const char *request_id,
+                                    maelys_datalog_decision_t *out_decision,
+                                    maelys_git_error_t *error) {
+    maelys_datalog_value_t query = symbol_value(request_id);
+    int allow = 0;
+    int deny = 0;
+    maelys_datalog_status_t status =
+        maelys_datalog_result_query(result, "deny", &query, 1u, &deny);
+    if (status == MAELYS_DATALOG_STATUS_OK)
+        status = maelys_datalog_result_query(result, "allow", &query, 1u, &allow);
+    if (status == MAELYS_DATALOG_STATUS_OK)
+        status = maelys_datalog_decision_from_presence(allow, 0, deny, out_decision);
+    return status == MAELYS_DATALOG_STATUS_OK ? MAELYS_GIT_OK
+                                              : engine_failure(error, "decision query", status);
+}
+
+maelys_git_result_t maelys_git_policy_authorize(
+    maelys_git_policy_t *policy, const maelys_git_policy_request_t *request,
+    maelys_git_policy_decision_t *out_decision, maelys_git_error_t *error) {
     maelys_git_error_clear(error);
     if (!policy || !request || !out_decision || !request->principal ||
         !*request->principal || !request->repository || !*request->repository ||
@@ -682,61 +497,146 @@ static maelys_git_result_t policy_authorize(maelys_git_policy_t *policy,
     }
     memset(out_decision, 0, sizeof(*out_decision));
     out_decision->matched_policy = SIZE_MAX;
-    int saw_allow = 0;
+    memcpy(out_decision->policy_set_fingerprint, policy->fingerprint, sizeof(policy->fingerprint));
+    const char *request_id = request_identifier(request);
+    maelys_git_result_t result = MAELYS_GIT_OK;
+    if (!build_request_facts(policy, request, request_id)) {
+        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                     "request fact construction failed: a value or the fact count exceeds the engine limits");
+        result = MAELYS_GIT_ERR_POLICY;
+    }
     size_t allow_policy = SIZE_MAX;
-    fact_list_t facts = {policy->facts, 0u, MAELYS_DATALOG_MAX_EDB_FACTS};
-    for (size_t i = 0u; i < policy->set.policy_count; ++i) {
-        int allow = 0;
-        int deny = 0;
-        maelys_git_result_t result =
-#ifdef MAELYS_GIT_POLICY_TESTING
-            fresh ? solve_policy_fresh(&policy->set.policies[i], &facts, request, &allow, &deny, error) :
-#endif
-            solve_policy(policy->sessions[i], &facts, request,
-                                                  &allow, &deny, error);
-        if (result != MAELYS_GIT_OK) {
-            (void)mg_copy_string(out_decision->reason, sizeof(out_decision->reason), "policy evaluation failed; request denied");
-            return result;
+    for (size_t i = 0u; result == MAELYS_GIT_OK && i < policy->count; ++i) {
+        const policy_entry_t *entry = &policy->entries[i];
+        maelys_datalog_result_t *solved = NULL;
+        maelys_datalog_decision_t ranked = MAELYS_DATALOG_DECISION_DENY_DEFAULT;
+        result = solve_entry(policy, entry, &solved, error);
+        if (result == MAELYS_GIT_OK) {
+            result = classify(solved, request_id, &ranked, error);
+            (void)maelys_datalog_result_free(solved);
         }
-        if (deny) {
+        if (result != MAELYS_GIT_OK) break;
+        if (ranked == MAELYS_DATALOG_DECISION_DENY || ranked == MAELYS_DATALOG_DECISION_DENY_CONFLICT) {
+            /* An explicit deny of any policy wins and ends the evaluation. */
             out_decision->explicit_deny = 1;
             out_decision->matched_policy = i;
-            (void)snprintf(out_decision->reason,
-                           sizeof(out_decision->reason),
-                           "explicit deny from policy %s",
-                           policy->set.policies[i].policy_id);
+            memcpy(out_decision->session_fingerprint, entry->fingerprint, sizeof(entry->fingerprint));
+            (void)snprintf(out_decision->reason, sizeof(out_decision->reason),
+                           "explicit deny from policy %s", entry->policy_id);
             return MAELYS_GIT_OK;
         }
-        if (allow && !saw_allow) {
-            saw_allow = 1;
-            allow_policy = i;
+        if (ranked == MAELYS_DATALOG_DECISION_ALLOW) {
+            if (allow_policy == SIZE_MAX) allow_policy = i;
+        } else if (ranked != MAELYS_DATALOG_DECISION_DENY_DEFAULT) {
+            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "decision query returned an unknown rank");
+            result = MAELYS_GIT_ERR_POLICY;
         }
     }
-    if (saw_allow) {
+    if (result != MAELYS_GIT_OK) {
+        (void)mg_copy_string(out_decision->reason, sizeof(out_decision->reason), "policy evaluation failed; request denied");
+        return result;
+    }
+    if (allow_policy != SIZE_MAX) {
+        const policy_entry_t *entry = &policy->entries[allow_policy];
         out_decision->allowed = 1;
         out_decision->matched_policy = allow_policy;
-        (void)snprintf(out_decision->reason,
-                       sizeof(out_decision->reason),
-                       "allowed by policy %s",
-                       policy->set.policies[allow_policy].policy_id);
+        memcpy(out_decision->session_fingerprint, entry->fingerprint, sizeof(entry->fingerprint));
+        (void)snprintf(out_decision->reason, sizeof(out_decision->reason),
+                       "allowed by policy %s", entry->policy_id);
     } else {
-        (void)mg_copy_string(out_decision->reason,
-                             sizeof(out_decision->reason),
+        (void)mg_copy_string(out_decision->reason, sizeof(out_decision->reason),
                              "no allow rule matched; denied by default");
     }
     return MAELYS_GIT_OK;
 }
 
-maelys_git_result_t maelys_git_policy_authorize(
-    maelys_git_policy_t *policy, const maelys_git_policy_request_t *request,
-    maelys_git_policy_decision_t *decision, maelys_git_error_t *error) {
-    return policy_authorize(policy, request, decision, 0, error);
+/* ---- explanation --------------------------------------------------------- */
+
+/* The status line of a MAELYS-DATALOG-v2 explanation document. */
+static maelys_git_explanation_status_t document_status(const char *text) {
+    const char *line = strstr(text, "\nstatus=");
+    if (!line) return MAELYS_GIT_EXPLANATION_NOT_APPLICABLE;
+    line += 8;
+    if (strncmp(line, "complete", 8u) == 0) return MAELYS_GIT_EXPLANATION_COMPLETE;
+    if (strncmp(line, "truncated", 9u) == 0) return MAELYS_GIT_EXPLANATION_TRUNCATED;
+    return MAELYS_GIT_EXPLANATION_NOT_APPLICABLE;
 }
 
-#ifdef MAELYS_GIT_POLICY_TESTING
-maelys_git_result_t mg_policy_authorize_fresh(
+maelys_git_result_t maelys_git_policy_explain(
     maelys_git_policy_t *policy, const maelys_git_policy_request_t *request,
-    maelys_git_policy_decision_t *decision, maelys_git_error_t *error) {
-    return policy_authorize(policy, request, decision, 1, error);
+    char *out_text, size_t capacity, maelys_git_policy_explanation_t *out_explanation,
+    maelys_git_error_t *error) {
+    maelys_git_error_clear(error);
+    if (!out_explanation || (!out_text && capacity > 0u)) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0, "an explanation record is required, and a buffer when a capacity is given");
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    memset(out_explanation, 0, sizeof(*out_explanation));
+    out_explanation->explained_policy = SIZE_MAX;
+    if (out_text) out_text[0] = '\0';
+    /* The decision first, by the very code path that authorizes. */
+    maelys_git_result_t result =
+        maelys_git_policy_authorize(policy, request, &out_explanation->decision, error);
+    if (result != MAELYS_GIT_OK) return result;
+    const maelys_git_policy_decision_t *decision = &out_explanation->decision;
+    int why_true = decision->allowed || decision->explicit_deny;
+    const char *query_name = decision->explicit_deny ? "deny" : "allow";
+    /* A derived allow or deny is witnessed by the policy that derived it; a
+     * default denial is examined on the last policy that could have allowed. */
+    size_t target = why_true ? decision->matched_policy : policy->count - 1u;
+    out_explanation->kind = why_true ? MAELYS_GIT_EXPLANATION_WHY_TRUE : MAELYS_GIT_EXPLANATION_WHY_FALSE;
+    out_explanation->explained_policy = target;
+    (void)mg_copy_string(out_explanation->query, sizeof(out_explanation->query), query_name);
+
+    /* The request facts are still in the handle: solve the one policy again and
+     * render from the result that carries the decision. */
+    maelys_datalog_result_t *solved = NULL;
+    result = solve_entry(policy, &policy->entries[target], &solved, error);
+    if (result != MAELYS_GIT_OK) return result;
+    maelys_datalog_value_t query = symbol_value(request_identifier(request));
+    maelys_datalog_status_t (*render)(const maelys_datalog_result_t *, const char *,
+                                      const maelys_datalog_value_t *, size_t, char *, size_t,
+                                      size_t *) =
+        why_true ? maelys_datalog_result_explain_true_text : maelys_datalog_result_explain_false_text;
+    size_t required = 0u;
+    maelys_datalog_status_t status = render(solved, query_name, &query, 1u, NULL, 0u, &required);
+    if (status == MAELYS_DATALOG_STATUS_UNSUPPORTED) {
+        /* The backend cannot explain: the decision stands, without a document. */
+        (void)maelys_datalog_result_free(solved);
+        out_explanation->status = MAELYS_GIT_EXPLANATION_NOT_APPLICABLE;
+        return MAELYS_GIT_OK;
+    }
+    if (status != MAELYS_DATALOG_STATUS_OK && status != MAELYS_DATALOG_STATUS_PAYLOAD_TOO_LARGE) {
+        (void)maelys_datalog_result_free(solved);
+        return engine_failure(error, "explanation", status);
+    }
+    out_explanation->text_required = required;
+    maelys_datalog_filter_statistics_t filters;
+    memset(&filters, 0, sizeof(filters));
+    if (maelys_datalog_result_filter_statistics(solved, &filters) == MAELYS_DATALOG_STATUS_OK) {
+        out_explanation->filter_matches = filters.matches;
+        out_explanation->filter_non_matches = filters.non_matches;
+        out_explanation->filter_cost_units = filters.cost_units;
+    }
+    if (!out_text) {
+        /* Size query: the caller allocates text_required + 1 bytes and calls again. */
+        (void)maelys_datalog_result_free(solved);
+        return MAELYS_GIT_OK;
+    }
+    if (capacity <= required) {
+        (void)maelys_datalog_result_free(solved);
+        mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0,
+                     "the explanation needs %zu bytes and the buffer holds %zu", required + 1u, capacity);
+        return MAELYS_GIT_ERR_LIMIT;
+    }
+    /* The text is copied into the caller's buffer before the result goes. */
+    status = render(solved, query_name, &query, 1u, out_text, capacity, &required);
+    (void)maelys_datalog_result_free(solved);
+    if (status != MAELYS_DATALOG_STATUS_OK) {
+        out_text[0] = '\0';
+        return engine_failure(error, "explanation", status);
+    }
+    out_explanation->text_length = required;
+    out_explanation->status = document_status(out_text);
+    return MAELYS_GIT_OK;
 }
-#endif

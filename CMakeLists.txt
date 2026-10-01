@@ -138,15 +138,12 @@ add_library(maelys_git_core STATIC
     src/hooks/pre_receive.c)
 target_include_directories(maelys_git_core
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
-    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
-    # Until the GIT-C01 migration to <maelys/datalog.h>, policy.c, gitolite.c
-    # and mirror.c still read the engine's alpha and common headers, which
-    # maelys-datalog 0.3.0 stopped exporting: the pinned tree root is visible
-    # to this library only.
-    PRIVATE "${MAELYS_DATALOG_SOURCE_DIR}")
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+# The engine is reached through its installed SDK headers only, and SHA-256
+# comes from the public digest of the dependency-free CLI framework core.
 target_link_libraries(maelys_git_core
     PUBLIC maelys_datalog
-    PRIVATE Threads::Threads maelys_git_build_flags)
+    PRIVATE maelys::cli Threads::Threads maelys_git_build_flags)
 
 add_library(maelys_git_agent_core STATIC
     src/protocol/protocol.c
@@ -311,13 +308,9 @@ if(MAELYS_GIT_BUILD_TESTS)
         TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}")
     add_test(NAME maelys-git-core COMMAND test-maelys-git)
 
-    add_executable(test-maelys-git-policy-sessions
-        tests/test_policy_sessions.c src/policy/policy.c)
-    target_include_directories(test-maelys-git-policy-sessions PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/src"
-        "${MAELYS_DATALOG_SOURCE_DIR}") # recompiles policy.c: same alpha headers
+    add_executable(test-maelys-git-policy-sessions tests/test_policy_sessions.c)
     target_compile_definitions(test-maelys-git-policy-sessions PRIVATE
-        MAELYS_GIT_POLICY_TESTING=1 TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}")
+        TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}")
     target_link_libraries(test-maelys-git-policy-sessions PRIVATE
         maelys_git_core Threads::Threads maelys_git_build_flags)
     add_test(NAME maelys-git-policy-sessions COMMAND test-maelys-git-policy-sessions)
@@ -334,6 +327,15 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_link_libraries(test-maelys-git-policy-golden PRIVATE
         maelys_git_core maelys_git_build_flags)
     add_test(NAME maelys-git-policy-golden COMMAND test-maelys-git-policy-golden)
+
+    # Production code reaches the engine through its installed SDK only.
+    add_test(NAME maelys-git-datalog-boundary
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DARCHIVE=$<TARGET_FILE:maelys_git_core>
+            -DSDK_INCLUDE=${MAELYS_DATALOG_SOURCE_DIR}/include
+            -DNM=${CMAKE_NM}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_datalog_boundary.cmake)
     set_tests_properties(maelys-git-policy-sessions PROPERTIES TIMEOUT 120)
 
     add_executable(test-maelys-git-agent tests/test_agent.c)

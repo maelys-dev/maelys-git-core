@@ -1,6 +1,6 @@
 #include "internal.h"
 
-#include "common/maelys_sha256.h"
+#include <maelys/cli/digest.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -631,13 +631,8 @@ maelys_git_result_t maelys_git_migrate_gitolite(
                      out_result->unsupported_count);
         return MAELYS_GIT_ERR_PROTOCOL;
     }
-    char policy_sha[65];
-    if (maelys_sha256_hex((const unsigned char *)policy.data, policy.length, policy_sha) != 0) {
-        free(policy.data);
-        mg_error_set(error, MAELYS_GIT_ERR_IO, 0,
-                     "cannot hash generated Gitolite policy");
-        return MAELYS_GIT_ERR_IO;
-    }
+    char policy_sha[MAELYS_CLI_SHA256_HEX_SIZE];
+    maelys_cli_sha256_hex(policy.data, policy.length, policy_sha);
     text_buffer_t manifest = {0};
     if (!append_text(&manifest,
         "{\n  \"policy_set_id\": \"maelys-git.gitolite-migration\",\n"
