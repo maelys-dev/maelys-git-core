@@ -195,6 +195,11 @@ static maelys_git_result_t read_limit(maelys_datalog_limit_t limit, size_t *out,
                ? MAELYS_GIT_OK : engine_failure(error, "engine limit query", status);
 }
 
+maelys_git_result_t mg_policy_rule_limit(size_t *out_limit, maelys_git_error_t *error) {
+    if (!out_limit) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    return read_limit(MAELYS_DATALOG_LIMIT_MAX_RULES, out_limit, error);
+}
+
 /* Creates the session of one policy and records its identity. */
 static maelys_git_result_t prepare_entry(const maelys_datalog_policy_t *loaded, size_t index,
                                          policy_entry_t *entry, maelys_git_error_t *error) {

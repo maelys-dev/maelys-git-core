@@ -126,7 +126,8 @@ grep -q 'ref_grant_push("alice", "refs.git", "refs/heads/main")' \
   "$test_root/refs/gitolite-migrated.dl"
 grep -q 'ref_grant_force("bob", "refs.git", "refs/heads/release")' \
   "$test_root/refs/gitolite-migrated.dl"
-grep -q 'ref_deny("mallory", "refs.git", "refs/heads/main")' \
+# A bare literal denies as a prefix, as Gitolite does; grants stay exact.
+grep -qF 'effective_ref_deny("mallory", "refs.git", F) :- ref(F), starts_with(F, "refs/heads/main").' \
   "$test_root/refs/gitolite-migrated.dl"
 "$maelys_git_bin" validate "$test_root/refs/manifest.json" \
   --format json --compact | grep -q '"valid":true'
@@ -168,3 +169,53 @@ printf '%s %s %s\n' "$zero_oid" "$new_oid" refs/heads/release | \
   "$maelys_hook_bin" pre-receive --repository refs.git \
     --manifest "$test_root/refs/manifest.json" --user bob \
     --git-dir "$test_root/refrepo.git" >/dev/null
+
+# Prefixes: a real push through the hook, on the namespace and beside it.
+printf '%s\n' \
+  'repo refs' \
+  '    RW refs/heads/release/ = alice' \
+  '    RW refs/heads/main = alice' > "$test_root/prefix.conf"
+plan=$("$maelys_git_bin" migrate gitolite "$test_root/prefix.conf" \
+  "$test_root/prefix" --format json --compact)
+printf '%s\n' "$plan" | grep -q '"canApply":true'
+"$maelys_git_bin" migrate gitolite "$test_root/prefix.conf" \
+  "$test_root/prefix" --apply --format json --compact >/dev/null
+grep -qF 'effective_ref_grant_push("alice", "refs.git", F) :- ref(F), starts_with(F, "refs/heads/release/").' \
+  "$test_root/prefix/gitolite-migrated.dl"
+"$maelys_git_bin" validate "$test_root/prefix/manifest.json" \
+  --format json --compact | grep -q '"valid":true'
+printf '%s %s %s\n' "$zero_oid" "$new_oid" refs/heads/release/1.0 | \
+  "$maelys_hook_bin" pre-receive --repository refs.git \
+    --manifest "$test_root/prefix/manifest.json" --user alice \
+    --git-dir "$test_root/refrepo.git" >/dev/null
+for neighbour in refs/heads/release-evil refs/heads/releases refs/heads/release; do
+  if printf '%s %s %s\n' "$zero_oid" "$new_oid" "$neighbour" | \
+       "$maelys_hook_bin" pre-receive --repository refs.git \
+         --manifest "$test_root/prefix/manifest.json" --user alice \
+         --git-dir "$test_root/refrepo.git" >/dev/null 2>/dev/null; then
+    printf 'prefix migration allowed %s, which is outside the namespace\n' "$neighbour" >&2
+    exit 1
+  fi
+done
+if printf '%s %s %s\n' "$zero_oid" "$new_oid" refs/heads/release/1.0 | \
+     "$maelys_hook_bin" pre-receive --repository refs.git \
+       --manifest "$test_root/prefix/manifest.json" --user bob \
+       --git-dir "$test_root/refrepo.git" >/dev/null 2>/dev/null; then
+  printf 'prefix migration allowed the wrong principal\n' >&2
+  exit 1
+fi
+
+# A regular expression has no bounded equivalent: reported, never applied.
+printf '%s\n' \
+  'repo refs' \
+  '    RW refs/heads/(main|dev) = alice' > "$test_root/regex.conf"
+regex=$("$maelys_git_bin" migrate gitolite "$test_root/regex.conf" \
+  "$test_root/regex" --format json --compact)
+printf '%s\n' "$regex" | grep -q '"canApply":false'
+printf '%s\n' "$regex" | grep -q 'unsupported refex syntax'
+if "$maelys_git_bin" migrate gitolite "$test_root/regex.conf" \
+     "$test_root/regex" --apply --format json --compact >/dev/null 2>&1; then
+  printf 'a regular-expression refex was applied\n' >&2
+  exit 1
+fi
+test ! -e "$test_root/regex"

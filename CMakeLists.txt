@@ -328,6 +328,14 @@ if(MAELYS_GIT_BUILD_TESTS)
         maelys_git_core maelys_git_build_flags)
     add_test(NAME maelys-git-policy-golden COMMAND test-maelys-git-policy-golden)
 
+    add_executable(test-maelys-git-policy-facade tests/test_policy_facade.c)
+    target_compile_definitions(test-maelys-git-policy-facade PRIVATE
+        TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}"
+        FIXTURE_DIR="${MAELYS_GIT_POLICY_FIXTURES}")
+    target_link_libraries(test-maelys-git-policy-facade PRIVATE
+        maelys_git_core maelys::cli maelys_git_build_flags)
+    add_test(NAME maelys-git-policy-facade COMMAND test-maelys-git-policy-facade)
+
     # Production code reaches the engine through its installed SDK only.
     add_test(NAME maelys-git-datalog-boundary
         COMMAND ${CMAKE_COMMAND}

@@ -247,11 +247,115 @@ static int append_ref_fact(text_buffer_t *policy,
                        prefix, predicate, name, repository, ref_name);
 }
 
+/* The longest filter pattern the policy language accepts. */
+#define MG_REF_PATTERN_MAX 256u
+
+typedef enum {
+    REFEX_EXACT = 1,
+    REFEX_PREFIX = 2
+} refex_kind_t;
+
+/* Reads one Gitolite refex and returns NULL, or the stable reason it is
+ * refused. Gitolite anchors a refex at its start only, completes a name that
+ * does not begin with refs/ by refs/heads/, and takes a final $ as equality.
+ * Only literal names are converted, into a form whose equivalence holds:
+ *   - a literal ending in '/' is a prefix;
+ *   - a literal ending in '$' is the exact ref without the '$';
+ *   - a bare literal denies as a prefix, which is what Gitolite does, and
+ *     grants the exact ref only, which is stricter than Gitolite.
+ * Alternation, classes, repetition and any other regular-expression syntax
+ * have no bounded equivalent and are refused. */
+static const char *classify_refex(const char *text, int deny, refex_kind_t *out_kind,
+                                  char out_value[MG_REF_PATTERN_MAX + 1u]) {
+    size_t length = strlen(text);
+    int anchored = length > 0u && text[length - 1u] == '$';
+    size_t body = anchored ? length - 1u : length;
+    if (body == 0u) return "unsupported refex syntax";
+    for (size_t i = 0u; i < body; ++i) {
+        unsigned char ch = (unsigned char)text[i];
+        if (!(isalnum(ch) || ch == '.' || ch == '_' || ch == '/' || ch == '-'))
+            return "unsupported refex syntax";
+    }
+    const char *implied = strncmp(text, "refs/", 5u) == 0 ? "" : "refs/heads/";
+    if (strlen(implied) + body > MG_REF_PATTERN_MAX) return "ref pattern exceeds 256 bytes";
+    (void)snprintf(out_value, MG_REF_PATTERN_MAX + 1u, "%s%.*s", implied, (int)body, text);
+    if (strstr(out_value, "..") || strstr(out_value, "//")) return "unsupported refex syntax";
+    int open_namespace = out_value[strlen(out_value) - 1u] == '/';
+    if (anchored && open_namespace) return "unsupported refex syntax";
+    if (!anchored && (open_namespace || deny)) {
+        *out_kind = REFEX_PREFIX;
+        return NULL;
+    }
+    /* An exact ref is a policy atom: the full-ref form and the atom length apply. */
+    if (!maelys_git_ref_name_is_valid(out_value)) return "unsupported refex syntax";
+    if (strlen(out_value) >= 64u) return "exact ref exceeds 63 bytes";
+    *out_kind = REFEX_EXACT;
+    return NULL;
+}
+
+/* Appends a line unless the policy already has it: several prefix rules of
+ * one subject share their two access rules. */
+static int append_once(text_buffer_t *policy, const char *line) {
+    if (policy->data && strstr(policy->data, line)) return 1;
+    return append_text(policy, "%s", line);
+}
+
+/* A prefix is policy code: a rule with a constant filter pattern, never an
+ * atom. The pattern holds only [A-Za-z0-9._/-], so it needs no escaping. The
+ * access rules keep what an exact grant gives to requests that carry no ref:
+ * the write operation and the summary of a push. */
+static int append_ref_prefix_rules(text_buffer_t *policy, const char *right,
+                                   const char *subject, const char *repository,
+                                   const char *pattern) {
+    int group = subject[0] == '@';
+    const char *name = group ? subject + 1u : subject;
+    if (!safe_atom(name) || strlen(pattern) > MG_REF_PATTERN_MAX) return 0;
+    char who[160], member[224], line[1024];
+    if (group) {
+        (void)snprintf(who, sizeof(who), "U");
+        (void)snprintf(member, sizeof(member), "effective_group_member(U, \"%s\"), ", name);
+    } else {
+        (void)snprintf(who, sizeof(who), "\"%s\"", name);
+        member[0] = '\0';
+    }
+    static const char *const grant_heads[] = {"effective_ref_grant_push", "effective_ref_grant_force"};
+    if (!strcmp(right, "-")) {
+        (void)snprintf(line, sizeof(line),
+                       "effective_ref_deny(%s, \"%s\", F) :- %sref(F), starts_with(F, \"%s\").\n",
+                       who, repository, member, pattern);
+        return append_once(policy, line);
+    }
+    if (strcmp(right, "RW") && strcmp(right, "RW+")) return 0;
+    size_t heads = strcmp(right, "RW+") ? 1u : 2u;
+    for (size_t i = 0u; i < heads; ++i) {
+        (void)snprintf(line, sizeof(line),
+                       "%s(%s, \"%s\", F) :- %sref(F), starts_with(F, \"%s\").\n",
+                       grant_heads[i], who, repository, member, pattern);
+        if (!append_once(policy, line)) return 0;
+    }
+    static const char *const access_heads[] = {"has_ref_write", "has_push_access"};
+    for (size_t i = 0u; i < 2u; ++i) {
+        if (group)
+            (void)snprintf(line, sizeof(line),
+                           "%s(U, \"%s\") :- effective_group_member(U, \"%s\").\n",
+                           access_heads[i], repository, name);
+        else
+            (void)snprintf(line, sizeof(line),
+                           "%s(\"%s\", \"%s\") :- user(\"%s\"), repository(\"%s\").\n",
+                           access_heads[i], name, repository, name, repository);
+        if (!append_once(policy, line)) return 0;
+    }
+    return 1;
+}
+
 static int append_ref_grant(text_buffer_t *policy,
                             const char *right,
                             const char *subject,
                             const char *repository,
+                            refex_kind_t kind,
                             const char *ref_name) {
+    if (kind == REFEX_PREFIX)
+        return append_ref_prefix_rules(policy, right, subject, repository, ref_name);
     if (!strcmp(right, "-"))
         return append_ref_fact(policy, "ref_deny", subject, repository, ref_name);
     if (strcmp(right, "RW") && strcmp(right, "RW+")) return 0;
@@ -494,40 +598,45 @@ static maelys_git_result_t parse_gitolite(FILE *input,
         }
         int is_vref = 0, is_ref_rule = 0;
         const char *ref_permission = NULL;
-        const char *ref_name = NULL;
+        refex_kind_t ref_kind = REFEX_EXACT;
+        char ref_name[MG_REF_PATTERN_MAX + 1u];
         vref_rule_t vref = {0};
         if (right[0] == '-') {
             char *descriptor = trim(right + 1u);
             if (parse_vref_rule(descriptor, &vref)) {
                 is_vref = 1;
-            } else if (maelys_git_ref_name_is_valid(descriptor) &&
-                       strlen(descriptor) < 64u) {
-                is_ref_rule = 1;
-                ref_permission = "-";
-                ref_name = descriptor;
-            } else {
+            } else if (strncmp(descriptor, "VREF/", 5u) == 0) {
                 if (!add_unsupported(migration, line_number,
                                      "unsupported negative ref or VREF", original))
                     return MAELYS_GIT_ERR_IO;
                 continue;
+            } else {
+                const char *refused = classify_refex(descriptor, 1, &ref_kind, ref_name);
+                if (refused) {
+                    if (!add_unsupported(migration, line_number, refused, original))
+                        return MAELYS_GIT_ERR_IO;
+                    continue;
+                }
+                is_ref_rule = 1;
+                ref_permission = "-";
             }
         } else {
             char *separator = strpbrk(right, " \t");
             if (separator) {
                 *separator = '\0';
                 char *candidate_ref = trim(separator + 1u);
-                if ((!strcmp(right, "RW") || !strcmp(right, "RW+")) &&
-                    maelys_git_ref_name_is_valid(candidate_ref) &&
-                    strlen(candidate_ref) < 64u) {
-                    is_ref_rule = 1;
-                    ref_permission = right;
-                    ref_name = candidate_ref;
-                } else {
-                    if (!add_unsupported(migration, line_number,
-                                         "only exact full-ref RW/RW+ rules are supported", original))
+                const char *refused =
+                    (strcmp(right, "RW") && strcmp(right, "RW+")) ||
+                    strncmp(candidate_ref, "VREF/", 5u) == 0
+                        ? "only exact full-ref RW/RW+ rules are supported"
+                        : classify_refex(candidate_ref, 0, &ref_kind, ref_name);
+                if (refused) {
+                    if (!add_unsupported(migration, line_number, refused, original))
                         return MAELYS_GIT_ERR_IO;
                     continue;
                 }
+                is_ref_rule = 1;
+                ref_permission = right;
             } else if (strcmp(right, "C") && strcmp(right, "R") &&
                        strcmp(right, "RW") && strcmp(right, "RW+")) {
                 if (!add_unsupported(migration, line_number,
@@ -567,7 +676,7 @@ static maelys_git_result_t parse_gitolite(FILE *input,
                     is_ref_rule ?
                     (repositories[i].kind == REPOSITORY_EXACT &&
                      append_ref_grant(policy, ref_permission, subject,
-                                      repositories[i].value, ref_name)) :
+                                      repositories[i].value, ref_kind, ref_name)) :
                     repositories[i].kind == REPOSITORY_EXACT ?
                         append_direct_grant(policy, right, subject, repositories[i].value) :
                         append_creator_namespace_grant(policy, right, subject,
@@ -589,7 +698,23 @@ static maelys_git_result_t parse_gitolite(FILE *input,
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "cannot read Gitolite configuration");
         return MAELYS_GIT_ERR_IO;
     }
-    return append_authorization_rules(policy) ? MAELYS_GIT_OK : MAELYS_GIT_ERR_IO;
+    if (!append_authorization_rules(policy)) return MAELYS_GIT_ERR_IO;
+    /* Every converted prefix is a rule, and a policy holds a bounded number of
+     * them. Exceeding it is reported like any other entry that cannot be
+     * migrated: the plan says so and nothing is applied. */
+    size_t rules = 0u;
+    for (const char *neck = policy->data; (neck = strstr(neck, " :- ")) != NULL; neck += 4)
+        ++rules;
+    size_t limit = 0u;
+    maelys_git_result_t limited = mg_policy_rule_limit(&limit, error);
+    if (limited != MAELYS_GIT_OK) return limited;
+    if (rules > limit) {
+        char detail[96];
+        (void)snprintf(detail, sizeof(detail), "%zu rules, limit %zu", rules, limit);
+        if (!add_unsupported(migration, line_number, "rule budget exceeded", detail))
+            return MAELYS_GIT_ERR_IO;
+    }
+    return MAELYS_GIT_OK;
 }
 
 maelys_git_result_t maelys_git_migrate_gitolite(
@@ -670,6 +795,18 @@ maelys_git_result_t maelys_git_migrate_gitolite(
         result = mg_write_file_exclusive(policy_path, policy.data, policy.length, 0600, error);
     if (result == MAELYS_GIT_OK)
         result = mg_write_file_exclusive(manifest_path, manifest.data, manifest.length, 0600, error);
+    if (result == MAELYS_GIT_OK) {
+        /* The engine is the authority on its language: the generated policy is
+         * loaded as it will be in production before it is published. */
+        maelys_git_policy_t *generated = NULL;
+        maelys_git_error_t refusal;
+        if (maelys_git_policy_open(manifest_path, &generated, &refusal) != MAELYS_GIT_OK) {
+            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                         "the generated policy is refused by the engine: %.3800s", refusal.message);
+            result = MAELYS_GIT_ERR_POLICY;
+        }
+        maelys_git_policy_close(generated);
+    }
     if (result == MAELYS_GIT_OK && rename(temporary, output_directory) != 0) {
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
                      "cannot publish migration output: %s", strerror(errno));
