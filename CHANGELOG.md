@@ -32,6 +32,13 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 - SHA-256 comes from the public digest of the maelys-cli core instead of a
   header private to the engine repository.
 - maelys-datalog pinned at v0.17.0 (from v0.4.0).
+- maelys-cli pinned at v0.5.30 (from v0.5.29) and maelys-system at v0.11.0
+  (from v0.9.1). For this repository the framework differs by its version
+  header alone; its managed blocks, guide and skill are refreshed to 0.5.30.
+  maelys-system 0.10.0 to 0.11.0 add descriptor passing and fix byte-only
+  AF_UNIX receives, none of which is called here: this repository and
+  maelys-http use its deadlines only. maelys-http v0.1.14 itself pins
+  maelys-system v0.9.1; it is built here against v0.11.0.
 
 - The five Maelys dependencies are pinned to the commits of published tags,
   never to a branch commit that a history rewrite can erase: maelys-cli

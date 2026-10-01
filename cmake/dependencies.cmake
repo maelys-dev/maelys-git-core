@@ -1,16 +1,16 @@
 # Tested source revisions: the commit of a published tag (vX.Y.Z) of each
 # dependency, never a branch commit, so the pin survives a history rewrite.
 # Update these and the generated CLI reference together.
-set(MAELYS_GIT_CLI_VERSION "0.5.29")
-set(MAELYS_GIT_CLI_REVISION "da983b22350900423026203300568ba952e8ef28")
+set(MAELYS_GIT_CLI_VERSION "0.5.30")
+set(MAELYS_GIT_CLI_REVISION "da330c75c21daf8a03e42227012e20a4f9592549")
 set(MAELYS_GIT_JSON_VERSION "0.2.0")
 set(MAELYS_GIT_JSON_REVISION "77849ce6aabeb7e06d8adeca7b60037b1596e304")
 set(MAELYS_GIT_DATALOG_VERSION "0.17.0")
 set(MAELYS_GIT_DATALOG_REVISION "0f363e31beb2dc318f069e41e81000b688d330aa")
 set(MAELYS_GIT_HTTP_VERSION "0.1.14")
 set(MAELYS_GIT_HTTP_REVISION "4737c0c033fb2f4c3c456df54a8b26ef5fb1a694")
-set(MAELYS_GIT_SYSTEM_VERSION "0.9.1")
-set(MAELYS_GIT_SYSTEM_REVISION "6663c83a5f6035055b72d3ad0067ac2ad306fc2e")
+set(MAELYS_GIT_SYSTEM_VERSION "0.11.0")
+set(MAELYS_GIT_SYSTEM_REVISION "c7d13e554353958adb121f5e59a7dba3d6df7b79")
 
 option(MAELYS_GIT_ALLOW_UNPINNED_DEPS "Build dependency working trees instead of tested revisions" OFF)
 function(maelys_git_resolve_dependency name source_variable)
