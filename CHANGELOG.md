@@ -32,6 +32,11 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 - SHA-256 comes from the public digest of the maelys-cli core instead of a
   header private to the engine repository.
 - maelys-datalog pinned at v0.17.0 (from v0.4.0).
+- The Linux CI image builds Mbed TLS v3.6.7 from source, the release
+  maelys-http pins: Ubuntu 24.04 ships 2.28, below the floor maelys-http
+  enforces, so the Cloud agent no longer built there since the pin moved to
+  v0.1.14. The engine boundary check declares the CMake version it needs;
+  CMake 3.28 refused its `IN_LIST` without one.
 - maelys-cli pinned at v0.5.30 (from v0.5.29) and maelys-system at v0.11.0
   (from v0.9.1). For this repository the framework differs by its version
   header alone; its managed blocks, guide and skill are refreshed to 0.5.30.

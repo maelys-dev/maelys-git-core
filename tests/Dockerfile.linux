@@ -1,6 +1,6 @@
 FROM ubuntu:24.04
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    build-essential clang libclang-rt-18-dev cmake git python3 pkg-config libsqlite3-dev libmbedtls-dev \
+    build-essential clang libclang-rt-18-dev cmake git python3 pkg-config libsqlite3-dev \
     openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 # Ubuntu's Jansson predates the project's minimum. Build the tested release.
 RUN git init /tmp/jansson && \
@@ -10,3 +10,13 @@ RUN git init /tmp/jansson && \
         -DJANSSON_BUILD_DOCS=OFF -DJANSSON_BUILD_SHARED_LIBS=ON && \
     cmake --build /tmp/jansson-build -j 4 && cmake --install /tmp/jansson-build && \
     ldconfig && rm -rf /tmp/jansson /tmp/jansson-build
+# Ubuntu's Mbed TLS is below the floor maelys-http enforces. Build the release
+# maelys-http pins in its dependencies/mbedtls.pin (v3.6.7), as its own CI does.
+RUN git init /tmp/mbedtls && \
+    git -C /tmp/mbedtls fetch --depth 1 https://github.com/Mbed-TLS/mbedtls.git 068ff080b369adfac81509f9b57b2afabaf82dc5 && \
+    git -C /tmp/mbedtls checkout --detach FETCH_HEAD && \
+    git -C /tmp/mbedtls submodule update --init --depth 1 && \
+    cmake -S /tmp/mbedtls -B /tmp/mbedtls-build -DCMAKE_BUILD_TYPE=Release \
+        -DENABLE_PROGRAMS=OFF -DENABLE_TESTING=OFF && \
+    cmake --build /tmp/mbedtls-build -j 4 && cmake --install /tmp/mbedtls-build && \
+    test -f /usr/local/lib/pkgconfig/mbedtls.pc && rm -rf /tmp/mbedtls /tmp/mbedtls-build
