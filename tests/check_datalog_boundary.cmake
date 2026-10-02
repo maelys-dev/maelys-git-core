@@ -11,6 +11,7 @@
 # 3. Every maelys_datalog_ symbol the core archive leaves undefined must be
 #    declared by those headers; from the backend and program headers only
 #    maelys_datalog_session_program and maelys_datalog_program_info.
+cmake_minimum_required(VERSION 3.20)
 foreach(variable IN ITEMS SOURCE_DIR ARCHIVE SDK_INCLUDE)
     if(NOT DEFINED ${variable})
         message(FATAL_ERROR "${variable} is required")
