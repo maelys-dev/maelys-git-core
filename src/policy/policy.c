@@ -1,11 +1,10 @@
 #include "internal.h"
 
 #include <maelys/datalog.h>
-#include <maelys/datalog_advanced.h>
 /* Only maelys_datalog_session_program() and maelys_datalog_program_info():
- * the consumer headers give a loaded policy no name, and a decision names
- * the policy that produced it. */
-#include <maelys/datalog_backend.h>
+ * the facade gives a loaded policy no name, and a decision names the policy
+ * that produced it. */
+#include <maelys/datalog_program.h>
 
 #include <pthread.h>
 #include <stdint.h>

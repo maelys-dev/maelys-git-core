@@ -3,13 +3,13 @@
 # usage: cmake -DSOURCE_DIR=... -DARCHIVE=... -DSDK_INCLUDE=... [-DNM=nm]
 #              -P tests/check_datalog_boundary.cmake
 #
-# 1. src/, cmd/ and include/ may include <maelys/datalog.h>,
-#    <maelys/datalog_advanced.h> and, for the policy identifier only,
-#    <maelys/datalog_backend.h>; nothing else of the engine.
+# 1. src/, cmd/ and include/ may include <maelys/datalog.h> and, for the
+#    policy identifier only, <maelys/datalog_program.h>; nothing else of the
+#    engine, and no integrator or component-author header.
 # 2. They may not name an internal type, a test-only macro, the retired atom
 #    scanner or a compile-time engine capacity.
 # 3. Every maelys_datalog_ symbol the core archive leaves undefined must be
-#    declared by those headers; from the backend and program headers only
+#    declared by <maelys/datalog.h>; from the program header only
 #    maelys_datalog_session_program and maelys_datalog_program_info.
 cmake_minimum_required(VERSION 3.20)
 foreach(variable IN ITEMS SOURCE_DIR ARCHIVE SDK_INCLUDE)
@@ -34,7 +34,7 @@ foreach(source IN LISTS sources)
     file(RELATIVE_PATH name "${SOURCE_DIR}" "${source}")
     string(REGEX MATCHALL "#[ \t]*include[ \t]*[<\"][^>\"]*datalog[^>\"]*[>\"]" includes "${text}")
     foreach(include IN LISTS includes)
-        if(NOT include MATCHES "<maelys/datalog(_advanced|_backend)?\\.h>")
+        if(NOT include MATCHES "<maelys/datalog(_program)?\\.h>")
             list(APPEND violations "${name}: forbidden engine include ${include}")
         endif()
     endforeach()
@@ -58,14 +58,16 @@ if(symbol_count EQUAL 0)
     list(APPEND violations "the core archive references no engine symbol: the check is not looking at the policy code")
 endif()
 file(READ "${SDK_INCLUDE}/maelys/datalog.h" consumer_header)
-file(READ "${SDK_INCLUDE}/maelys/datalog_advanced.h" advanced_header)
+file(READ "${SDK_INCLUDE}/maelys/datalog_program.h" program_header)
 set(identity_symbols maelys_datalog_session_program maelys_datalog_program_info)
 foreach(symbol IN LISTS symbols)
     if(symbol IN_LIST identity_symbols)
+        if(NOT program_header MATCHES "(^|[^a-z0-9_])${symbol}\\(")
+            list(APPEND violations "libmaelys_git_core.a references ${symbol}, which <maelys/datalog_program.h> does not declare")
+        endif()
         continue()
     endif()
-    if(NOT consumer_header MATCHES "[^a-z0-9_]${symbol}\\(" AND
-       NOT advanced_header MATCHES "[^a-z0-9_]${symbol}\\(")
+    if(NOT consumer_header MATCHES "[^a-z0-9_]${symbol}\\(")
         list(APPEND violations "libmaelys_git_core.a references ${symbol}, which the consumer SDK headers do not declare")
     endif()
 endforeach()

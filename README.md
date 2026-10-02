@@ -194,7 +194,7 @@ reaching a limit exactly still permits later refs that consume none of that
 remaining resource.
 
 The policy engine is reached through its installed SDK only,
-`<maelys/datalog.h>` and `<maelys/datalog_advanced.h>`: the engine reads the
+`<maelys/datalog.h>` and `<maelys/datalog_program.h>`: the engine reads the
 manifest and its sources, and nothing here scans or escapes the policy
 language. The `maelys_git` domain declares predicates and no constant; the
 constants a policy writes stay local to that policy, a filter pattern
