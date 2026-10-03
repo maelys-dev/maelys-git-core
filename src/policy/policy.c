@@ -1,10 +1,6 @@
 #include "internal.h"
 
 #include <maelys/datalog.h>
-/* Only maelys_datalog_session_program() and maelys_datalog_program_info():
- * the facade gives a loaded policy no name, and a decision names the policy
- * that produced it. */
-#include <maelys/datalog_program.h>
 
 #include <pthread.h>
 #include <stdint.h>
@@ -210,14 +206,12 @@ static maelys_git_result_t prepare_entry(const maelys_datalog_policy_t *loaded, 
     status = maelys_datalog_session_fingerprint(entry->session, entry->fingerprint);
     if (status != MAELYS_DATALOG_STATUS_OK)
         return engine_failure(error, "policy session fingerprint", status);
-    const maelys_datalog_program_t *program = NULL;
-    maelys_datalog_program_info_t info;
-    memset(&info, 0, sizeof(info));
-    status = maelys_datalog_session_program(entry->session, &program);
-    if (status == MAELYS_DATALOG_STATUS_OK) status = maelys_datalog_program_info(program, &info);
+    /* Borrowed from the loaded handle, which open() frees: copied here. */
+    const char *policy_id = NULL;
+    status = maelys_datalog_policy_id(loaded, index, &policy_id);
     if (status != MAELYS_DATALOG_STATUS_OK)
         return engine_failure(error, "policy identity query", status);
-    if (!info.policy_id || !mg_copy_string(entry->policy_id, sizeof(entry->policy_id), info.policy_id)) {
+    if (!policy_id || !mg_copy_string(entry->policy_id, sizeof(entry->policy_id), policy_id)) {
         mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "policy %zu has no usable identifier", index);
         return MAELYS_GIT_ERR_POLICY;
     }

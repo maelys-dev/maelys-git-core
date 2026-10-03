@@ -6,10 +6,10 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 ## Unreleased
 
 - The policy engine is reached through the installed SDK of maelys-datalog
-  v0.18.0 (consumer API 2), `<maelys/datalog.h>` and
-  `<maelys/datalog_program.h>`, and no longer through structures private to
-  the engine, which 0.10.0 removed. The `maelys_git` domain declares
-  predicates only; a policy's constants are local to it; one session per
+  v0.20.0 (consumer API 2), `<maelys/datalog.h>` alone, and no longer
+  through structures private to the engine, which 0.10.0 removed. The
+  `maelys_git` domain declares predicates only; a policy's constants are
+  local to it; one session per
   policy lives as long as the handle. Gone: the source scanner that collected
   atoms, its process-wide buffer and load lock, the yyjson read of the
   manifest and the test-only blocks compiled into `policy.c`. The 443
@@ -31,10 +31,12 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   engine before it is published.
 - SHA-256 comes from the public digest of the maelys-cli core instead of a
   header private to the engine repository.
-- maelys-datalog pinned at v0.18.0 (from v0.4.0). 0.18.0 sorts the installed
-  headers by audience and removes `datalog_advanced.h`: the policy identifier
-  is now read through `<maelys/datalog_program.h>`, an application header,
-  and no component-author header is included any more.
+- maelys-datalog pinned at v0.20.0 (from v0.4.0). 0.20.0 reads a policy's
+  identifier from the loaded handle (`maelys_datalog_policy_id`), so the
+  core includes `<maelys/datalog.h>` and nothing else of the engine; it also
+  releases the handle of a manifest whose entries are all disabled, which
+  LeakSanitizer reported on Linux. 0.18.0 had sorted the installed headers by
+  audience and removed `datalog_advanced.h`.
 - The Linux CI image builds Mbed TLS v3.6.7 from source, the release
   maelys-http pins: Ubuntu 24.04 ships 2.28, below the floor maelys-http
   enforces, so the Cloud agent no longer built there since the pin moved to
