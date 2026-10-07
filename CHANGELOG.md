@@ -42,6 +42,13 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   enforces, so the Cloud agent no longer built there since the pin moved to
   v0.1.14. The engine boundary check declares the CMake version it needs;
   CMake 3.28 refused its `IN_LIST` without one.
+- maelys-cli pinned at v0.5.36 (from v0.5.30). The generated shell
+  completion works again under macOS bash 3.2 and zsh (0.5.34); `--field`
+  on a transaction or `run` is refused before execution unless the member is
+  in the top-level `required` of the output schema (0.5.36), which every
+  schema here declares; `MAELYS_CLI_FORMAT` is the default format. Nothing
+  else of the framework is called here; its managed blocks, guide and skill
+  are refreshed to 0.5.36.
 - maelys-cli pinned at v0.5.30 (from v0.5.29) and maelys-system at v0.11.0
   (from v0.9.1). For this repository the framework differs by its version
   header alone; its managed blocks, guide and skill are refreshed to 0.5.30.
