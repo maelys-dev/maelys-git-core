@@ -6,7 +6,7 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 ## Unreleased
 
 - The policy engine is reached through the installed SDK of maelys-datalog
-  v0.20.0 (consumer API 2), `<maelys/datalog.h>` alone, and no longer
+  v0.21.0 (consumer API 2), `<maelys/datalog.h>` alone, and no longer
   through structures private to the engine, which 0.10.0 removed. The
   `maelys_git` domain declares predicates only; a policy's constants are
   local to it; one session per
@@ -31,7 +31,11 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   engine before it is published.
 - SHA-256 comes from the public digest of the maelys-cli core instead of a
   header private to the engine repository.
-- maelys-datalog pinned at v0.20.0 (from v0.4.0). 0.20.0 reads a policy's
+- maelys-datalog pinned at v0.21.0 (from v0.4.0). 0.21.0 answers `OK` and
+  zero, instead of `INVALID_STATE`, when a manifest enables no policy; the
+  open path already handled both answers with the same message, and the
+  engine compacts its internal fact records without changing any public
+  record or fingerprint. 0.20.0 reads a policy's
   identifier from the loaded handle (`maelys_datalog_policy_id`), so the
   core includes `<maelys/datalog.h>` and nothing else of the engine; it also
   releases the handle of a manifest whose entries are all disabled, which
