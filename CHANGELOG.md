@@ -64,8 +64,13 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   header alone; its managed blocks, guide and skill are refreshed to 0.5.30.
   maelys-system 0.10.0 to 0.11.0 add descriptor passing and fix byte-only
   AF_UNIX receives, none of which is called here: this repository and
-  maelys-http use its deadlines only. maelys-http v0.1.14 itself pins
-  maelys-system v0.9.1; it is built here against v0.11.0.
+  maelys-http use its deadlines only. maelys-http v0.1.14 itself pinned
+  maelys-system v0.9.1 and was built here against v0.11.0 until the pin
+  below moved.
+- maelys-http pinned at v0.1.15 (from v0.1.14). No change to the codec, the
+  client or ABI 1: the release moves maelys-http's own pins, and it now pins
+  maelys-system v0.11.0, the version this repository builds it against, so
+  the two no longer disagree.
 
 - The five Maelys dependencies are pinned to the commits of published tags,
   never to a branch commit that a history rewrite can erase: maelys-cli
