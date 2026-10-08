@@ -318,6 +318,13 @@ if(MAELYS_GIT_BUILD_TESTS)
         maelys_git_core Threads::Threads maelys_git_build_flags)
     add_test(NAME maelys-git-policy-sessions COMMAND test-maelys-git-policy-sessions)
 
+    add_executable(test-maelys-git-policy-concurrent-open tests/test_policy_concurrent_open.c)
+    target_compile_definitions(test-maelys-git-policy-concurrent-open PRIVATE
+        TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}")
+    target_link_libraries(test-maelys-git-policy-concurrent-open PRIVATE
+        maelys_git_core Threads::Threads maelys_git_build_flags)
+    add_test(NAME maelys-git-policy-concurrent-open COMMAND test-maelys-git-policy-concurrent-open)
+
     # Decisions of a fixed request corpus, recorded on the baseline commit named
     # in the first line of the expected file and reproduced by every build.
     set(MAELYS_GIT_POLICY_FIXTURES "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/policies")

@@ -16,6 +16,18 @@ static int write_text(const char *path, const char *text) {
     return fclose(file) == 0 && ok;
 }
 
+/* Reads a whole text file into a NUL-terminated buffer; refuses one that
+ * does not fit, so a comparison never silently truncates. */
+static int read_text(const char *path, char *out, size_t capacity) {
+    FILE *file = fopen(path, "r");
+    if (!file) return 0;
+    size_t length = fread(out, 1u, capacity - 1u, file);
+    int complete = feof(file) != 0;
+    (void)fclose(file);
+    out[length] = '\0';
+    return complete;
+}
+
 /* Writes NAME/policy.dl and NAME/manifest.json and returns the manifest path. */
 static const char *write_policy(const char *name, const char *source) {
     static char manifest_path[512];
@@ -390,6 +402,47 @@ static int unsupported_with(const char *name, const char *rule, const char *reas
     return 1;
 }
 
+/* The baseline recorded the migration of the Gitolite fixture (commit 874f9f3,
+ * engine 0.4.0). The code of today reproduces that file line for line, with
+ * exactly one difference: the bare-literal deny of mallory, which section 16.3
+ * of the directive turns into a prefix rule. Everything else, groups, exact
+ * grants, R and RW+ lines and VREFs, is byte-identical. */
+static int test_fixture_migration_matches_baseline(void) {
+    maelys_git_gitolite_migration_result_t migration;
+    maelys_git_error_t error;
+    char output[400], migrated[512], baseline[16384], current[16384];
+    (void)snprintf(output, sizeof(output), "%s/fixture", g_root);
+    CHECK(maelys_git_migrate_gitolite(FIXTURE_DIR "/gitolite-exact/gitolite.conf", output, 1,
+                                      &migration, &error) == MAELYS_GIT_OK);
+    CHECK(migration.unsupported_count == 0u);
+    maelys_git_gitolite_migration_result_clear(&migration);
+    (void)snprintf(migrated, sizeof(migrated), "%s/gitolite-migrated.dl", output);
+    CHECK(read_text(FIXTURE_DIR "/gitolite-exact/gitolite-migrated.dl", baseline, sizeof(baseline)));
+    CHECK(read_text(migrated, current, sizeof(current)));
+    static const char before[] = "ref_deny(\"mallory\", \"refs.git\", \"refs/heads/main\").";
+    static const char after[] =
+        "effective_ref_deny(\"mallory\", \"refs.git\", F) :- ref(F), starts_with(F, \"refs/heads/main\").";
+    size_t differences = 0u;
+    char *expected = baseline, *actual = current;
+    for (;;) {
+        char *expected_end = strchr(expected, '\n'), *actual_end = strchr(actual, '\n');
+        if (!expected_end || !actual_end) {
+            /* Both files end together, on a terminated last line. */
+            CHECK(!expected_end && !actual_end && !*expected && !*actual);
+            break;
+        }
+        *expected_end = *actual_end = '\0';
+        if (strcmp(expected, actual) != 0) {
+            CHECK(strcmp(expected, before) == 0 && strcmp(actual, after) == 0);
+            ++differences;
+        }
+        expected = expected_end + 1;
+        actual = actual_end + 1;
+    }
+    CHECK(differences == 1u);
+    return 1;
+}
+
 static int test_unsupported_refex(void) {
     CHECK(unsupported_with("alt", "RW refs/heads/(main|dev) = alice", "unsupported refex syntax"));
     CHECK(unsupported_with("star", "RW refs/heads/feature/.* = alice", "unsupported refex syntax"));
@@ -547,6 +600,7 @@ int main(void) {
              test_filter_pattern_not_an_atom() && test_refused_manifests() &&
              test_fingerprints_unchanged() &&
              test_gitolite_prefixes() && test_exact_refs_unchanged() &&
+             test_fixture_migration_matches_baseline() &&
              test_unsupported_refex() && test_rule_budget_exceeded() &&
              test_explanations() && test_explain_multiple_policies();
     if (!test_remove_tree(g_root)) ok = 0;
