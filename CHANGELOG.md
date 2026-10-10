@@ -46,6 +46,20 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   enforces, so the Cloud agent no longer built there since the pin moved to
   v0.1.14. The engine boundary check declares the CMake version it needs;
   CMake 3.28 refused its `IN_LIST` without one.
+- maelys-cli pinned at v0.7.0 (from v0.6.0) and maelys-json at v0.3.0 (from
+  v0.2.0). **0.7.0 refuses four kinds of line that worked**, and a caller's
+  script is where they would be: a size suffix in small letters
+  (`--max-source-bytes 512m`; write `512M`), on `pr check`, `pr merge` and
+  `pre-receive`; a word that starts with one dash before `--`, so a `REF` or
+  a `PATH` of `authorize` that starts with a dash is written after `--`,
+  and every option before it; `-h`, which is no longer `--help`; and a
+  catalog the contract's schema refuses, which this one is not. `-` alone,
+  which `authorize` reads as "no ref", is still an operand. Nothing in this
+  repository passed any of the four. maelys-json 0.3.0 (ABI 3) copies a
+  non-integral number by its lexeme instead of refusing it and adds
+  `maelys_json_writer_number_text`; no call here writes such a number, and
+  no caller that succeeded changes result. The framework's managed blocks,
+  guide and skill are refreshed to 0.7.0.
 - maelys-cli pinned at v0.6.0 (from v0.5.36). The help text is reorganised
   by family and `COMMAND --help --format json` answers as the `help`
   command; `--expect` is a reserved option name on a transaction, which no

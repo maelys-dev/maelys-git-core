@@ -1,10 +1,10 @@
 # Tested source revisions: the commit of a published tag (vX.Y.Z) of each
 # dependency, never a branch commit, so the pin survives a history rewrite.
 # Update these and the generated CLI reference together.
-set(MAELYS_GIT_CLI_VERSION "0.6.0")
-set(MAELYS_GIT_CLI_REVISION "85964ae983a76660f7b2e4f45e74c8958648250c")
-set(MAELYS_GIT_JSON_VERSION "0.2.0")
-set(MAELYS_GIT_JSON_REVISION "77849ce6aabeb7e06d8adeca7b60037b1596e304")
+set(MAELYS_GIT_CLI_VERSION "0.7.0")
+set(MAELYS_GIT_CLI_REVISION "7a8c6f6c0aefeb12605f3cc9edbfad885a42af3f")
+set(MAELYS_GIT_JSON_VERSION "0.3.0")
+set(MAELYS_GIT_JSON_REVISION "d106890b02b3fbfd599ecd22bdeffb600db66123")
 set(MAELYS_GIT_DATALOG_VERSION "0.21.0")
 set(MAELYS_GIT_DATALOG_REVISION "9630f591637c7046ec73996458e1ba282194e32c")
 set(MAELYS_GIT_HTTP_VERSION "0.1.15")
