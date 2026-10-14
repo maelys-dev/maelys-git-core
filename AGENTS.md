@@ -181,7 +181,12 @@ rules below hold whatever that mechanism is; the complete conventions are in
   and `CLAUDE.md` is regenerated: never edit it by hand. Everything else here
   belongs to this repository. The command follows agent-cli/v2: `--format
   json` everywhere, `describe` for the catalog, and `--field NAME` to read
-  one member of the result without a `jq` expression.
+  one member of the result without a `jq` expression. On a terminal its
+  text is paged, the account of an `--apply` included, once the write is
+  done. An account that fits the screen returns by itself; a longer one,
+  or a host that presets `PAGER` or `LESS`, can stop on `:` with the
+  command finished and looking hung: through `ssh -t`, pass `--pager
+  never`.
 - `check` reports two verdicts. The conventions apply to this repository; the
   release mechanism of the socle does not, so `check` says nothing about
   `.github/workflows/release.yml`, which this repository owns entirely.
@@ -196,6 +201,26 @@ rules below hold whatever that mechanism is; the complete conventions are in
   `release/vX.Y.Z`, opens the pull request and waits for its checks, and
   `cut DIR X.Y.Z --tag --apply` then signs the tag on the merge commit
   those checks ran on. It never merges its own pull request.
+- `VERSION` moves with a release, never ahead of one. Made by hand, as
+  `RELEASING.md` describes it, the release moves it in the pull request
+  that prepares the tag. Made with `cut`, it is `cut` that writes it:
+  until then `VERSION` says what was published last, `0.0.0` before a
+  first release, and `cut` refuses one moved ahead of it. Either way a
+  release is handed over with its entry titled `## X.Y.Z — YYYY-MM-DD` and
+  dated that day, never a later one, which `cut` refuses too; until then
+  its changes sit under `## Unreleased`. `check` notes an entry `cut` will
+  not read and, on a checkout that is not a job's, a `VERSION` no tag has
+  published — where a release made by hand stands between its merge and
+  its tag. `maelys-release cut DIR X.Y.Z` without `--apply`
+  reads the release as `cut` will, and changes no file of the product and
+  nothing on GitHub; it needs `gh`, the network and a `main` level with
+  `origin`. What it says of the version, the entry and the worktree is
+  about what was prepared: fix that. Its lines on `tag.gpgsign`,
+  `user.signingkey` and the signing key are the signer's own, and exit 2
+  on those alone is expected of anyone else: leave them, and never
+  configure a key to turn them green. It does not run what only `--apply`
+  runs: the verify command, `[cut] after-version`, GitHub's verdict on the
+  commit, the checks.
 - A branch is named after the change it carries, with the prefix that
   change would take in a commit message (`fix/`, `docs/`, `release/`…),
   never after the tool that created it: a name says what changes, not who
