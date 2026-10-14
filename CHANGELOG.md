@@ -6,7 +6,7 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 ## Unreleased
 
 - The policy engine is reached through the installed SDK of maelys-datalog
-  v0.21.0 (consumer API 2), `<maelys/datalog.h>` alone, and no longer
+  v0.22.0 (consumer API 2), `<maelys/datalog.h>` alone, and no longer
   through structures private to the engine, which 0.10.0 removed. The
   `maelys_git` domain declares predicates only; a policy's constants are
   local to it; one session per
@@ -46,6 +46,17 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   enforces, so the Cloud agent no longer built there since the pin moved to
   v0.1.14. The engine boundary check declares the CMake version it needs;
   CMake 3.28 refused its `IN_LIST` without one.
+- maelys-datalog pinned at v0.22.0 (from v0.21.0), maelys-http at v0.1.16
+  (from v0.1.15) and maelys-system at v0.13.0 (from v0.11.0).
+  maelys-datalog 0.22.0 carries the compatibility freeze of its 0.x public
+  contract; for a C consumer it only makes policy accessors answer
+  `INVALID_STATE` consistently on a freed caller-owned handle, which this
+  repository does not use, and it now installs `maelys-datalog.pc`.
+  maelys-http 0.1.16 changes neither its codec, its client nor ABI 1, and
+  pins maelys-system v0.13.0, so both move together and still agree.
+  maelys-system 0.12 and 0.13 add directory watching and process launching
+  and correct socket receives on Unix sockets; this repository calls only
+  `maelys_sys_deadline_after`, unchanged.
 - maelys-cli pinned at v0.7.0 (from v0.6.0) and maelys-json at v0.3.0 (from
   v0.2.0). **0.7.0 refuses four kinds of line that worked**, and a caller's
   script is where they would be: a size suffix in small letters
