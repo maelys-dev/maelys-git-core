@@ -264,13 +264,16 @@ if(MAELYS_GIT_ENABLE_CLOUD_AGENT)
     set(MAELYS_DEPENDENCY_CFLAGS "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${MAELYS_BUILD_TYPE_UPPER}}")
     # Project headers precede inherited include paths, including installed
     # copies of older Maelys releases. Each build has its own dependency objects.
+    # The nested make does not inherit the outer make's flags: their jobserver
+    # descriptors are not passed to a custom command, and a make that finds
+    # them closed warns, or fails where their numbers are reused.
     add_custom_target(maelys_agent_dependencies
-        COMMAND ${CMAKE_COMMAND} -E env
+        COMMAND ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS --unset=MFLAGS
                 "CPPFLAGS=-I${MAELYS_SYSTEM_SOURCE_DIR}/include -I${MAELYS_SYSTEM_SOURCE_DIR} $ENV{CPPFLAGS}"
                 "CFLAGS=${MAELYS_DEPENDENCY_CFLAGS}"
                 ${MAELYS_MAKE_PROGRAM} -C "${MAELYS_SYSTEM_SOURCE_DIR}" all
                 "BUILD=${MAELYS_SYSTEM_BUILD_DIR}" "CC=${CMAKE_C_COMPILER}"
-        COMMAND ${CMAKE_COMMAND} -E env
+        COMMAND ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS --unset=MFLAGS
                 "CPPFLAGS=-I${MAELYS_HTTP_SOURCE_DIR}/include -I${MAELYS_HTTP_SOURCE_DIR}/src -I${MAELYS_SYSTEM_SOURCE_DIR}/include $ENV{CPPFLAGS}"
                 "CFLAGS=${MAELYS_DEPENDENCY_CFLAGS}"
                 ${MAELYS_MAKE_PROGRAM} -C "${MAELYS_HTTP_SOURCE_DIR}" all check-mbedtls
