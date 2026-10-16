@@ -46,6 +46,9 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   enforces, so the Cloud agent no longer built there since the pin moved to
   v0.1.14. The engine boundary check declares the CMake version it needs;
   CMake 3.28 refused its `IN_LIST` without one.
+- The Linux CI image builds Jansson as a static library. Its shared build in
+  `/usr/local/lib` shadowed the system `libjansson.so.4` that binutils' `ld`
+  loads, and on amd64 every link in the image failed.
 - maelys-datalog pinned at v0.22.0 (from v0.21.0), maelys-http at v0.1.16
   (from v0.1.15) and maelys-system at v0.13.0 (from v0.11.0).
   maelys-datalog 0.22.0 carries the compatibility freeze of its 0.x public
