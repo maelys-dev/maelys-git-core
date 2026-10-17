@@ -228,6 +228,103 @@ maelys_git_result_t maelys_git_policy_explain(
     maelys_git_policy_explanation_t *out_explanation,
     maelys_git_error_t *error);
 
+/* ---- authorization receipts ------------------------------------------------- */
+
+typedef enum {
+    MAELYS_GIT_RECEIPT_ALLOW = 1,
+    MAELYS_GIT_RECEIPT_DENY_EXPLICIT = 2,
+    MAELYS_GIT_RECEIPT_DENY_DEFAULT = 3,
+    MAELYS_GIT_RECEIPT_DENY_ERROR = 4
+} maelys_git_receipt_decision_t;
+
+/* When the engine's explanation of a decision is rendered: never, on a
+ * denial only, or always. NEVER renders, hashes and allocates nothing. */
+typedef enum {
+    MAELYS_GIT_EXPLAIN_NEVER = 0,
+    MAELYS_GIT_EXPLAIN_ON_DENIAL = 1,
+    MAELYS_GIT_EXPLAIN_ALWAYS = 2
+} maelys_git_explain_mode_t;
+
+typedef enum {
+    MAELYS_GIT_RECEIPT_STATUS_NOT_REQUESTED = 0,
+    MAELYS_GIT_RECEIPT_STATUS_COMPLETE = 1,
+    MAELYS_GIT_RECEIPT_STATUS_TRUNCATED = 2,
+    MAELYS_GIT_RECEIPT_STATUS_NOT_APPLICABLE = 3,
+    MAELYS_GIT_RECEIPT_STATUS_UNKNOWN = 4
+} maelys_git_receipt_status_t;
+
+/* Bits of maelys_git_receipt_t.explanation.limit_hits. */
+#define MAELYS_GIT_RECEIPT_LIMIT_CANDIDATE_RULES 1u
+#define MAELYS_GIT_RECEIPT_LIMIT_SUBSTITUTIONS 2u
+#define MAELYS_GIT_RECEIPT_LIMIT_DEPTH 4u
+#define MAELYS_GIT_RECEIPT_LIMIT_DIAGNOSTICS 8u
+#define MAELYS_GIT_RECEIPT_LIMIT_FILTER_COST 16u
+
+/* The request a receipt records: no path, only their number. */
+typedef struct {
+    char id[512];
+    char principal[512];
+    char repository[MAELYS_GIT_MAX_REPOSITORY];
+    char operation[64];
+    char ref[MAELYS_GIT_MAX_REF]; /* empty without a ref */
+    size_t path_count;
+} maelys_git_receipt_request_t;
+
+/* The bounded summary of a rendered explanation, read from the engine's
+ * structured views; the text itself is only known by its size and digest. */
+typedef struct {
+    maelys_git_explanation_kind_t kind; /* NONE when not rendered */
+    maelys_git_receipt_status_t status;
+    size_t policy_index;
+    char query[8];                      /* "allow" or "deny" */
+    int has_rule;                       /* why-true complete */
+    size_t rule_id, step_count, premise_count;
+    int has_counts;                     /* why-false with structured views */
+    size_t candidate_rules, diagnostics, filter_cost_units, substitutions;
+    unsigned limit_hits;
+    int has_text;                       /* the engine rendered a document */
+    size_t text_bytes;
+    char text_sha256[65];
+} maelys_git_receipt_explanation_t;
+
+/* The record of one decision, built by the code path that authorizes. It
+ * holds a bounded summary of the engine's explanation, never its text: the
+ * text travels beside the receipt, which keeps its size and SHA-256. Every
+ * string is NUL-terminated; an empty one is null in the serialized form
+ * where the contract allows null. */
+typedef struct {
+    maelys_git_receipt_decision_t decision;
+    char error_code[32];   /* deny_error: maelys_git_result_name of the failure */
+    char error_kind[16];   /* deny_error: maelys_git_failure_kind_name, or empty */
+    char error_budget[48]; /* deny_error of a capacity the engine names, or empty */
+    char policy_set_fingerprint[65];
+    int matched;           /* allow and deny_explicit name the deciding policy */
+    size_t matched_policy_index;
+    char matched_policy_id[128];
+    char matched_session_fingerprint[65];
+    maelys_git_receipt_request_t request;
+    size_t edb_facts;          /* request facts given to the engine */
+    size_t evaluated_policies; /* policies solved before the decision */
+    maelys_git_receipt_explanation_t explanation;
+} maelys_git_receipt_t;
+
+/* Authorizes as maelys_git_policy_authorize does and fills the receipt of
+ * that decision. The decision, its reason and the result code are those of
+ * maelys_git_policy_authorize; a failure of the engine is also recorded as a
+ * deny_error receipt. With a rendered explanation, its text is copied into
+ * out_text when text_capacity exceeds its size; the receipt is identical
+ * either way. Engine failures keep their code; a receipt whose request does
+ * not fit its fields is MAELYS_GIT_ERR_LIMIT. */
+maelys_git_result_t maelys_git_policy_authorize_receipt(
+    maelys_git_policy_t *policy,
+    const maelys_git_policy_request_t *request,
+    maelys_git_explain_mode_t mode,
+    char *out_text,
+    size_t text_capacity,
+    maelys_git_policy_decision_t *out_decision,
+    maelys_git_receipt_t *out_receipt,
+    maelys_git_error_t *error);
+
 typedef struct {
     char **items;
     size_t count;

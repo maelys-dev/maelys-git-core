@@ -3,7 +3,9 @@
  * The expected file was written by this program built on the baseline commit
  * recorded in its first line, before the migration to the Maelys Datalog
  * consumer API. Every later build must reproduce result code, allowed,
- * explicit_deny, matched_policy and reason for every request.
+ * explicit_deny, matched_policy and reason for every request, through
+ * maelys_git_policy_authorize and through the receipt path without an
+ * explanation alike.
  *
  *   test-maelys-git-policy-golden            compare with GOLDEN_FILE
  *   test-maelys-git-policy-golden --write F  write the corpus decisions to F
@@ -38,6 +40,19 @@ static void row(const char *key, const char *label, maelys_git_policy_t *policy,
     maelys_git_error_t error;
     memset(&decision, 0, sizeof(decision));
     maelys_git_result_t result = maelys_git_policy_authorize(policy, request, &decision, &error);
+    /* The receipt path decides by the same code: same result, same decision. */
+    maelys_git_policy_decision_t receipted;
+    maelys_git_receipt_t receipt;
+    memset(&receipted, 0, sizeof(receipted));
+    maelys_git_result_t receipt_result = maelys_git_policy_authorize_receipt(
+        policy, request, MAELYS_GIT_EXPLAIN_NEVER, NULL, 0u, &receipted, &receipt, &error);
+    if (receipt_result != result || receipted.allowed != decision.allowed ||
+        receipted.explicit_deny != decision.explicit_deny ||
+        receipted.matched_policy != decision.matched_policy ||
+        strcmp(receipted.reason, decision.reason) != 0) {
+        ++g_mismatches;
+        (void)fprintf(stderr, "receipt path decided otherwise at row %zu (%s)\n", g_rows + 1u, label);
+    }
     char matched[32];
     if (decision.matched_policy == SIZE_MAX) (void)snprintf(matched, sizeof(matched), "-");
     else (void)snprintf(matched, sizeof(matched), "%zu", decision.matched_policy);

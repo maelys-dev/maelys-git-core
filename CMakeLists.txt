@@ -148,6 +148,16 @@ target_link_libraries(maelys_git_core
     PUBLIC maelys_datalog
     PRIVATE maelys::cli Threads::Threads maelys_git_build_flags)
 
+# Authorization receipts: their only writer and reader, on maelys-json. The
+# policy core builds the receipt structure and stays without JSON.
+add_library(maelys_git_receipt STATIC src/receipt/receipt.c)
+target_include_directories(maelys_git_receipt
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(maelys_git_receipt
+    PUBLIC maelys_git_core maelys::json maelys::cli
+    PRIVATE maelys_git_build_flags)
+
 add_library(maelys_git_agent_core STATIC
     src/protocol/protocol.c
     src/agent/config.c
@@ -159,7 +169,7 @@ target_include_directories(maelys_git_agent_core
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(maelys_git_agent_core
-    PUBLIC maelys_git_core maelys::json
+    PUBLIC maelys_git_core maelys_git_receipt maelys::json
     PRIVATE PkgConfig::JANSSON SQLite::SQLite3 maelys_git_build_flags)
 
 # ---- command-line interface -------------------------------------------------
@@ -199,7 +209,7 @@ target_include_directories(maelys_git_cli
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${MAELYS_GIT_GENERATED_DIR}")
 target_link_libraries(maelys_git_cli
-    PUBLIC maelys_git_core maelys::cli
+    PUBLIC maelys_git_core maelys_git_receipt maelys::cli
     PRIVATE maelys_git_build_flags)
 
 # Administrative commands of `maelys-git`; Jansson builds their data.
@@ -348,6 +358,16 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_link_libraries(test-maelys-git-policy-facade PRIVATE
         maelys_git_core maelys::cli maelys_git_build_flags)
     add_test(NAME maelys-git-policy-facade COMMAND test-maelys-git-policy-facade)
+
+    add_executable(test-maelys-git-receipt tests/test_receipt.c)
+    target_include_directories(test-maelys-git-receipt PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_definitions(test-maelys-git-receipt PRIVATE
+        TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}"
+        FIXTURE_DIR="${MAELYS_GIT_POLICY_FIXTURES}"
+        RECEIPT_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/receipts")
+    target_link_libraries(test-maelys-git-receipt PRIVATE
+        maelys_git_receipt maelys_git_build_flags)
+    add_test(NAME maelys-git-receipt COMMAND test-maelys-git-receipt)
 
     # A consumer built against the SDK the pinned engine installs, and nothing else.
     add_test(NAME maelys-git-facade-consumer

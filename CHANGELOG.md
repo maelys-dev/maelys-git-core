@@ -5,6 +5,24 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- Authorization receipts. `maelys_git_policy_authorize_receipt` decides
+  exactly as `maelys_git_policy_authorize` and fills a
+  `maelys_git_receipt_t`: the decision (`allow`, `deny_explicit`,
+  `deny_default`, `deny_error` with the failure's code, kind and budget), the
+  deciding policy and its session fingerprint, the policy-set fingerprint,
+  the request without its paths, and, when an explanation is asked for
+  (`MAELYS_GIT_EXPLAIN_ON_DENIAL` or `_ALWAYS`), a bounded summary of it read
+  from the engine's structured views: kind, status, deciding rule, counters,
+  limits reached, and the size and SHA-256 of the document. The document
+  itself is never in the receipt. `maelys_git_receipt_serialize` writes it as
+  Maelys Canonical JSON v1 through maelys-json, at most 8 KiB, with its
+  SHA-256; `maelys_git_receipt_verify` accepts only that form and the closed
+  shape of version 1 (`maelys_git_receipt.h`, library `maelys_git_receipt`).
+- `maelys_git_policy_explain` now renders through the same single
+  preparation as the receipt, and reads its status from the engine's
+  structured views instead of searching the document's text. The policy
+  handle keeps the preparation storage from its first explanation until it
+  is closed: about 113 KiB in SMALL and 145 KiB in LARGE.
 - A policy failure says by machine what it is. `maelys_git_error_t` gains a
   `detail`: its kind (`capacity`, `syntax`, `semantics`, `manifest`, `value`
   or `engine`, named by `maelys_git_failure_kind_name`), the engine's

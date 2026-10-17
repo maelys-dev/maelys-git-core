@@ -179,6 +179,8 @@ maelys_git_result_t mg_repository_visit_changes_with_budget(
     maelys_git_change_summary_t *summary, maelys_git_error_t *error);
 
 /* The number of rules one policy may hold, read from the loaded engine. */
+/* Bytes of explanation storage the handle holds: zero until it explains. */
+size_t mg_policy_explanation_storage_bytes(const maelys_git_policy_t *policy);
 maelys_git_result_t mg_policy_rule_limit(size_t *out_limit, maelys_git_error_t *error);
 
 #endif
