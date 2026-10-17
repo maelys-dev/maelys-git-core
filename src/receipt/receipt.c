@@ -30,7 +30,7 @@ static const char *const k_limits_hit[] = {"candidate-rules", "substitutions", "
                                            "filter-cost"};
 #define COUNT(array) (sizeof(array) / sizeof((array)[0]))
 
-static maelys_git_result_t json_failure(maelys_json_result_t status, const char *operation,
+static maelys_git_result_t writer_failure(maelys_json_result_t status, const char *operation,
                                         maelys_git_error_t *error) {
     maelys_git_result_t code = status == MAELYS_JSON_ERR_LIMIT ? MAELYS_GIT_ERR_LIMIT :
                                status == MAELYS_JSON_ERR_MEMORY ? MAELYS_GIT_ERR_IO :
@@ -181,7 +181,7 @@ maelys_git_result_t mg_receipt_serialize_within(const maelys_git_receipt_t *rece
     size_t size = 0u;
     if (status == MAELYS_JSON_OK) status = maelys_json_writer_finish(writer, &bytes, &size);
     maelys_json_writer_release(writer);
-    if (status != MAELYS_JSON_OK) return json_failure(status, "receipt serialization", error);
+    if (status != MAELYS_JSON_OK) return writer_failure(status, "receipt serialization", error);
     maelys_cli_sha256_hex(bytes, size, out_sha256);
     *out_bytes = bytes;
     *out_size = size;
@@ -391,7 +391,7 @@ static maelys_git_result_t verify_bytes(const void *bytes, size_t size, char out
     if (text) memset(text, 0, sizeof(*text));
     int shaped = status == MAELYS_JSON_OK && canonical && receipt_shape(document, text);
     maelys_json_document_release(document);
-    if (status != MAELYS_JSON_OK) return json_failure(status, "receipt canonical check", error);
+    if (status != MAELYS_JSON_OK) return writer_failure(status, "receipt canonical check", error);
     if (!canonical || !shaped) {
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
                      canonical ? "receipt does not have the shape of version 1"
@@ -469,5 +469,5 @@ maelys_git_result_t mg_receipt_write_line(FILE *stream, const maelys_git_receipt
     maelys_json_writer_release(writer);
     maelys_json_document_release(document);
     free(bytes);
-    return status == MAELYS_JSON_OK ? MAELYS_GIT_OK : json_failure(status, "receipt line", error);
+    return status == MAELYS_JSON_OK ? MAELYS_GIT_OK : writer_failure(status, "receipt line", error);
 }
