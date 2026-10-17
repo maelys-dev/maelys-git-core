@@ -399,7 +399,7 @@ static int header_value(const char *text, const char *key, char *out, size_t cap
 
 static int test_summary(void) {
     static char text[TEXT_CAPACITY];
-    char value[64], needle[64];
+    char value[64], needle[160];
     maelys_git_policy_t *example = open_policy(TEST_MANIFEST_FILE);
     CHECK(example != NULL);
     produced_t produced;
