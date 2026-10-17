@@ -5075,10 +5075,22 @@
                 "required": false,
                 "requires": [],
                 "summary": "Maximum blob content consumed across the receive transaction."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--receipts",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Append one receipt line per push: the first denial with its explanation, or the final authorization of an accepted push."
               }
             ],
             "passthrough": false,
-            "synopsis": "pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES]"
+            "synopsis": "pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES] [--receipts FILE]"
           },
           "outputMode": "protocol-stream",
           "outputSchema": {
@@ -5091,7 +5103,7 @@
           ],
           "protocol": "git-hook",
           "purpose": "Authorize a quota-bounded Git receive transaction from stdin.",
-          "usage": "pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES]"
+          "usage": "pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES] [--receipts FILE]"
         },
         {
           "available": true,

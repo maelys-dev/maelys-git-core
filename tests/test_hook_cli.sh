@@ -2,6 +2,7 @@
 set -eu
 
 maelys_hook_bin=$1
+maelys_shell_bin=$2
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/maelys-hook-test.XXXXXX")
 trap 'rm -rf -- "$test_root"' EXIT HUP INT TERM
 
@@ -62,6 +63,43 @@ if ! grep -q 'denied' "$test_root/diagnostics"; then
   sed -n '1,20p' "$test_root/diagnostics" >&2
   exit 1
 fi
+if [ -e "$test_root/receipts.jsonl" ]; then
+  printf 'the hook wrote receipts without --receipts\n' >&2
+  exit 1
+fi
+
+# With --receipts, a refused push appends one line: the receipt of the first
+# denial, its digest and its explanation. The Git client sees the same bytes.
+if printf '%s %s %s\n' "$zero" "$new_oid" refs/heads/topic | \
+   "$maelys_hook_bin" pre-receive --repository example.git \
+     --manifest "$test_root/manifest.json" --user alice \
+     --git-dir "$test_root/example.git" --receipts "$test_root/receipts.jsonl" \
+     >/dev/null 2>"$test_root/receipt-diagnostics"; then
+  printf 'unsigned commit passed the policy with --receipts\n' >&2
+  exit 1
+fi
+cmp "$test_root/diagnostics" "$test_root/receipt-diagnostics"
+check_receipts() {
+  python3 -I - "$@" <<'PY'
+import hashlib, json, sys
+path, decision, with_text = sys.argv[1], sys.argv[2], sys.argv[3] == "text"
+lines = open(path, encoding="utf-8").read().splitlines()
+assert len(lines) == 1, lines
+line = json.loads(lines[0])
+receipt = line["receipt"]
+canonical = json.dumps(receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+assert hashlib.sha256(canonical.encode()).hexdigest() == line["receiptSha256"], line
+assert receipt["decision"] == decision, receipt
+assert ("explanationText" in line) == with_text, sorted(line)
+if with_text:
+    text = line["explanationText"].encode()
+    assert len(text) == receipt["explanation"]["textBytes"]
+    assert hashlib.sha256(text).hexdigest() == receipt["explanation"]["textSha256"]
+    assert text.startswith(b"MAELYS-DATALOG-v2\n")
+assert lines[0] == json.dumps(line, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+PY
+}
+check_receipts "$test_root/receipts.jsonl" deny_explicit text
 
 printf '%s\n' \
   'allow(R) :- request(R), operation("push").' \
@@ -130,3 +168,23 @@ if printf '%s %s %s\n%s %s %s\n' \
   exit 1
 fi
 grep -q 'limit' "$test_root/transaction-quota-diagnostics"
+
+# An accepted push of three refs appends one line: the final authorization,
+# without an explanation.
+printf '%s %s %s\n%s %s %s\n%s %s %s\n' \
+     "$zero" "$new_oid" refs/heads/one \
+     "$zero" "$new_oid" refs/heads/two \
+     "$zero" "$new_oid" refs/heads/three | \
+  "$maelys_hook_bin" pre-receive --repository example.git \
+    --manifest "$test_root/quota-manifest.json" --user alice \
+    --git-dir "$test_root/example.git" --receipts "$test_root/accepted.jsonl" \
+    >/dev/null 2>"$test_root/accepted-diagnostics"
+check_receipts "$test_root/accepted.jsonl" allow none
+
+# The hook and the shell carry no Jansson: receipts are written by maelys-json.
+for program in "$maelys_hook_bin" "$maelys_shell_bin"; do
+  if nm -g "$program" | grep -E ' _?json_[a-z_]+$' >/dev/null; then
+    printf '%s links Jansson\n' "$program" >&2
+    exit 1
+  fi
+done

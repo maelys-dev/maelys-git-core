@@ -137,7 +137,7 @@ Options globales :
 | describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
-| pre-receive | `pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES]` | stream | protocol-stream (git-hook) | Authorize a quota-bounded Git receive transaction from stdin. |
+| pre-receive | `pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES] [--receipts FILE]` | stream | protocol-stream (git-hook) | Authorize a quota-bounded Git receive transaction from stdin. |
 | post-receive | `post-receive --repository NAME [--user PRINCIPAL] [--events FILE]` | stream | protocol-stream (maelys-git-events/1) | Convert received refs into JSONL events. |
 
 Options globales :

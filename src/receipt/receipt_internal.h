@@ -5,6 +5,8 @@
 
 #include <maelys/json.h>
 
+#include <stdio.h>
+
 /* maelys_git_receipt_serialize with a smaller byte bound, for tests. */
 maelys_git_result_t mg_receipt_serialize_within(const maelys_git_receipt_t *receipt,
                                                 size_t maximum_bytes,
@@ -12,6 +14,14 @@ maelys_git_result_t mg_receipt_serialize_within(const maelys_git_receipt_t *rece
                                                 size_t *out_size,
                                                 char out_sha256[65],
                                                 maelys_git_error_t *error);
+
+/* Appends one JSONL line to `stream`: the receipt, its SHA-256 and, when
+ * `text` is not NULL, the explanation text, as
+ * {"explanationText":…,"receipt":{…},"receiptSha256":"…"}. */
+maelys_git_result_t mg_receipt_write_line(FILE *stream,
+                                          const maelys_git_receipt_t *receipt,
+                                          const char *text,
+                                          maelys_git_error_t *error);
 
 /* The explanation text a verified receipt vouches for. */
 typedef struct {

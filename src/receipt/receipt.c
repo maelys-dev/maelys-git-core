@@ -435,3 +435,39 @@ maelys_git_result_t mg_receipt_rewrite(const maelys_json_document_t *document, m
     *out_text = text;
     return MAELYS_GIT_OK;
 }
+
+maelys_git_result_t mg_receipt_write_line(FILE *stream, const maelys_git_receipt_t *receipt, const char *text,
+                                          maelys_git_error_t *error) {
+    if (!stream || !receipt) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    char *bytes = NULL;
+    size_t size = 0u;
+    char sha256[65];
+    maelys_git_result_t result = maelys_git_receipt_serialize(receipt, &bytes, &size, sha256, error);
+    if (result != MAELYS_GIT_OK) return result;
+    maelys_json_document_t *document = NULL;
+    maelys_json_result_t status = maelys_json_document_parse(bytes, size, MAELYS_JSON_PROFILE_RFC8259,
+                                                             &k_limits, &document, NULL);
+    /* The text is bounded by MAELYS_GIT_RECEIPT_MAX_EXPLANATION_TEXT; escaping
+     * may grow it sixfold. */
+    const maelys_json_limits_t line_limits = {
+        .maximum_bytes = MAELYS_GIT_RECEIPT_MAX_BYTES + 6u * MAELYS_GIT_RECEIPT_MAX_EXPLANATION_TEXT + 256u,
+        .maximum_depth = RECEIPT_DEPTH + 1u,
+        .maximum_tokens = RECEIPT_TOKENS + 8u,
+    };
+    maelys_json_writer_t *writer = NULL;
+    if (status == MAELYS_JSON_OK)
+        status = maelys_json_writer_create(MAELYS_JSON_PROFILE_RFC8259, &line_limits,
+                                           MAELYS_JSON_WRITER_FINAL_NEWLINE, &writer);
+    if (status == MAELYS_JSON_OK) status = maelys_json_writer_object_begin(writer);
+    if (status == MAELYS_JSON_OK && text) status = key_string(writer, "explanationText", text);
+    if (status == MAELYS_JSON_OK) status = maelys_json_writer_key_cstr(writer, "receipt");
+    if (status == MAELYS_JSON_OK)
+        status = maelys_json_writer_value(writer, document, maelys_json_document_root(document));
+    if (status == MAELYS_JSON_OK) status = key_string(writer, "receiptSha256", sha256);
+    if (status == MAELYS_JSON_OK) status = maelys_json_writer_object_end(writer);
+    if (status == MAELYS_JSON_OK) status = maelys_json_writer_finish_file(writer, stream);
+    maelys_json_writer_release(writer);
+    maelys_json_document_release(document);
+    free(bytes);
+    return status == MAELYS_JSON_OK ? MAELYS_GIT_OK : json_failure(status, "receipt line", error);
+}

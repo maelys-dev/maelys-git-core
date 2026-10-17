@@ -34,6 +34,13 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   without the text, rewritten in canonical form. A receipt or text that does
   not verify fails the command and records no event. `maelys-git-agent
   stdio`, which keeps no audit, sends no denial text.
+- `maelys-git-hook pre-receive --receipts FILE` appends one JSONL line per
+  push, written by maelys-json: the receipt of the first denial with its
+  explanation, or of the final authorization of an accepted push without
+  one, and the receipt's SHA-256. A failure outside the policy writes no
+  line; a line that cannot be written refuses the push. Without the option
+  the hook is unchanged, and what the Git client receives is the same
+  either way. Neither the hook nor the shell links Jansson.
 - `maelys_git_policy_explain` now renders through the same single
   preparation as the receipt, and reads its status from the engine's
   structured views instead of searching the document's text. The policy

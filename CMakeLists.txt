@@ -468,7 +468,7 @@ if(MAELYS_GIT_BUILD_TESTS)
 
     add_test(NAME maelys-git-hook-integration
         COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hook_cli.sh
-            $<TARGET_FILE:maelys-git-hook>)
+            $<TARGET_FILE:maelys-git-hook> $<TARGET_FILE:maelys-git-shell>)
 
     add_test(NAME maelys-git-receive-authorization
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_receive_authorization.py
