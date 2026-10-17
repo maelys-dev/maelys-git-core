@@ -1,6 +1,6 @@
 # Matrice concurrentielle : Maelys Git Core, Gitolite et Forgejo
 
-Etat verifie le 2 septembre 2026. La comparaison porte sur le code present
+Etat verifie le 17 octobre 2026. La comparaison porte sur le code present
 et teste dans ce depot. Elle ne credite pas a Maelys Git Core les fonctions
 prevues pour une future forge Cloudflare.
 
@@ -30,9 +30,10 @@ Git Core vise un noyau local de securite pilotable par une forge separee.
 | Autorisation | Renommages et double chemin ancien/nouveau | **Complet** : `path` et `old_path` | **Partiel** : le VREF expose les noms touches, sans domaine type de renommage equivalent | **Partiel** : pas de domaine de politique general equivalent | Avantage Maelys |
 | Autorisation | Faits sur objets Git | **Complet** : taille, mode, binaire, symlink, submodule et pointeur LFS | **Partiel** : VREF livres pour compte, nom, type et taille de nouveaux binaires ; extensions possibles | **Partiel** : controles integres cibles, sans faits composables equivalents | Avantage Maelys |
 | Autorisation | Identite et signature des commits | **Complet** : email, etat, empreinte, identite et confiance injectes en Datalog | **Partiel/extensible** : `EMAIL-CHECK` livre et VREF personnalises | **Complet** : verification et politiques de signature integrees | Acquis |
+| Autorisation | Quotas dans le temps (par heure, par jour) | **Absent** : aucune memoire d'un push a l'autre ; mecanisme cadre, compteur declare par la politique et reserve atomiquement | **Extensible** : VREF personnalise | Non verifie | P2 : apres le recu de decision |
 | Autorisation | Quotas sur une transaction multi-ref | **Complet** : commits, chemins, octets et inspection cumules sur tout le receive | **Partiel** : `COUNT` et autres VREF sont principalement evalues par mise a jour de ref | **Partiel** : quotas et limites integres, sans domaine Datalog transactionnel equivalent | Avantage Maelys |
 | Autorisation | Extension de la politique | **Complet** : regles Datalog versionnees et inspecteurs C bornes | **Complet** : vaste ecosysteme VREF, triggers et commandes | **Partiel** : hooks et code de la forge, moins adaptes aux politiques locales declaratives | P1 : bibliotheque de politiques |
-| Audit | Explication et preuve d'une decision | **Partiel** : explications du solveur et empreinte de politique ; recu compact versionne encore absent | **Partiel** : test et diagnostic de regles, sans preuve declarative equivalente | **Partiel** : motifs fonctionnels et journaux, sans preuve de politique equivalente | P1 : decision receipt |
+| Audit | Explication et preuve d'une decision | **Partiel** : explications Why-true et Why-false du moteur, empreinte du jeu de politiques et de la session ; recu compact versionne specifie (cycle GIT-C02), non implemente | **Partiel** : test et diagnostic de regles, sans preuve declarative equivalente | **Partiel** : motifs fonctionnels et journaux, sans preuve de politique equivalente | P1 : decision receipt |
 | Cles | Cles utilisateur et deploy keys | **Complet** : compilation atomique, validation, portee depot, lecture seule, expiration et revocation | **Complet** pour les cles utilisateur ; deploy keys specialisees a construire par convention/extension | **Complet** | P1 : rotation et attestation |
 | Depots | Creation dynamique | **Partiel avance** : segments/depth/leaf injectes en Datalog et migration de `NAMESPACE/CREATOR/..*`; pas de moteur regex general | **Complet** : wild repos, regex, `CREATOR` et permissions dynamiques | **Complet** : UI/API et push-to-create configurable | P1 : autres patrons choisis |
 | Depots | Inventaire, inspection, renommage, archive, suppression recuperable et restauration | **Complet** : plan/apply et preconditions CAS | **Partiel** : administration centree configuration ; operations de cycle de vie souvent externes | **Complet** via la forge, avec modele plus riche | Acquis pour le local |
@@ -45,13 +46,13 @@ Git Core vise un noyau local de securite pilotable par une forge separee.
 | Pull requests | Application atomique et reautorisee | **Complet** : CAS, empreinte de politique et transaction refs target/head/resultat | **Absent** | **Complet** dans le workflow de la forge | Avantage de surete a conserver |
 | Pull requests | Approbations et checks obligatoires | **Partiel** : gates fournis par la forge et verifies localement, sans stockage durable | **Absent** | **Complet** | P0 : modele durable cote forge |
 | Pull requests | PR entre forks et quarantaine d'objets | **Complet pour le noyau local** : source/ref exacts, quotas, `fsck`, identite/OID revus et promotion sans ref de quarantaine visible | **Absent** | **Complet** | Acquis ; etat durable cote forge restant |
-| Collaboration | PR persistantes, revues, commentaires et historique | **Absent** | **Absent** | **Complet** | P0 cote forge |
+| Collaboration | PR persistantes, revues, commentaires et historique | **Absent** | **Absent** | **Complet** | P0 cote forge : objectif annonce le 15 octobre 2026 |
 | Collaboration | Issues, labels, projets et wiki | **Absent** | **Absent** | **Complet** | P2 cote forge |
 | Distribution | Releases et stockage d'objets Git LFS | **Absent** : detection des pointeurs LFS seulement | **Absent** comme services integres | **Complet** | P2 |
 | Integration | Webhooks et notifications | **Partiel** : evenements normalises, `post-receive` et outbox ; pas d'abonnements ni de livraison Web publique | **Extensible** : triggers/hooks, pas un produit webhook integre | **Complet** | P1 |
 | Forge | Navigation Web, recherche et blame | **Absent** | **Absent** | **Complet** | P2 |
 | Forge | Comptes Web, tokens, OAuth/OIDC/LDAP et SSO | **Absent** : identite SSH locale et bearer token d'agent seulement | **Partiel/extensible** : SSH principal, smart HTTP et LDAP pour groupes | **Complet** | P1 cote forge |
-| Forge | CI integree | **Absent** | **Absent** | **Complet** : Forgejo Actions et runners separes | P2 |
+| Forge | CI integree | **Absent** | **Absent** | **Complet** : Forgejo Actions et runners separes | P1 : objectif annonce le 15 octobre 2026, service separe |
 | Forge | Registry de paquets | **Absent** | **Absent** | **Complet** | P3 |
 
 ## Lecture strategique
@@ -113,24 +114,38 @@ Le noyau PR actuel est une bonne frontiere : Maelys prepare et applique les
 mutations Git en les reautorisant ; une forge separee conserve l'etat durable
 des PR, revues, checks et utilisateurs.
 
+Le 15 octobre 2026, l'objectif est fixe de prendre en charge a terme les
+pull requests et la CI, pour ne plus dependre d'une forge tierce. Cela ne
+change pas cette frontiere : l'etat des PR et l'execution de la CI seront des
+services separes, construits sur ce noyau, sur un runtime de confinement
+d'execution et sur l'acquisition d'images ; ni l'un ni l'autre n'entre dans
+la bibliotheque C. Le noyau leur doit trois choses qu'il n'a pas encore : un
+recu de decision verifiable, des evenements de push horodates et identifies,
+et Git en HTTP.
+
 ## Ordre recommande
 
 1. **P0 - definir l'etat durable de PR cote forge** : le noyau local sait
    maintenant mettre en quarantaine, verifier et promouvoir les objets d'un
    fork ; il reste a modeliser ouverture, synchronisation, revue, checks,
    fermeture et fusion dans le service de forge.
-2. **P1 - terminer la parite Gitolite selectionnee** : publication
-   transactionnelle des sous-politiques deleguees, includes
-   confines, budget de regles des prefixes et orchestration distante des miroirs. Continuer a refuser toute
-   construction dont la semantique ne peut pas etre preservee.
-3. **P1 - rendre les decisions transportables** : recu versionne contenant
-   empreinte de politique, requete, racine de preuve et budgets du solveur ;
-   propagation de l'annulation dans les processus Git.
-4. **P1 - definir le contrat de forge** : API de comptes/equipes, etat PR,
+2. **P1 - definir la CI** : declaration des pipelines, declenchement par les
+   evenements de push et de PR, execution confinee, statuts rendus au service
+   de PR comme gates. Service separe ; le noyau n'y gagne que des evenements
+   et des gates.
+3. **P1 - rendre les decisions transportables** : recu versionne (cycle
+   GIT-C02, specifie), precede d'erreurs de politique structurees (cycle
+   GIT-C04, specifie) ; propagation de l'annulation dans les processus Git.
+4. **P1 - terminer la parite Gitolite selectionnee** : publication
+   transactionnelle des sous-politiques deleguees, includes confines, budget
+   de regles des prefixes (cycle GIT-C03) et orchestration distante des
+   miroirs. Continuer a refuser toute construction dont la semantique ne peut
+   pas etre preservee.
+5. **P1 - definir le contrat de forge** : API de comptes/equipes, etat PR,
    webhooks sortants et smart HTTP Git, sans introduire ces responsabilites
    dans la bibliotheque C.
-5. **P2 - construire le produit collaboratif** : UI, commentaires, issues,
-   wiki, releases, LFS et notifications. Actions et registry viennent apres.
+6. **P2 - construire le produit collaboratif** : UI, commentaires, issues,
+   wiki, releases, LFS et notifications. Registry de paquets ensuite.
 
 ## Frontiere de durcissement actuelle
 
@@ -155,12 +170,15 @@ Le moteur fournit deja des magasins de faits bornes, une resolution
 deterministe, les comparaisons d'entiers et des explications de preuve. Les
 ameliorations les plus rentables restent :
 
-- une session reutilisable qui remplace l'EDB sans reconstruire les regles
-  compilees pour chaque chemin ;
 - une API batch pour plusieurs jeux de faits de requete independants ;
-- un recu de decision compact et versionne contenant empreinte de politique,
-  requete, racine de preuve et statistiques de budget ;
 - des hooks explicites d'annulation et d'echeance.
+
+Fait depuis : une session reutilisable par politique, dont l'EDB est remplace
+a chaque requete sans recompiler les regles (cycle GIT-C01) ; des diagnostics
+de capacite qui nomment le budget depasse, au chargement comme sur un lot
+d'entree refuse, fournis par maelys-datalog 0.23.1, que Git Core exposera au
+cycle GIT-C04. Le recu de decision se construit dans Git Core sur les vues
+d'explication du moteur (cycle GIT-C02).
 
 Le hook receive streame deja les enregistrements Git. Un solveur Datalog
 streaming n'est pas necessaire pour la correction : sessions reutilisables et
