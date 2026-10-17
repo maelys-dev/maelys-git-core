@@ -17,6 +17,15 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   Every result code and every message stays as it was, byte for byte. The
   structure grows by about 400 bytes: a program linked against the library
   must be rebuilt. `MAELYS_GIT_VERSION` does not change here.
+- `maelys-git validate` reports that detail: each element of `diagnostics`
+  keeps `code`, `path` and `message` and gains, when known, `kind`,
+  `diagnostic`, `budget`, `requested`, `limit`, `file`, `line` and
+  `column`; an unknown member is left out. Its output schema now declares
+  the shape of an element instead of any object, and still admits the
+  reports it produced before. Exit codes are unchanged. The agent's failure
+  payload gains the same members under `detail` for a policy failure; its
+  `code` and `message` and the protocol `maelys-git-agent/1` are unchanged.
+  The failure envelopes of the other commands are unchanged.
 - The policy engine is reached through the installed SDK of maelys-datalog
   v0.22.0 (consumer API 2), `<maelys/datalog.h>` alone, and no longer
   through structures private to the engine, which 0.10.0 removed. The

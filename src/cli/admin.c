@@ -221,6 +221,28 @@ static int fail_with_result(maelys_cli_context_t *context, maelys_git_result_t c
 
 /* ---- validate / authorize / parse-ssh ----------------------------------------- */
 
+/* Adds the members of a policy failure detail that are known; an unknown
+ * member is left out, never written empty. The agent's failure payload
+ * (src/agent/executor.c) carries the same members. */
+static int add_failure_detail(json_t *object, const maelys_git_failure_detail_t *detail) {
+    if (detail->kind == MAELYS_GIT_FAILURE_NONE) return 1;
+    int ok = json_object_set_new(object, "kind",
+                                 json_string(maelys_git_failure_kind_name(detail->kind))) == 0;
+    if (ok && detail->diagnostic[0])
+        ok = json_object_set_new(object, "diagnostic", json_string(detail->diagnostic)) == 0;
+    if (ok && detail->budget[0])
+        ok = json_object_set_new(object, "budget", json_string(detail->budget)) == 0;
+    if (ok && detail->kind == MAELYS_GIT_FAILURE_CAPACITY)
+        ok = json_object_set_new(object, "requested", json_integer((json_int_t)detail->requested)) == 0 &&
+             json_object_set_new(object, "limit", json_integer((json_int_t)detail->limit)) == 0;
+    if (ok && detail->file[0])
+        ok = json_object_set_new(object, "file", json_string(detail->file)) == 0;
+    if (ok && detail->line > 0u)
+        ok = json_object_set_new(object, "line", json_integer((json_int_t)detail->line)) == 0 &&
+             json_object_set_new(object, "column", json_integer((json_int_t)detail->column)) == 0;
+    return ok;
+}
+
 static int command_validate(maelys_cli_context_t *context) {
     const char *manifest = maelys_cli_operand(context, 0u);
     maelys_git_error_t error = {0};
@@ -231,9 +253,15 @@ static int command_validate(maelys_cli_context_t *context) {
         return maelys_git_cli_fail_result(context, result, &error);
     int valid = result == MAELYS_GIT_OK;
     json_t *diagnostics = json_array();
-    if (!valid && diagnostics)
-        (void)json_array_append_new(diagnostics, json_pack("{s:s,s:s,s:s}",
-            "code", "POLICY_INVALID", "path", manifest, "message", error.message));
+    if (!valid && diagnostics) {
+        json_t *diagnostic = json_pack("{s:s,s:s,s:s}", "code", "POLICY_INVALID",
+                                       "path", manifest, "message", error.message);
+        if (diagnostic && !add_failure_detail(diagnostic, &error.detail)) {
+            json_decref(diagnostic);
+            diagnostic = NULL;
+        }
+        (void)json_array_append_new(diagnostics, diagnostic);
+    }
     json_t *data = json_pack("{s:b,s:s,s:o?}", "valid", valid,
                              "manifest", manifest, "diagnostics", diagnostics);
     return maelys_git_cli_succeed_json(context, data,

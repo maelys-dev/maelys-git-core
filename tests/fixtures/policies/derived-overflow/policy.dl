@@ -1,0 +1,21 @@
+% 17 by 17 facts joined: 289 derived facts of one predicate, beyond
+% MAX_FACTS_PER_PRED in either profile.
+group_member("u0", "g"). grant_read("x", "p0").
+group_member("u1", "g"). grant_read("x", "p1").
+group_member("u2", "g"). grant_read("x", "p2").
+group_member("u3", "g"). grant_read("x", "p3").
+group_member("u4", "g"). grant_read("x", "p4").
+group_member("u5", "g"). grant_read("x", "p5").
+group_member("u6", "g"). grant_read("x", "p6").
+group_member("u7", "g"). grant_read("x", "p7").
+group_member("u8", "g"). grant_read("x", "p8").
+group_member("u9", "g"). grant_read("x", "p9").
+group_member("u10", "g"). grant_read("x", "p10").
+group_member("u11", "g"). grant_read("x", "p11").
+group_member("u12", "g"). grant_read("x", "p12").
+group_member("u13", "g"). grant_read("x", "p13").
+group_member("u14", "g"). grant_read("x", "p14").
+group_member("u15", "g"). grant_read("x", "p15").
+group_member("u16", "g"). grant_read("x", "p16").
+effective_group_member(U, P) :- group_member(U, G), grant_read(X, P).
+allow(R) :- request(R), user(U), effective_group_member(U, "p0").
