@@ -1,0 +1,3 @@
+% Second policy of the set: an explicit deny here wins over an allow above.
+deny(R) :- request(R), operation("push"), ref(F), starts_with(F, "refs/heads/release/"), ends_with(F, "/frozen").
+deny(R) :- request(R), path(P), contains(P, "secret").

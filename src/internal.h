@@ -174,10 +174,7 @@ maelys_git_result_t mg_repository_visit_changes_with_budget(
     maelys_git_change_visitor_t visitor, void *context,
     maelys_git_change_summary_t *summary, maelys_git_error_t *error);
 
-#ifdef MAELYS_GIT_POLICY_TESTING
-maelys_git_result_t mg_policy_authorize_fresh(
-    maelys_git_policy_t *policy, const maelys_git_policy_request_t *request,
-    maelys_git_policy_decision_t *decision, maelys_git_error_t *error);
-#endif
+/* The number of rules one policy may hold, read from the loaded engine. */
+maelys_git_result_t mg_policy_rule_limit(size_t *out_limit, maelys_git_error_t *error);
 
 #endif

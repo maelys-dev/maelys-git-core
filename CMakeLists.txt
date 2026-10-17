@@ -12,6 +12,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 option(MAELYS_GIT_BUILD_TESTS "Build the Maelys Git tests" ON)
 option(MAELYS_GIT_ENABLE_CLOUD_AGENT "Build the HTTPS Cloud agent" ON)
 option(MAELYS_GIT_WERROR "Treat compiler warnings as errors" OFF)
+option(MAELYS_GIT_DATALOG_PROFILE_LARGE "Build the policy engine with its LARGE size profile" OFF)
 include(cmake/dependencies.cmake)
 set(MAELYS_DATALOG_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../maelys-datalog"
@@ -61,6 +62,8 @@ endif()
 # The Datalog tree is built EXCLUDE_FROM_ALL for its library only; its own
 # test registration (include(CTest)) is disabled in that scope.
 set(BUILD_TESTING OFF)
+set(MAELYS_DATALOG_PROFILE_LARGE ${MAELYS_GIT_DATALOG_PROFILE_LARGE} CACHE BOOL
+    "Build with the LARGE Datalog size profile" FORCE)
 add_subdirectory("${MAELYS_DATALOG_SOURCE_DIR}"
                  "${CMAKE_CURRENT_BINARY_DIR}/maelys-datalog"
                  EXCLUDE_FROM_ALL)
@@ -139,9 +142,11 @@ add_library(maelys_git_core STATIC
 target_include_directories(maelys_git_core
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+# The engine is reached through its installed SDK headers only, and SHA-256
+# comes from the public digest of the dependency-free CLI framework core.
 target_link_libraries(maelys_git_core
     PUBLIC maelys_datalog
-    PRIVATE Threads::Threads maelys_git_build_flags)
+    PRIVATE maelys::cli Threads::Threads maelys_git_build_flags)
 
 add_library(maelys_git_agent_core STATIC
     src/protocol/protocol.c
@@ -259,13 +264,16 @@ if(MAELYS_GIT_ENABLE_CLOUD_AGENT)
     set(MAELYS_DEPENDENCY_CFLAGS "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${MAELYS_BUILD_TYPE_UPPER}}")
     # Project headers precede inherited include paths, including installed
     # copies of older Maelys releases. Each build has its own dependency objects.
+    # The nested make does not inherit the outer make's flags: their jobserver
+    # descriptors are not passed to a custom command, and a make that finds
+    # them closed warns, or fails where their numbers are reused.
     add_custom_target(maelys_agent_dependencies
-        COMMAND ${CMAKE_COMMAND} -E env
+        COMMAND ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS --unset=MFLAGS
                 "CPPFLAGS=-I${MAELYS_SYSTEM_SOURCE_DIR}/include -I${MAELYS_SYSTEM_SOURCE_DIR} $ENV{CPPFLAGS}"
                 "CFLAGS=${MAELYS_DEPENDENCY_CFLAGS}"
                 ${MAELYS_MAKE_PROGRAM} -C "${MAELYS_SYSTEM_SOURCE_DIR}" all
                 "BUILD=${MAELYS_SYSTEM_BUILD_DIR}" "CC=${CMAKE_C_COMPILER}"
-        COMMAND ${CMAKE_COMMAND} -E env
+        COMMAND ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS --unset=MFLAGS
                 "CPPFLAGS=-I${MAELYS_HTTP_SOURCE_DIR}/include -I${MAELYS_HTTP_SOURCE_DIR}/src -I${MAELYS_SYSTEM_SOURCE_DIR}/include $ENV{CPPFLAGS}"
                 "CFLAGS=${MAELYS_DEPENDENCY_CFLAGS}"
                 ${MAELYS_MAKE_PROGRAM} -C "${MAELYS_HTTP_SOURCE_DIR}" all check-mbedtls
@@ -306,14 +314,65 @@ if(MAELYS_GIT_BUILD_TESTS)
         TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}")
     add_test(NAME maelys-git-core COMMAND test-maelys-git)
 
-    add_executable(test-maelys-git-policy-sessions
-        tests/test_policy_sessions.c src/policy/policy.c)
-    target_include_directories(test-maelys-git-policy-sessions PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    add_executable(test-maelys-git-policy-sessions tests/test_policy_sessions.c)
     target_compile_definitions(test-maelys-git-policy-sessions PRIVATE
-        MAELYS_GIT_POLICY_TESTING=1 TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}")
+        TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}")
     target_link_libraries(test-maelys-git-policy-sessions PRIVATE
         maelys_git_core Threads::Threads maelys_git_build_flags)
     add_test(NAME maelys-git-policy-sessions COMMAND test-maelys-git-policy-sessions)
+
+    add_executable(test-maelys-git-policy-concurrent-open tests/test_policy_concurrent_open.c)
+    target_compile_definitions(test-maelys-git-policy-concurrent-open PRIVATE
+        TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}")
+    target_link_libraries(test-maelys-git-policy-concurrent-open PRIVATE
+        maelys_git_core Threads::Threads maelys_git_build_flags)
+    add_test(NAME maelys-git-policy-concurrent-open COMMAND test-maelys-git-policy-concurrent-open)
+
+    # Decisions of a fixed request corpus, recorded on the baseline commit named
+    # in the first line of the expected file and reproduced by every build.
+    set(MAELYS_GIT_POLICY_FIXTURES "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/policies")
+    add_executable(test-maelys-git-policy-golden tests/test_policy_golden.c)
+    target_compile_definitions(test-maelys-git-policy-golden PRIVATE
+        TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}"
+        FIXTURE_DIR="${MAELYS_GIT_POLICY_FIXTURES}"
+        GOLDEN_FILE="${MAELYS_GIT_POLICY_FIXTURES}/golden.tsv"
+        GOLDEN_BASELINE="851e215")
+    target_link_libraries(test-maelys-git-policy-golden PRIVATE
+        maelys_git_core maelys_git_build_flags)
+    add_test(NAME maelys-git-policy-golden COMMAND test-maelys-git-policy-golden)
+
+    add_executable(test-maelys-git-policy-facade tests/test_policy_facade.c)
+    target_compile_definitions(test-maelys-git-policy-facade PRIVATE
+        TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}"
+        FIXTURE_DIR="${MAELYS_GIT_POLICY_FIXTURES}")
+    target_link_libraries(test-maelys-git-policy-facade PRIVATE
+        maelys_git_core maelys::cli maelys_git_build_flags)
+    add_test(NAME maelys-git-policy-facade COMMAND test-maelys-git-policy-facade)
+
+    # A consumer built against the SDK the pinned engine installs, and nothing else.
+    add_test(NAME maelys-git-facade-consumer
+        COMMAND ${CMAKE_COMMAND}
+            -DENGINE_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}/maelys-datalog
+            -DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/datalog-sdk
+            -DCC=${CMAKE_C_COMPILER}
+            "-DCFLAGS=${CMAKE_C_FLAGS}"
+            -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/test_facade_consumer.c
+            -DMANIFEST=${MAELYS_GIT_POLICY_FIXTURES}/filters/manifest.json
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_facade_consumer.cmake)
+
+    # Timing is not a test: built on demand, never run by CTest.
+    add_executable(bench-maelys-git-authorize EXCLUDE_FROM_ALL tests/bench_authorize.c)
+    target_link_libraries(bench-maelys-git-authorize PRIVATE
+        maelys_git_core maelys_git_build_flags)
+
+    # Production code reaches the engine through its installed SDK only.
+    add_test(NAME maelys-git-datalog-boundary
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DARCHIVE=$<TARGET_FILE:maelys_git_core>
+            -DSDK_INCLUDE=${MAELYS_DATALOG_SOURCE_DIR}/include
+            -DNM=${CMAKE_NM}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_datalog_boundary.cmake)
     set_tests_properties(maelys-git-policy-sessions PROPERTIES TIMEOUT 120)
 
     add_executable(test-maelys-git-agent tests/test_agent.c)
@@ -438,7 +497,7 @@ if(Python3_Interpreter_FOUND)
     add_custom_target(generate-cli-reference
         COMMAND ${Python3_EXECUTABLE} ${MAELYS_CLI_REFERENCE}
             --build $<TARGET_FILE_DIR:maelys-git>
-            --markdown ${CMAKE_CURRENT_SOURCE_DIR}/docs/cli-reference.md
+            --markdown ${CMAKE_CURRENT_SOURCE_DIR}/docs/cli.md
             --json ${CMAKE_CURRENT_SOURCE_DIR}/docs/cli-contract.json
             ${MAELYS_GIT_REFERENCE_ARGS} ${MAELYS_GIT_PROGRAMS}
         DEPENDS ${MAELYS_GIT_PROGRAMS} docs/cli-reference-intro.md

@@ -25,7 +25,7 @@ Git Core vise un noyau local de securite pilotable par une forge separee.
 | Transport | Git smart HTTP/HTTPS | **Absent** : l'HTTPS actuel transporte les commandes de l'agent, pas Git | **Partiel** : smart HTTP pris en charge, moins central que SSH | **Complet** | P1 si une forge Web l'exige |
 | Autorisation | Lecture, ecriture et creation par depot | **Complet** : decisions Datalog et creation bare dynamique | **Complet** | **Complet** | Acquis |
 | Autorisation | Groupes d'utilisateurs | **Complet** dans les politiques et groupes imbriques dans la migration ; includes/LDAP externes | **Complet** : groupes, inclusions, macros, LDAP extensible | **Complet** : utilisateurs, organisations et equipes | P1 pour les sources dynamiques |
-| Autorisation | Regles par branche, tag et type de mise a jour | **Complet** dans le noyau ; migration des full refs exactes, mais pas encore des refex/precedences regex | **Complet** : refex, creation, suppression, rewind et ordre des regles | **Complet** : protections de branches et tags, glob/regex selon le type | P1 pour les refex selectionnees |
+| Autorisation | Regles par branche, tag et type de mise a jour | **Complet** dans le noyau ; migration des full refs exactes et des prefixes litteraux ; aucune regex ni precedence regex | **Complet** : refex, creation, suppression, rewind et ordre des regles | **Complet** : protections de branches et tags, glob/regex selon le type | P1 pour les refex selectionnees |
 | Autorisation | Regles selon les fichiers modifies | **Complet** : tous les changements sont streams, sans plafond historique de 64 chemins | **Complet** : `VREF/NAME` | **Partiel** : protections de refs, sans moteur general de faits par chemin equivalent | Avantage Maelys |
 | Autorisation | Renommages et double chemin ancien/nouveau | **Complet** : `path` et `old_path` | **Partiel** : le VREF expose les noms touches, sans domaine type de renommage equivalent | **Partiel** : pas de domaine de politique general equivalent | Avantage Maelys |
 | Autorisation | Faits sur objets Git | **Complet** : taille, mode, binaire, symlink, submodule et pointeur LFS | **Partiel** : VREF livres pour compte, nom, type et taille de nouveaux binaires ; extensions possibles | **Partiel** : controles integres cibles, sans faits composables equivalents | Avantage Maelys |
@@ -38,7 +38,7 @@ Git Core vise un noyau local de securite pilotable par une forge separee.
 | Depots | Inventaire, inspection, renommage, archive, suppression recuperable et restauration | **Complet** : plan/apply et preconditions CAS | **Partiel** : administration centree configuration ; operations de cycle de vie souvent externes | **Complet** via la forge, avec modele plus riche | Acquis pour le local |
 | Depots | Mirroring | **Partiel avance** : miroir local idempotent, refs atomiques, HEAD et preconditions ; pas de redirection/scheduling distribue | **Complet** : maitres/copies, synchronisation et redirection avec limites documentees | **Complet** : miroirs de depot | P1 : orchestration distante |
 | Administration | Delegation d'administration | **Partiel** : faits `delegate_namespace` bornes au namespace ; pas encore de publication transactionnelle de sous-politiques | **Complet** : `subconf` et `VREF/NAME` | **Complet** : organisations, equipes et permissions | P1 |
-| Migration | Import de configuration Gitolite | **Partiel avance** : groupes imbriques, depots exacts, `C/R/RW/RW+`, wild `CREATOR`, full refs exactes et VREF `NAME/COUNT/MAX_NEWBIN_SIZE`; refus ferme du reste | Sans objet | Sans objet | P1 : includes, subconf et refex choisies |
+| Migration | Import de configuration Gitolite | **Partiel avance** : groupes imbriques, depots exacts, `C/R/RW/RW+`, wild `CREATOR`, full refs exactes, prefixes litteraux de refs et VREF `NAME/COUNT/MAX_NEWBIN_SIZE`; refus ferme du reste | Sans objet | Sans objet | P1 : includes, subconf et refex choisies |
 | API | CLI normalise et decouvrable par un agent | **Complet** : enveloppe `agent-cli/v2`, catalogues JSON et plan/apply | **Partiel** : CLI et commandes SSH scriptables, sans contrat homogene equivalent | **Complet** : CLI, API HTTP et interface Web | Avantage Maelys pour l'automatisation locale |
 | API | Agent distant durable | **Complet** dans son perimetre : HTTPS long-poll, journal SQLite, idempotence et outbox | **Absent** comme protocole integre | **Complet** autrement via API, webhooks et services de la forge | P1 : annulation et observabilite |
 | Pull requests | Analyse de conflit et preparation FF/merge/squash | **Complet** dans un meme depot ou entre forks, deterministe et sans mutation du depot cible pendant le plan | **Absent** | **Complet** | Acquis pour le noyau PR |
@@ -66,6 +66,36 @@ wild repos avec `CREATOR`, VREF usuels et miroirs locaux. Gitolite reste devant
 pour les regex generales, `subconf`, la delegation publiee, la redirection de
 miroirs et l'ecosysteme d'extensions historiques.
 
+### Refex migrees
+
+Gitolite ancre un refex au debut et non a la fin, complete par `refs/heads/`
+un nom qui ne commence pas par `refs/`, et lit un `$` final comme une egalite.
+La migration ne convertit que des noms litteraux, composes de
+`[A-Za-z0-9._/-]`, et seulement sous une forme dont l'equivalence est exacte :
+
+| Forme Gitolite | Resultat | Remarque |
+| --- | --- | --- |
+| `RW refs/heads/release/ = alice` | regle `starts_with(F, "refs/heads/release/")` | prefixe d'espace de noms |
+| `RW topic/ = alice` | regle `starts_with(F, "refs/heads/topic/")` | nom court complete |
+| `RW refs/heads/stable$ = alice` | fait exact `refs/heads/stable` | egalite |
+| `RW refs/heads/main = alice` | fait exact `refs/heads/main` | plus strict que Gitolite, qui y lit un prefixe |
+| `- refs/heads/main = mallory` | regle `starts_with(F, "refs/heads/main")` | comme Gitolite ; refuse aussi `main-hotfix` |
+| `RW refs/heads/(main|dev) = alice` | refuse, `unsupported refex syntax` | alternance |
+| `RW refs/heads/feature/.* = alice`, `[a-z]+`, `^...` | refuse, `unsupported refex syntax` | repetition, classe, ancre |
+| motif de plus de 256 octets | refuse, `ref pattern exceeds 256 bytes` | borne du moteur |
+
+Un prefixe de tag de version comme `refs/tags/v` n'est donc pas migre en
+autorisation : ecrit nu, il reste une egalite. Il s'ecrit a la main,
+`starts_with(F, "refs/tags/v")`, dans une politique Datalog. `ends_with` et
+`contains` ne sont jamais produits par la migration : Gitolite n'ancre pas la
+fin et une sous-chaine libre suppose `.*`.
+
+Chaque prefixe coute des regles et une politique en contient au plus 128, dont
+72 pour le socle d'autorisation genere : une quinzaine d'autorisations par
+prefixe tiennent dans une politique migree. Au-dela, le plan signale
+`rule budget exceeded` et rien n'est applique. La politique generee est
+rechargee par le moteur avant d'etre publiee.
+
 L'objectif raisonnable n'est pas la compatibilite syntaxique complete. Il faut
 fournir une bibliotheque de politiques typees couvrant les VREF utiles, puis
 faire migrer explicitement chaque construction reconnue. Toute construction
@@ -90,8 +120,8 @@ des PR, revues, checks et utilisateurs.
    fork ; il reste a modeliser ouverture, synchronisation, revue, checks,
    fermeture et fusion dans le service de forge.
 2. **P1 - terminer la parite Gitolite selectionnee** : publication
-   transactionnelle des sous-politiques deleguees, refex courantes, includes
-   confines et orchestration distante des miroirs. Continuer a refuser toute
+   transactionnelle des sous-politiques deleguees, includes
+   confines, budget de regles des prefixes et orchestration distante des miroirs. Continuer a refuser toute
    construction dont la semantique ne peut pas etre preservee.
 3. **P1 - rendre les decisions transportables** : recu versionne contenant
    empreinte de politique, requete, racine de preuve et budgets du solveur ;

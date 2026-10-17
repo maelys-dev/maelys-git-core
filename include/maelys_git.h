@@ -129,7 +129,45 @@ typedef struct {
     int explicit_deny;
     size_t matched_policy;
     char reason[MAELYS_GIT_MAX_ERROR];
+    /* Identity of the evaluated policy set (maelys_git_policy_fingerprint) and
+     * of the policy that produced the decision; the latter is empty for a
+     * denial by default, which no single policy produced. */
+    char policy_set_fingerprint[65];
+    char session_fingerprint[65];
 } maelys_git_policy_decision_t;
+
+/* What an explanation document is. A why-true document is a derivation
+ * witness. A why-false document refutes the fact within the engine's search
+ * bounds when its status is complete; when truncated it is a partial
+ * diagnostic and proves no absence. */
+typedef enum {
+    MAELYS_GIT_EXPLANATION_NONE = 0,
+    MAELYS_GIT_EXPLANATION_WHY_TRUE = 1,
+    MAELYS_GIT_EXPLANATION_WHY_FALSE = 2
+} maelys_git_explanation_kind_t;
+
+typedef enum {
+    MAELYS_GIT_EXPLANATION_NOT_APPLICABLE = 0,
+    MAELYS_GIT_EXPLANATION_COMPLETE = 1,
+    MAELYS_GIT_EXPLANATION_TRUNCATED = 2
+} maelys_git_explanation_status_t;
+
+typedef struct {
+    maelys_git_policy_decision_t decision;
+    maelys_git_explanation_kind_t kind;
+    maelys_git_explanation_status_t status;
+    /* The explained query predicate, "allow" or "deny", and the policy whose
+     * result was explained. */
+    char query[8];
+    size_t explained_policy;
+    /* Filter evaluations of that policy's solve. */
+    size_t filter_matches;
+    size_t filter_non_matches;
+    size_t filter_cost_units;
+    /* Bytes of the document, excluding the terminating NUL: written, and needed. */
+    size_t text_length;
+    size_t text_required;
+} maelys_git_policy_explanation_t;
 
 maelys_git_result_t maelys_git_policy_open(
     const char *manifest_path,
@@ -144,6 +182,21 @@ maelys_git_result_t maelys_git_policy_authorize(
     maelys_git_policy_t *policy,
     const maelys_git_policy_request_t *request,
     maelys_git_policy_decision_t *out_decision,
+    maelys_git_error_t *error);
+
+/* Decides as maelys_git_policy_authorize does, then renders the canonical
+ * MAELYS-DATALOG-v2 explanation of that decision into out_text: the witness of
+ * a derived allow or deny, or the why-false document of a denial by default.
+ * With out_text NULL and capacity 0 only the record is filled, including
+ * text_required. A buffer shorter than text_required + 1 bytes is
+ * MAELYS_GIT_ERR_LIMIT and receives no partial text. The document may quote
+ * policy and request values. */
+maelys_git_result_t maelys_git_policy_explain(
+    maelys_git_policy_t *policy,
+    const maelys_git_policy_request_t *request,
+    char *out_text,
+    size_t capacity,
+    maelys_git_policy_explanation_t *out_explanation,
     maelys_git_error_t *error);
 
 typedef struct {

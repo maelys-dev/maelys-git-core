@@ -1,0 +1,50 @@
+{
+  "policy_set_id": "maelys-git.fixture.filters",
+  "policy_set_version": "1",
+  "manifest_version": "1",
+  "default_profile": "enforce",
+  "created_for": "maelys-git-core-tests",
+  "strict_loading": true,
+  "fail_closed": true,
+  "capabilities": [],
+  "policies": [
+    {
+      "policy_id": "fixture.filters.base",
+      "domain": "maelys_git",
+      "file": "base.dl",
+      "sha256": "bfc72c3e8a8dca3547801009d3f7ffd28ee50793584f8a39f9c3d6933c268a0a",
+      "mode": "enforce",
+      "enabled": true,
+      "description": "Filter grants",
+      "queries": [
+        {
+          "name": "allow",
+          "arity": 1
+        },
+        {
+          "name": "deny",
+          "arity": 1
+        }
+      ]
+    },
+    {
+      "policy_id": "fixture.filters.guard",
+      "domain": "maelys_git",
+      "file": "guard.dl",
+      "sha256": "e29c1256a3acf7e31b71e9663e0b0d9e51ffe048b5e2e1bcb39da83fa046317d",
+      "mode": "enforce",
+      "enabled": true,
+      "description": "Filter denials",
+      "queries": [
+        {
+          "name": "allow",
+          "arity": 1
+        },
+        {
+          "name": "deny",
+          "arity": 1
+        }
+      ]
+    }
+  ]
+}

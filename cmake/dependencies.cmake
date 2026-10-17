@@ -1,15 +1,16 @@
-# Tested source revisions. Update these and the generated CLI reference together.
-set(MAELYS_GIT_CLI_VERSION "0.5.11")
-set(MAELYS_GIT_CLI_REVISION "e347740560480da1b09f8fee6c028b4f7d1b6c03")
-# Release tag v0.1.3, resolved to its immutable commit.
-set(MAELYS_GIT_JSON_VERSION "0.1.3")
-set(MAELYS_GIT_JSON_REVISION "0e60ec313388957739968a69c6a78c323b9dd67d")
-set(MAELYS_GIT_DATALOG_VERSION "0.1.0-alpha.1")
-set(MAELYS_GIT_DATALOG_REVISION "ffe7746e6a67a17c956ba8f3c4320ebf2d30d461")
-set(MAELYS_GIT_HTTP_VERSION "0.1.4")
-set(MAELYS_GIT_HTTP_REVISION "7afec74d199dc3d4fcc834ed3ae93b97de89bf89")
-set(MAELYS_GIT_SYSTEM_VERSION "0.9.0")
-set(MAELYS_GIT_SYSTEM_REVISION "6bd51950c83eaad9ec16cbac318549ab9bb2e928")
+# Tested source revisions: the commit of a published tag (vX.Y.Z) of each
+# dependency, never a branch commit, so the pin survives a history rewrite.
+# Update these and the generated CLI reference together.
+set(MAELYS_GIT_CLI_VERSION "0.7.0")
+set(MAELYS_GIT_CLI_REVISION "7a8c6f6c0aefeb12605f3cc9edbfad885a42af3f")
+set(MAELYS_GIT_JSON_VERSION "0.3.0")
+set(MAELYS_GIT_JSON_REVISION "d106890b02b3fbfd599ecd22bdeffb600db66123")
+set(MAELYS_GIT_DATALOG_VERSION "0.22.0")
+set(MAELYS_GIT_DATALOG_REVISION "e17fdc16cf4a5064b0c2686465f1ba837608c1b9")
+set(MAELYS_GIT_HTTP_VERSION "0.1.16")
+set(MAELYS_GIT_HTTP_REVISION "a3a36a72299fb6ce1f81c716699551bb75b0fbc1")
+set(MAELYS_GIT_SYSTEM_VERSION "0.13.0")
+set(MAELYS_GIT_SYSTEM_REVISION "c15ff2f4605a43375916a0459a158dd7c790a34f")
 
 option(MAELYS_GIT_ALLOW_UNPINNED_DEPS "Build dependency working trees instead of tested revisions" OFF)
 function(maelys_git_resolve_dependency name source_variable)

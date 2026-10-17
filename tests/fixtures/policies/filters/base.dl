@@ -1,0 +1,4 @@
+% Hand-written policy exercising the three bounded ground filters.
+allow(R) :- request(R), operation("push"), user("alice"), ref(F), starts_with(F, "refs/heads/release/").
+allow(R) :- request(R), operation("push"), user("bob"), ref(F), ends_with(F, "-wip").
+allow(R) :- request(R), operation("read"), repository(P), contains(P, "public").

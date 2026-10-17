@@ -21,7 +21,7 @@
               {
                 "name": "COMMAND_ID",
                 "required": false,
-                "summary": "Stable command identifier whose help is shown.",
+                "summary": "Stable command identifier whose help is shown, the family of commands under an identifier, or `conventions`.",
                 "variadic": false
               }
             ],
@@ -35,7 +35,7 @@
             "properties": {
               "commands": {
                 "items": {
-                  "type": "object"
+                  "type": "string"
                 },
                 "type": "array"
               },
@@ -131,13 +131,6 @@
                   "--prefix",
                   "--summary"
                 ]
-              },
-              {
-                "kind": "at-most-one",
-                "options": [
-                  "--prefix",
-                  "COMMAND_ID"
-                ]
               }
             ],
             "operands": [
@@ -160,7 +153,7 @@
               {
                 "argument": {
                   "name": "PREFIX",
-                  "pattern": "^[a-z](?:[a-z0-9.-]*[a-z0-9-])?$",
+                  "pattern": "^[a-z]([a-z0-9.-]*[a-z0-9-])?$",
                   "type": "string"
                 },
                 "conflictsWith": [
@@ -792,7 +785,6 @@
           "input": {
             "constraints": [
               {
-                "group": "apply",
                 "kind": "all-or-none",
                 "options": [
                   "--expected-source-identity",
@@ -944,7 +936,6 @@
           "input": {
             "constraints": [
               {
-                "group": "apply",
                 "kind": "all-or-none",
                 "options": [
                   "--expected-source-identity",
@@ -1096,7 +1087,6 @@
           "input": {
             "constraints": [
               {
-                "group": "apply",
                 "kind": "all-or-none",
                 "options": [
                   "--expected-source-identity",
@@ -1248,7 +1238,6 @@
           "input": {
             "constraints": [
               {
-                "group": "apply",
                 "kind": "all-or-none",
                 "options": [
                   "--expected-source-identity",
@@ -1422,7 +1411,6 @@
           "input": {
             "constraints": [
               {
-                "group": "apply",
                 "kind": "all-or-none",
                 "options": [
                   "--expected-source-identity",
@@ -1632,8 +1620,10 @@
                 "variadic": false
               },
               {
-                "alternativeDigits": 64,
-                "digits": 40,
+                "digits": [
+                  40,
+                  64
+                ],
                 "name": "OLD_OID",
                 "required": true,
                 "summary": "Expected old object identifier.",
@@ -1641,8 +1631,10 @@
                 "variadic": false
               },
               {
-                "alternativeDigits": 64,
-                "digits": 40,
+                "digits": [
+                  40,
+                  64
+                ],
                 "name": "NEW_OID",
                 "required": true,
                 "summary": "New object identifier.",
@@ -1736,8 +1728,10 @@
                 "variadic": false
               },
               {
-                "alternativeDigits": 64,
-                "digits": 40,
+                "digits": [
+                  40,
+                  64
+                ],
                 "name": "NEW_OID",
                 "required": true,
                 "summary": "New object identifier.",
@@ -1745,8 +1739,10 @@
                 "variadic": false
               },
               {
-                "alternativeDigits": 64,
-                "digits": 40,
+                "digits": [
+                  40,
+                  64
+                ],
                 "name": "OLD_OID",
                 "required": true,
                 "summary": "Expected current object identifier.",
@@ -2105,8 +2101,10 @@
                 "variadic": false
               },
               {
-                "alternativeDigits": 64,
-                "digits": 40,
+                "digits": [
+                  40,
+                  64
+                ],
                 "name": "BASE_OID",
                 "required": true,
                 "summary": "Current target commit.",
@@ -2114,8 +2112,10 @@
                 "variadic": false
               },
               {
-                "alternativeDigits": 64,
-                "digits": 40,
+                "digits": [
+                  40,
+                  64
+                ],
                 "name": "HEAD_OID",
                 "required": true,
                 "summary": "Pull request head commit.",
@@ -2409,7 +2409,6 @@
                 ]
               },
               {
-                "group": "apply",
                 "kind": "all-or-none",
                 "options": [
                   "--expected-target-identity",
@@ -2439,8 +2438,10 @@
                 "variadic": false
               },
               {
-                "alternativeDigits": 64,
-                "digits": 40,
+                "digits": [
+                  40,
+                  64
+                ],
                 "name": "BASE_OID",
                 "required": true,
                 "summary": "Expected target commit for CAS.",
@@ -2448,8 +2449,10 @@
                 "variadic": false
               },
               {
-                "alternativeDigits": 64,
-                "digits": 40,
+                "digits": [
+                  40,
+                  64
+                ],
                 "name": "HEAD_OID",
                 "required": true,
                 "summary": "Pull request head commit.",
@@ -2515,7 +2518,6 @@
               {
                 "argument": {
                   "maximum": 18446744073709551615,
-                  "minimum": 0,
                   "name": "COUNT",
                   "type": "unsigned"
                 },
@@ -2529,7 +2531,6 @@
               {
                 "argument": {
                   "maximum": 18446744073709551615,
-                  "minimum": 0,
                   "name": "COUNT",
                   "type": "unsigned"
                 },
@@ -2659,8 +2660,10 @@
               },
               {
                 "argument": {
-                  "alternativeDigits": 64,
-                  "digits": 40,
+                  "digits": [
+                    40,
+                    64
+                  ],
                   "name": "OID",
                   "type": "hex"
                 },
@@ -2896,6 +2899,62 @@
           "summary": "Control ANSI colors on terminals."
         },
         {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--progress",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Show the progress of a long run on stderr in text mode: auto only when stderr is a terminal."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--verbose",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Add the details of the run on stderr in text mode; silent in JSON."
+        },
+        {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--pager",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive."
+        },
+        {
+          "argument": {
+            "name": "NAME",
+            "type": "string"
+          },
+          "conflictsWith": [],
+          "long": "--field",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules."
+        },
+        {
           "conflictsWith": [],
           "long": "--help",
           "repeatable": false,
@@ -2944,7 +3003,7 @@
               {
                 "name": "COMMAND_ID",
                 "required": false,
-                "summary": "Stable command identifier whose help is shown.",
+                "summary": "Stable command identifier whose help is shown, the family of commands under an identifier, or `conventions`.",
                 "variadic": false
               }
             ],
@@ -2958,7 +3017,7 @@
             "properties": {
               "commands": {
                 "items": {
-                  "type": "object"
+                  "type": "string"
                 },
                 "type": "array"
               },
@@ -3054,13 +3113,6 @@
                   "--prefix",
                   "--summary"
                 ]
-              },
-              {
-                "kind": "at-most-one",
-                "options": [
-                  "--prefix",
-                  "COMMAND_ID"
-                ]
               }
             ],
             "operands": [
@@ -3083,7 +3135,7 @@
               {
                 "argument": {
                   "name": "PREFIX",
-                  "pattern": "^[a-z](?:[a-z0-9.-]*[a-z0-9-])?$",
+                  "pattern": "^[a-z]([a-z0-9.-]*[a-z0-9-])?$",
                   "type": "string"
                 },
                 "conflictsWith": [
@@ -3630,6 +3682,62 @@
           "summary": "Control ANSI colors on terminals."
         },
         {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--progress",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Show the progress of a long run on stderr in text mode: auto only when stderr is a terminal."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--verbose",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Add the details of the run on stderr in text mode; silent in JSON."
+        },
+        {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--pager",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive."
+        },
+        {
+          "argument": {
+            "name": "NAME",
+            "type": "string"
+          },
+          "conflictsWith": [],
+          "long": "--field",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules."
+        },
+        {
           "conflictsWith": [],
           "long": "--help",
           "repeatable": false,
@@ -3678,7 +3786,7 @@
               {
                 "name": "COMMAND_ID",
                 "required": false,
-                "summary": "Stable command identifier whose help is shown.",
+                "summary": "Stable command identifier whose help is shown, the family of commands under an identifier, or `conventions`.",
                 "variadic": false
               }
             ],
@@ -3692,7 +3800,7 @@
             "properties": {
               "commands": {
                 "items": {
-                  "type": "object"
+                  "type": "string"
                 },
                 "type": "array"
               },
@@ -3788,13 +3896,6 @@
                   "--prefix",
                   "--summary"
                 ]
-              },
-              {
-                "kind": "at-most-one",
-                "options": [
-                  "--prefix",
-                  "COMMAND_ID"
-                ]
               }
             ],
             "operands": [
@@ -3817,7 +3918,7 @@
               {
                 "argument": {
                   "name": "PREFIX",
-                  "pattern": "^[a-z](?:[a-z0-9.-]*[a-z0-9-])?$",
+                  "pattern": "^[a-z]([a-z0-9.-]*[a-z0-9-])?$",
                   "type": "string"
                 },
                 "conflictsWith": [
@@ -4106,6 +4207,62 @@
           "summary": "Control ANSI colors on terminals."
         },
         {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--progress",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Show the progress of a long run on stderr in text mode: auto only when stderr is a terminal."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--verbose",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Add the details of the run on stderr in text mode; silent in JSON."
+        },
+        {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--pager",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive."
+        },
+        {
+          "argument": {
+            "name": "NAME",
+            "type": "string"
+          },
+          "conflictsWith": [],
+          "long": "--field",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules."
+        },
+        {
           "conflictsWith": [],
           "long": "--help",
           "repeatable": false,
@@ -4154,7 +4311,7 @@
               {
                 "name": "COMMAND_ID",
                 "required": false,
-                "summary": "Stable command identifier whose help is shown.",
+                "summary": "Stable command identifier whose help is shown, the family of commands under an identifier, or `conventions`.",
                 "variadic": false
               }
             ],
@@ -4168,7 +4325,7 @@
             "properties": {
               "commands": {
                 "items": {
-                  "type": "object"
+                  "type": "string"
                 },
                 "type": "array"
               },
@@ -4264,13 +4421,6 @@
                   "--prefix",
                   "--summary"
                 ]
-              },
-              {
-                "kind": "at-most-one",
-                "options": [
-                  "--prefix",
-                  "COMMAND_ID"
-                ]
               }
             ],
             "operands": [
@@ -4293,7 +4443,7 @@
               {
                 "argument": {
                   "name": "PREFIX",
-                  "pattern": "^[a-z](?:[a-z0-9.-]*[a-z0-9-])?$",
+                  "pattern": "^[a-z]([a-z0-9.-]*[a-z0-9-])?$",
                   "type": "string"
                 },
                 "conflictsWith": [
@@ -4549,7 +4699,6 @@
               },
               {
                 "argument": {
-                  "maximum": 18446744073709551615,
                   "minimum": 1,
                   "name": "BYTES",
                   "type": "size"
@@ -4734,6 +4883,62 @@
           "summary": "Control ANSI colors on terminals."
         },
         {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--progress",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Show the progress of a long run on stderr in text mode: auto only when stderr is a terminal."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--verbose",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Add the details of the run on stderr in text mode; silent in JSON."
+        },
+        {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--pager",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive."
+        },
+        {
+          "argument": {
+            "name": "NAME",
+            "type": "string"
+          },
+          "conflictsWith": [],
+          "long": "--field",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules."
+        },
+        {
           "conflictsWith": [],
           "long": "--help",
           "repeatable": false,
@@ -4782,7 +4987,7 @@
               {
                 "name": "COMMAND_ID",
                 "required": false,
-                "summary": "Stable command identifier whose help is shown.",
+                "summary": "Stable command identifier whose help is shown, the family of commands under an identifier, or `conventions`.",
                 "variadic": false
               }
             ],
@@ -4796,7 +5001,7 @@
             "properties": {
               "commands": {
                 "items": {
-                  "type": "object"
+                  "type": "string"
                 },
                 "type": "array"
               },
@@ -4892,13 +5097,6 @@
                   "--prefix",
                   "--summary"
                 ]
-              },
-              {
-                "kind": "at-most-one",
-                "options": [
-                  "--prefix",
-                  "COMMAND_ID"
-                ]
               }
             ],
             "operands": [
@@ -4921,7 +5119,7 @@
               {
                 "argument": {
                   "name": "PREFIX",
-                  "pattern": "^[a-z](?:[a-z0-9.-]*[a-z0-9-])?$",
+                  "pattern": "^[a-z]([a-z0-9.-]*[a-z0-9-])?$",
                   "type": "string"
                 },
                 "conflictsWith": [
@@ -5250,6 +5448,62 @@
           "required": false,
           "requires": [],
           "summary": "Control ANSI colors on terminals."
+        },
+        {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--progress",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Show the progress of a long run on stderr in text mode: auto only when stderr is a terminal."
+        },
+        {
+          "conflictsWith": [],
+          "long": "--verbose",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Add the details of the run on stderr in text mode; silent in JSON."
+        },
+        {
+          "argument": {
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "name": "VALUE",
+            "type": "choice"
+          },
+          "conflictsWith": [],
+          "default": "auto",
+          "long": "--pager",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive."
+        },
+        {
+          "argument": {
+            "name": "NAME",
+            "type": "string"
+          },
+          "conflictsWith": [],
+          "long": "--field",
+          "repeatable": false,
+          "required": false,
+          "requires": [],
+          "summary": "Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules."
         },
         {
           "conflictsWith": [],
