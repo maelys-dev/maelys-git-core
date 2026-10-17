@@ -161,15 +161,29 @@ maelys_git_result_t mg_process_filter_spool_status(const char *executable,
                                                    int *out_exit_status,
                                                    maelys_git_error_t *error);
 
+/* The receipt of a receive, asked for by the caller: each authorization fills
+ * it, so it ends as the first denial or as the last authorization of an
+ * accepted transaction. `decided` says whether it is the receipt of the
+ * outcome; a failure outside the policy leaves it 0. */
+typedef struct {
+    maelys_git_explain_mode_t mode;
+    char *text;
+    size_t text_capacity;
+    maelys_git_receipt_t receipt;
+    int decided;
+} mg_receive_receipt_t;
+
 /* Shared receive authorization for the hook and the agent's update_ref.
- * Optional outputs expose the aggregate count and the last policy decision. */
+ * Optional outputs expose the aggregate count, the last policy decision and
+ * the decisive receipt. Without a receipt the path is that of authorize. */
 maelys_git_result_t mg_receive_authorize(
     maelys_git_policy_t *policy, const char *git, const char *repository_path,
     const char *repository_name, const char *principal,
     const maelys_git_inspection_limits_t *limits,
     const maelys_git_inspector_t *inspectors, size_t inspector_count,
     FILE *input, FILE *diagnostics, maelys_git_change_summary_t *out_summary,
-    maelys_git_policy_decision_t *out_decision, maelys_git_error_t *error);
+    maelys_git_policy_decision_t *out_decision, mg_receive_receipt_t *out_receipt,
+    maelys_git_error_t *error);
 
 /* Internal receive budget: zero means no remaining consumption is allowed. */
 maelys_git_result_t mg_repository_visit_changes_with_budget(
@@ -178,9 +192,9 @@ maelys_git_result_t mg_repository_visit_changes_with_budget(
     maelys_git_change_visitor_t visitor, void *context,
     maelys_git_change_summary_t *summary, maelys_git_error_t *error);
 
-/* The number of rules one policy may hold, read from the loaded engine. */
 /* Bytes of explanation storage the handle holds: zero until it explains. */
 size_t mg_policy_explanation_storage_bytes(const maelys_git_policy_t *policy);
+/* The number of rules one policy may hold, read from the loaded engine. */
 maelys_git_result_t mg_policy_rule_limit(size_t *out_limit, maelys_git_error_t *error);
 
 #endif

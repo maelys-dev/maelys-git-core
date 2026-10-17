@@ -12,6 +12,9 @@ extern "C" {
 
 /* The largest canonical receipt; a larger one is MAELYS_GIT_ERR_LIMIT. */
 #define MAELYS_GIT_RECEIPT_MAX_BYTES 8192u
+/* The largest explanation document a surface exposes beside a receipt. A
+ * longer one is not exposed; the receipt keeps its size and SHA-256. */
+#define MAELYS_GIT_RECEIPT_MAX_EXPLANATION_TEXT 32768u
 
 /* Writes the canonical bytes of a receipt, without a final newline, into a
  * buffer the caller releases with free(), and the lowercase hex SHA-256 of

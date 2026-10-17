@@ -184,7 +184,7 @@ static int test_deduplication_v1(void) {
     CHECK(mg_store_record_command(store, &message, v1, &state, &result, NULL) == MAELYS_GIT_OK);
     CHECK(state == MG_STORE_COMMAND_NEW);
     CHECK(mg_store_mark_running(store, message.message_id, NULL) == MAELYS_GIT_OK);
-    CHECK(mg_store_complete_command(store, message.message_id, 1, "{\"status\":\"ok\"}", 1, NULL) == MAELYS_GIT_OK);
+    CHECK(mg_store_complete_command(store, message.message_id, 1, "{\"status\":\"ok\"}", NULL, 1, NULL) == MAELYS_GIT_OK);
     mg_store_close(store);
     CHECK(mg_store_open(path, &store, NULL) == MAELYS_GIT_OK);
     char *pretty = json_dumps(root, JSON_INDENT(2));

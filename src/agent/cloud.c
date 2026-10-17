@@ -274,11 +274,24 @@ static maelys_git_result_t process_command(const maelys_git_agent_config_t *conf
                 response = executor_failure(&message, executor_error.message);
                 result = response ? MAELYS_GIT_OK : MAELYS_GIT_ERR_IO;
             }
+            /* A receipt is verified before anything is recorded; a result whose
+             * receipt or text does not verify is a failed command. */
+            mg_receipt_events_t events = {0};
             if (result == MAELYS_GIT_OK) {
-                result = mg_store_complete_command(store, message.message_id, succeeded,
-                                                   response, mg_now_ms(), error);
-                free(response);
+                maelys_git_error_t receipt_error = {0};
+                if (mg_receipt_events_prepare(&message, response, &events, &receipt_error) != MAELYS_GIT_OK) {
+                    free(response);
+                    response = executor_failure(&message, receipt_error.message);
+                    succeeded = 0;
+                    result = response ? MAELYS_GIT_OK : MAELYS_GIT_ERR_IO;
+                }
             }
+            if (result == MAELYS_GIT_OK)
+                result = mg_store_complete_command(store, message.message_id, succeeded,
+                                                   events.published ? events.published : response,
+                                                   &events, mg_now_ms(), error);
+            mg_receipt_events_clear(&events);
+            free(response);
         }
     }
     free(stored_result);

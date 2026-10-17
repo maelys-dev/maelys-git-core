@@ -1,4 +1,7 @@
 #include "agent_internal.h"
+#include "receipt/receipt_internal.h"
+
+#include <maelys/cli/digest.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -193,6 +196,7 @@ maelys_git_result_t mg_store_complete_command(maelys_git_agent_store_t *store,
                                               const char *command_id,
                                               int succeeded,
                                               const char *result_json,
+                                              const mg_receipt_events_t *events,
                                               int64_t now_ms,
                                               maelys_git_error_t *error) {
     if (!store || !command_id || !result_json) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
@@ -214,6 +218,18 @@ maelys_git_result_t mg_store_complete_command(maelys_git_agent_store_t *store,
         (void)snprintf(event_id, sizeof(event_id), "command:%s", command_id);
         ok = mg_store_audit(store, event_id, succeeded ? "command_complete" : "command_failed",
                             result_json, now_ms, error) == MAELYS_GIT_OK;
+    }
+    if (ok && events && events->receipt) {
+        char event_id[MG_MESSAGE_ID_MAX + 16u];
+        (void)snprintf(event_id, sizeof(event_id), "receipt:%s", command_id);
+        ok = mg_store_audit(store, event_id, "authorization_receipt", events->receipt,
+                            now_ms, error) == MAELYS_GIT_OK;
+    }
+    if (ok && events && events->text) {
+        char event_id[MG_MESSAGE_ID_MAX + 16u];
+        (void)snprintf(event_id, sizeof(event_id), "explanation:%s", command_id);
+        ok = mg_store_audit(store, event_id, "authorization_explanation", events->text,
+                            now_ms, error) == MAELYS_GIT_OK;
     }
     if (ok) ok = execute(store->database, "COMMIT");
     if (!ok) {
@@ -346,4 +362,113 @@ maelys_git_result_t mg_store_audit(maelys_git_agent_store_t *store,
     int step = sqlite3_step(statement);
     sqlite3_finalize(statement);
     return step == SQLITE_DONE ? MAELYS_GIT_OK : database_error(store->database, error, "write audit event");
+}
+
+/* ---- receipts of executor results ------------------------------------------- */
+
+void mg_receipt_events_clear(mg_receipt_events_t *events) {
+    if (!events) return;
+    free(events->receipt);
+    free(events->text);
+    free(events->published);
+    memset(events, 0, sizeof(*events));
+}
+
+static maelys_git_result_t receipt_refused(const char *reason, maelys_git_error_t *error) {
+    mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "executor result: %s", reason);
+    return MAELYS_GIT_ERR_PROTOCOL;
+}
+
+/* The command asked for the explanation text: an authorize with explain. */
+static int text_requested(const mg_agent_message_t *command) {
+    int explain = 0;
+    return strcmp(command->command, "authorize") == 0 &&
+           maelys_json_object_get_boolean(command->document, command->payload, "explain",
+                                          &explain) == MAELYS_JSON_OK && explain;
+}
+
+/* The result rewritten without payload.explanation_text, in canonical form. */
+static char *without_text(const maelys_json_document_t *document, maelys_json_value_t root,
+                          maelys_json_value_t payload) {
+    static const char *const payload_key[] = {"payload"};
+    static const char *const text_key[] = {"explanation_text"};
+    const maelys_json_limits_t limits = {
+        .maximum_bytes = MAELYS_GIT_MAX_PROTOCOL_LINE,
+        .maximum_depth = MG_PROTOCOL_MAX_DEPTH,
+        .maximum_tokens = MG_PROTOCOL_MAX_TOKENS,
+    };
+    maelys_json_writer_t *writer = NULL;
+    maelys_json_result_t status = maelys_json_writer_create(MAELYS_JSON_PROFILE_RFC8259, &limits, 0u, &writer);
+    if (status == MAELYS_JSON_OK)
+        status = maelys_json_writer_object_begin_except(writer, document, root, payload_key, 1u);
+    if (status == MAELYS_JSON_OK) status = maelys_json_writer_key_cstr(writer, "payload");
+    if (status == MAELYS_JSON_OK)
+        status = maelys_json_writer_object_begin_except(writer, document, payload, text_key, 1u);
+    if (status == MAELYS_JSON_OK) status = maelys_json_writer_object_end(writer);
+    if (status == MAELYS_JSON_OK) status = maelys_json_writer_object_end(writer);
+    char *bytes = NULL;
+    size_t size = 0u;
+    if (status == MAELYS_JSON_OK) status = maelys_json_writer_finish(writer, &bytes, &size);
+    maelys_json_writer_release(writer);
+    return status == MAELYS_JSON_OK ? bytes : NULL;
+}
+
+maelys_git_result_t mg_receipt_events_prepare(const mg_agent_message_t *command, const char *result_json,
+                                              mg_receipt_events_t *out, maelys_git_error_t *error) {
+    if (!command || !result_json || !out) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    memset(out, 0, sizeof(*out));
+    const maelys_json_limits_t limits = {
+        .maximum_bytes = MAELYS_GIT_MAX_PROTOCOL_LINE,
+        .maximum_depth = MG_PROTOCOL_MAX_DEPTH,
+        .maximum_tokens = MG_PROTOCOL_MAX_TOKENS,
+    };
+    maelys_json_document_t *document = NULL;
+    if (maelys_json_document_parse(result_json, strlen(result_json), MAELYS_JSON_PROFILE_RFC8259, &limits,
+                                   &document, NULL) != MAELYS_JSON_OK)
+        return receipt_refused("not a JSON object", error);
+    maelys_json_value_t root = maelys_json_document_root(document);
+    maelys_json_value_t payload = 0, receipt = 0, text = 0;
+    maelys_git_result_t result = MAELYS_GIT_OK;
+    if (maelys_json_object_get(document, root, "payload", &payload) != MAELYS_JSON_OK) {
+        result = receipt_refused("no payload", error);
+    } else if (maelys_json_object_get(document, payload, "receipt", &receipt) != MAELYS_JSON_OK) {
+        /* No decision, no receipt; a text without a receipt vouches for nothing. */
+        if (maelys_json_object_get(document, payload, "explanation_text", &text) == MAELYS_JSON_OK)
+            result = receipt_refused("explanation text without a receipt", error);
+        maelys_json_document_release(document);
+        return result;
+    }
+    size_t size = 0u;
+    char sha256[65];
+    mg_receipt_text_t vouched;
+    if (result == MAELYS_GIT_OK)
+        result = mg_receipt_rewrite(document, receipt, &out->receipt, &size, sha256, &vouched, error);
+    maelys_json_view_t view;
+    if (result == MAELYS_GIT_OK &&
+        (maelys_json_object_get_string(document, payload, "receipt_sha256", &view) != MAELYS_JSON_OK ||
+         view.size != 64u || memcmp(view.data, sha256, 64u) != 0))
+        result = receipt_refused("the receipt is not the one its digest names", error);
+    int has_text = result == MAELYS_GIT_OK &&
+        maelys_json_object_get(document, payload, "explanation_text", &text) == MAELYS_JSON_OK;
+    if (has_text) {
+        char text_sha256[MAELYS_CLI_SHA256_HEX_SIZE];
+        if (maelys_json_value_string(document, text, &view) != MAELYS_JSON_OK ||
+            memchr(view.data, '\0', view.size) != NULL || !vouched.has_text ||
+            view.size != vouched.text_bytes) {
+            result = receipt_refused("the explanation text is not the one the receipt vouches for", error);
+        } else {
+            maelys_cli_sha256_hex(view.data, view.size, text_sha256);
+            if (strcmp(text_sha256, vouched.text_sha256) != 0)
+                result = receipt_refused("the explanation text is not the one the receipt vouches for", error);
+        }
+        if (result == MAELYS_GIT_OK && !(out->text = strndup(view.data, view.size))) result = MAELYS_GIT_ERR_IO;
+        if (result == MAELYS_GIT_OK && !text_requested(command) &&
+            !(out->published = without_text(document, root, payload))) {
+            mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "cannot rewrite the executor result without its text");
+            result = MAELYS_GIT_ERR_IO;
+        }
+    }
+    maelys_json_document_release(document);
+    if (result != MAELYS_GIT_OK) mg_receipt_events_clear(out);
+    return result;
 }

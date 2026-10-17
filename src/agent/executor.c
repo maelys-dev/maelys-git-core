@@ -1,4 +1,5 @@
 #include "agent_internal.h"
+#include "maelys_git_receipt.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -139,14 +140,29 @@ static char *failure(const mg_agent_message_t *message,
     return encoded;
 }
 
+/* A decision with its receipt, and the explanation text when one was asked
+ * for, rendered into the caller's buffer of the exposed size. */
+typedef struct {
+    maelys_git_policy_decision_t decision;
+    maelys_git_receipt_t receipt;
+    const char *text;
+} judged_t;
+
+#define EXPLANATION_CAPACITY (MAELYS_GIT_RECEIPT_MAX_EXPLANATION_TEXT + 1u)
+
+/* Authorizes the command's request on the path that builds its receipt.
+ * `text` holds EXPLANATION_CAPACITY bytes, or is NULL when mode is NEVER. */
 static maelys_git_result_t authorize(maelys_git_policy_t *policy,
                                      const mg_agent_message_t *message,
                                      const char *operation,
                                      const char *ref_name,
                                      const char *const *paths,
                                      size_t path_count,
-                                     maelys_git_policy_decision_t *decision,
+                                     maelys_git_explain_mode_t mode,
+                                     char *text,
+                                     judged_t *out,
                                      maelys_git_error_t *error) {
+    memset(out, 0, sizeof(*out));
     if (message->principal[0] == '\0' || message->repository[0] == '\0') {
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
                      "principal and repository are required for this command");
@@ -161,17 +177,46 @@ static maelys_git_result_t authorize(maelys_git_policy_t *policy,
         .paths = paths,
         .path_count = path_count,
     };
-    return maelys_git_policy_authorize(policy, &request, decision, error);
+    out->text = text;
+    return maelys_git_policy_authorize_receipt(policy, &request, mode, text,
+                                               text ? EXPLANATION_CAPACITY : 0u,
+                                               &out->decision, &out->receipt, error);
 }
 
+/* The only exit of a decision: its members, the deciding policy, the receipt
+ * read back from its canonical bytes and their digest, and the explanation
+ * text when one was rendered. A result longer than a protocol line goes
+ * without the text; the receipt keeps its size and digest. */
 static char *decision_result(const mg_agent_message_t *message,
-                             const maelys_git_policy_decision_t *decision,
+                             const judged_t *judged,
                              maelys_git_error_t *error) {
-    json_t *payload = json_pack("{s:b,s:b,s:s}",
+    char *bytes = NULL;
+    size_t size = 0u;
+    char sha256[65];
+    if (maelys_git_receipt_serialize(&judged->receipt, &bytes, &size, sha256, error) != MAELYS_GIT_OK)
+        return NULL;
+    json_t *receipt = json_loadb(bytes, size, JSON_REJECT_DUPLICATES, NULL);
+    free(bytes);
+    if (!receipt) return NULL;
+    const maelys_git_policy_decision_t *decision = &judged->decision;
+    json_t *matched = decision->matched_policy == SIZE_MAX ?
+        json_null() : json_integer((json_int_t)decision->matched_policy);
+    json_t *payload = json_pack("{s:b,s:b,s:s,s:o,s:o,s:s}",
         "allowed", decision->allowed, "explicit_deny", decision->explicit_deny,
-        "reason", decision->reason);
-    char *encoded = payload ? mg_protocol_encode_result(
-        message, decision->allowed ? "ok" : "denied", payload, error) : NULL;
+        "reason", decision->reason, "matched_policy", matched, "receipt", receipt,
+        "receipt_sha256", sha256);
+    int with_text = payload && judged->text && judged->receipt.explanation.has_text && judged->text[0];
+    if (with_text && json_object_set_new(payload, "explanation_text", json_string(judged->text)) != 0) {
+        json_decref(payload);
+        payload = NULL;
+    }
+    const char *status = decision->allowed ? "ok" : "denied";
+    char *encoded = payload ? mg_protocol_encode_result(message, status, payload, error) : NULL;
+    if (encoded && with_text && strlen(encoded) > MAELYS_GIT_MAX_PROTOCOL_LINE) {
+        free(encoded);
+        (void)json_object_del(payload, "explanation_text");
+        encoded = mg_protocol_encode_result(message, status, payload, error);
+    }
     json_decref(payload);
     return encoded;
 }
@@ -179,12 +224,17 @@ static char *decision_result(const mg_agent_message_t *message,
 static char *execute_authorize(maelys_git_policy_t *policy,
                                const mg_agent_message_t *message,
                                maelys_git_error_t *error) {
-    static const char *const allowed[] = {"operation", "ref", "paths", NULL};
+    static const char *const allowed[] = {"operation", "ref", "paths", "explain", NULL};
     if (!payload_has_only(message, allowed))
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "unknown authorize field", error);
     const char *operation = required_string(message, "operation");
     int valid = 1;
     const char *ref = optional_string(message, "ref", &valid);
+    /* explain: true asks for the explanation text in the result. */
+    int explain = 0;
+    maelys_json_result_t got_explain = maelys_json_object_get_boolean(
+        message->document, message->payload, "explain", &explain);
+    if (got_explain != MAELYS_JSON_OK && got_explain != MAELYS_JSON_ERR_NOT_FOUND) valid = 0;
     maelys_json_value_t paths_value;
     maelys_json_result_t got_paths = maelys_json_object_get(
         message->document, message->payload, "paths", &paths_value);
@@ -205,11 +255,13 @@ static char *execute_authorize(maelys_git_policy_t *policy,
             return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid path", error);
         paths[i] = view.data;
     }
-    maelys_git_policy_decision_t decision;
-    maelys_git_result_t result = authorize(policy, message, operation,
-        ref, paths, path_count, &decision, error);
+    char text[EXPLANATION_CAPACITY];
+    judged_t judged;
+    maelys_git_result_t result = authorize(policy, message, operation, ref, paths, path_count,
+        explain ? MAELYS_GIT_EXPLAIN_ALWAYS : MAELYS_GIT_EXPLAIN_NEVER, explain ? text : NULL,
+        &judged, error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
-    return decision_result(message, &decision, error);
+    return decision_result(message, &judged, error);
 }
 
 static char *execute_repository_info(maelys_git_policy_t *policy,
@@ -219,10 +271,11 @@ static char *execute_repository_info(maelys_git_policy_t *policy,
     static const char *const allowed[] = {NULL};
     if (!payload_has_only(message, allowed))
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "repository_info payload must be empty", error);
-    maelys_git_policy_decision_t decision;
-    maelys_git_result_t result = authorize(policy, message, "read", NULL, NULL, 0u, &decision, error);
+    judged_t judged;
+    maelys_git_result_t result = authorize(policy, message, "read", NULL, NULL, 0u,
+                                           MAELYS_GIT_EXPLAIN_NEVER, NULL, &judged, error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
-    if (!decision.allowed) return decision_result(message, &decision, error);
+    if (!judged.decision.allowed) return decision_result(message, &judged, error);
     char repository_path[4096];
     result = maelys_git_resolve_repository(root, message->repository, repository_path,
                                            sizeof(repository_path), error);
@@ -243,10 +296,11 @@ static char *execute_diff(maelys_git_policy_t *policy,
     const char *new_oid = required_string(message, "new_oid");
     if (!payload_has_only(message, allowed) || !old_oid || !new_oid)
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid diff payload", error);
-    maelys_git_policy_decision_t decision;
-    maelys_git_result_t result = authorize(policy, message, "read", NULL, NULL, 0u, &decision, error);
+    judged_t judged;
+    maelys_git_result_t result = authorize(policy, message, "read", NULL, NULL, 0u,
+                                           MAELYS_GIT_EXPLAIN_NEVER, NULL, &judged, error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
-    if (!decision.allowed) return decision_result(message, &decision, error);
+    if (!judged.decision.allowed) return decision_result(message, &judged, error);
     char repository_path[4096];
     result = maelys_git_resolve_repository(root, message->repository, repository_path,
                                            sizeof(repository_path), error);
@@ -271,6 +325,7 @@ static char *execute_update_ref(maelys_git_policy_t *policy,
                                 const char *git,
                                 const char *root,
                                 const mg_agent_message_t *message,
+                                maelys_git_explain_mode_t denial_mode,
                                 maelys_git_error_t *error) {
     static const char *const allowed[] = {"ref", "old_oid", "new_oid", NULL};
     const char *ref = required_string(message, "ref");
@@ -293,7 +348,10 @@ static char *execute_update_ref(maelys_git_policy_t *policy,
         return failure(message, "failed", MAELYS_GIT_ERR_IO, "cannot create authorization stream", error);
     }
     maelys_git_change_summary_t summary = {0};
-    maelys_git_policy_decision_t decision = {0};
+    char text[EXPLANATION_CAPACITY];
+    judged_t judged = {.text = denial_mode == MAELYS_GIT_EXPLAIN_NEVER ? NULL : text};
+    mg_receive_receipt_t receipt = {.mode = denial_mode, .text = (char *)judged.text,
+                                    .text_capacity = judged.text ? sizeof(text) : 0u};
     maelys_git_inspection_limits_t limits;
     maelys_git_inspection_limits_default(&limits);
     if (fprintf(updates, "%s %s %s\n", old_oid, new_oid, ref) < 0 ||
@@ -303,11 +361,14 @@ static char *execute_update_ref(maelys_git_policy_t *policy,
     } else {
         result = mg_receive_authorize(policy, git, repository_path, message->repository,
             message->principal, &limits, NULL, 0u, updates, diagnostics, &summary,
-            &decision, error);
+            &judged.decision, &receipt, error);
     }
     fclose(updates);
     fclose(diagnostics);
-    if (result == MAELYS_GIT_ERR_DENIED) return decision_result(message, &decision, error);
+    if (result == MAELYS_GIT_ERR_DENIED) {
+        judged.receipt = receipt.receipt;
+        return decision_result(message, &judged, error);
+    }
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
     result = maelys_git_repository_update_ref(git, repository_path, ref, new_oid, old_oid, error);
     size_t changed_count = summary.changed_count + summary.renamed_count;
@@ -322,14 +383,17 @@ static char *execute_create_repository(maelys_git_policy_t *policy,
                                        const char *git,
                                        const char *root,
                                        const mg_agent_message_t *message,
+                                       maelys_git_explain_mode_t denial_mode,
                                        maelys_git_error_t *error) {
     static const char *const allowed[] = {NULL};
     if (!payload_has_only(message, allowed))
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "create_repository payload must be empty", error);
-    maelys_git_policy_decision_t decision;
-    maelys_git_result_t result = authorize(policy, message, "create", NULL, NULL, 0u, &decision, error);
+    char text[EXPLANATION_CAPACITY];
+    judged_t judged;
+    maelys_git_result_t result = authorize(policy, message, "create", NULL, NULL, 0u, denial_mode,
+        denial_mode == MAELYS_GIT_EXPLAIN_NEVER ? NULL : text, &judged, error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
-    if (!decision.allowed) return decision_result(message, &decision, error);
+    if (!judged.decision.allowed) return decision_result(message, &judged, error);
     result = maelys_git_repository_init_bare(git, root, message->repository, error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
     json_t *payload = json_pack("{s:s}", "repository", message->repository);
@@ -420,11 +484,11 @@ static char *execute_pr_check(maelys_git_policy_t *policy,
     maelys_git_merge_style_t style = required_style(message);
     if (!valid || !payload_has_only(message, allowed) || !base || !head || !style)
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid pr_check payload", error);
-    maelys_git_policy_decision_t decision;
+    judged_t judged;
     maelys_git_result_t result = authorize(policy, message, "read", NULL, NULL, 0u,
-                                           &decision, error);
+                                           MAELYS_GIT_EXPLAIN_NEVER, NULL, &judged, error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
-    if (!decision.allowed) return decision_result(message, &decision, error);
+    if (!judged.decision.allowed) return decision_result(message, &judged, error);
     char repository_path[4096];
     result = maelys_git_resolve_repository(root, message->repository, repository_path,
                                            sizeof(repository_path), error);
@@ -521,6 +585,7 @@ maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
                                         const char *git_executable,
                                         const char *repository_root,
                                         const mg_agent_message_t *message,
+                                        maelys_git_explain_mode_t denial_mode,
                                         char **out_result_json,
                                         maelys_git_error_t *error) {
     if (!policy || !git_executable || !repository_root || !message || !out_result_json ||
@@ -549,9 +614,11 @@ maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
     } else if (strcmp(message->command, "diff") == 0) {
         *out_result_json = execute_diff(policy, git_executable, repository_root, message, error);
     } else if (strcmp(message->command, "update_ref") == 0) {
-        *out_result_json = execute_update_ref(policy, git_executable, repository_root, message, error);
+        *out_result_json = execute_update_ref(policy, git_executable, repository_root, message,
+                                              denial_mode, error);
     } else if (strcmp(message->command, "create_repository") == 0) {
-        *out_result_json = execute_create_repository(policy, git_executable, repository_root, message, error);
+        *out_result_json = execute_create_repository(policy, git_executable, repository_root, message,
+                                                     denial_mode, error);
     } else if (strcmp(message->command, "pr_check") == 0) {
         *out_result_json = execute_pr_check(policy, git_executable, repository_root, message, error);
     } else if (strcmp(message->command, "pr_merge") == 0) {

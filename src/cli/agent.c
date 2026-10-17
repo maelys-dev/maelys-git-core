@@ -1,5 +1,6 @@
 /* maelys-git-agent and maelys-git-executor. The executor's `serve` and the
  * agent's `stdio` share one handler: the local JSONL protocol on stdio. */
+#include "agent/agent_internal.h"
 #include "cli/json_support.h"
 #include "maelys_git_agent.h"
 
@@ -76,18 +77,29 @@ static int command_run(maelys_cli_context_t *context) {
 }
 #endif
 
-static int command_serve(maelys_cli_context_t *context) {
+static int serve(maelys_cli_context_t *context, maelys_git_explain_mode_t denial_mode) {
     maelys_git_error_t error = {0};
     maelys_git_policy_t *policy = NULL;
     maelys_git_result_t result = maelys_git_policy_open(
         maelys_cli_option(context, "manifest"), &policy, &error);
     if (result == MAELYS_GIT_OK)
-        result = maelys_git_agent_serve(policy, maelys_git_cli_git(context),
-                                        maelys_cli_option(context, "root"),
-                                        stdin, context->out, context->err, &error);
+        result = mg_agent_serve(policy, maelys_git_cli_git(context),
+                                maelys_cli_option(context, "root"),
+                                stdin, context->out, context->err, denial_mode, &error);
     maelys_git_policy_close(policy);
     return result == MAELYS_GIT_OK ? MAELYS_CLI_EXIT_OK :
         maelys_git_cli_stream_error(context, "stream", result, &error);
+}
+
+/* The local front-end publishes its results itself: no denial text. */
+static int command_stdio(maelys_cli_context_t *context) {
+    return serve(context, MAELYS_GIT_EXPLAIN_NEVER);
+}
+
+/* The executor answers the agent that supervises it, which keeps the text of
+ * a denial in its audit and removes it from the result it publishes. */
+static int command_executor_serve(maelys_cli_context_t *context) {
+    return serve(context, MAELYS_GIT_EXPLAIN_ON_DENIAL);
 }
 
 static const maelys_cli_command_t agent_commands[] = {
@@ -111,14 +123,14 @@ static const maelys_cli_command_t agent_commands[] = {
                     "MAELYS_GIT_ENABLE_CLOUD_AGENT=ON."},
 #endif
     {MAELYS_CLI_PROTOCOL_STREAM("stdio", "stdio", "Serve the executor JSONL protocol on stdio.",
-     command_serve, MAELYS_GIT_AGENT_PROTOCOL),
+     command_stdio, MAELYS_GIT_AGENT_PROTOCOL),
      MAELYS_CLI_OPTIONS(serve_options),
      MAELYS_CLI_SCHEMA(maelys_git_schema_protocol_stream)},
 };
 
 static const maelys_cli_command_t executor_commands[] = {
     {MAELYS_CLI_PROTOCOL_STREAM("serve", "serve", "Serve one-command-at-a-time JSONL execution.",
-     command_serve, MAELYS_GIT_AGENT_PROTOCOL),
+     command_executor_serve, MAELYS_GIT_AGENT_PROTOCOL),
      MAELYS_CLI_OPTIONS(serve_options),
      MAELYS_CLI_SCHEMA(maelys_git_schema_protocol_stream)},
 };

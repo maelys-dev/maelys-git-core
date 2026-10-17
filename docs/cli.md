@@ -20,7 +20,7 @@ reste indiquée par `describe` dans chaque binaire.
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
 | validate | `validate MANIFEST` | read | json-envelope | Validate a Datalog policy manifest. |
-| authorize | `authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...]` | read | json-envelope | Evaluate one authorization request. |
+| authorize | `authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...] [--explain]` | read | json-envelope | Evaluate one authorization request. |
 | parse-ssh | `parse-ssh COMMAND` | read | json-envelope | Parse a forced SSH Git command. |
 | repo.init | `repo init ROOT REPOSITORY [--git FILE] [--apply]` | preview then apply with --apply | json-envelope | Plan or create a bare repository. |
 | repo.list | `repo list ROOT [--include-stored]` | read | json-envelope | Inventory active repositories and optionally recoverable stored repositories. |
