@@ -41,13 +41,42 @@ typedef enum {
     MAELYS_GIT_ERR_NOT_FOUND = -10
 } maelys_git_result_t;
 
+/* What kind of policy failure a MAELYS_GIT_ERR_POLICY reports. Any other
+ * failure, and a policy failure outside loading, solving and building the
+ * request facts, leaves MAELYS_GIT_FAILURE_NONE. */
+typedef enum {
+    MAELYS_GIT_FAILURE_NONE = 0,
+    MAELYS_GIT_FAILURE_CAPACITY = 1,  /* a budget of the engine is exceeded */
+    MAELYS_GIT_FAILURE_SYNTAX = 2,    /* the policy text cannot be read */
+    MAELYS_GIT_FAILURE_SEMANTICS = 3, /* the policy reads but means nothing valid */
+    MAELYS_GIT_FAILURE_MANIFEST = 4,  /* the manifest, its digests or its entries */
+    MAELYS_GIT_FAILURE_VALUE = 5,     /* a request value the engine cannot hold */
+    MAELYS_GIT_FAILURE_ENGINE = 6     /* any other refusal of the engine */
+} maelys_git_failure_kind_t;
+
+/* The machine-readable detail of a policy failure, taken from the engine's
+ * diagnostic and from Git Core's own bounds; the message says the same for
+ * a person. Empty strings and zero numbers mean unknown. */
+typedef struct {
+    maelys_git_failure_kind_t kind;
+    char diagnostic[64]; /* the engine's diagnostic code name */
+    char budget[48];     /* CAPACITY: the engine's budget name, e.g. "MAX_RULES" */
+    uint64_t requested;  /* CAPACITY: the count or size that was attempted */
+    uint64_t limit;      /* CAPACITY: the bound in effect where it failed */
+    char file[256];      /* the policy, as the engine names it */
+    size_t line, column;
+} maelys_git_failure_detail_t;
+
 typedef struct {
     maelys_git_result_t code;
     int system_error;
     char message[MAELYS_GIT_MAX_ERROR];
+    maelys_git_failure_detail_t detail;
 } maelys_git_error_t;
 
 const char *maelys_git_result_name(maelys_git_result_t result);
+/* "none", "capacity", "syntax", "semantics", "manifest", "value", "engine". */
+const char *maelys_git_failure_kind_name(maelys_git_failure_kind_t kind);
 void maelys_git_error_clear(maelys_git_error_t *error);
 
 typedef enum {

@@ -42,6 +42,13 @@ foreach(source IN LISTS sources)
             list(APPEND violations "${name}: forbidden token ${token}")
         endif()
     endforeach()
+    # A failure detail comes from the engine's diagnostic and Git Core's own
+    # bounds: no code searches or parses an error message to recover it.
+    string(REGEX MATCH "(strstr|strchr|strncmp|sscanf|strtoul|strtoull|strtol|atoi)[ \t]*\\([^;]*(->|\\.)message"
+           parsed "${text}")
+    if(parsed)
+        list(APPEND violations "${name}: reads an error message: ${parsed}")
+    endif()
 endforeach()
 
 execute_process(COMMAND "${NM}" -u "${ARCHIVE}"

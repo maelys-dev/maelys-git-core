@@ -5,6 +5,18 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- A policy failure says by machine what it is. `maelys_git_error_t` gains a
+  `detail`: its kind (`capacity`, `syntax`, `semantics`, `manifest`, `value`
+  or `engine`, named by `maelys_git_failure_kind_name`), the engine's
+  diagnostic code, and for a capacity the budget by the engine's own name
+  (`MAX_RULES`, `MAX_POLICY_ATOM_BYTES`, `MAX_FACTS_PER_PRED`…), the
+  attempted count and the bound in effect; the policy line and column when
+  the engine located it. It is filled when a manifest does not load, when a
+  solve is refused and when a request's facts exceed a bound, from the
+  engine's diagnostic or from Git Core's own bounds, never from a message.
+  Every result code and every message stays as it was, byte for byte. The
+  structure grows by about 400 bytes: a program linked against the library
+  must be rebuilt. `MAELYS_GIT_VERSION` does not change here.
 - The policy engine is reached through the installed SDK of maelys-datalog
   v0.22.0 (consumer API 2), `<maelys/datalog.h>` alone, and no longer
   through structures private to the engine, which 0.10.0 removed. The

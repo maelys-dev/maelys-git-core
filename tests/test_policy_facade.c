@@ -801,12 +801,202 @@ static int test_error_messages_unchanged(const refusal_t refusals[REFUSAL_COUNT]
     return 1;
 }
 
+/* A capacity detail names its budget as the engine does, and reports the
+ * attempted count and the bound; the policy is located when the engine
+ * located it. */
+static int capacity_detail(const refusal_t *refusal, const char *budget) {
+    const maelys_git_failure_detail_t *detail = &refusal->error.detail;
+    CHECK(detail->kind == MAELYS_GIT_FAILURE_CAPACITY);
+    CHECK(!strcmp(detail->budget, budget));
+    CHECK(detail->limit > 0u && detail->requested > detail->limit);
+    return 1;
+}
+
+static int located(const refusal_t *refusal) {
+    const maelys_git_failure_detail_t *detail = &refusal->error.detail;
+    CHECK(detail->line > 0u && detail->column > 0u);
+    CHECK(strstr(detail->file, refusal->name) != NULL);
+    return 1;
+}
+
+static int loads(const char *name, char *source) {
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_error_t error;
+    const char *path = source ? write_policy(name, source) : NULL;
+    free(source);
+    CHECK(path && maelys_git_policy_open(path, &policy, &error) == MAELYS_GIT_OK);
+    CHECK(error.detail.kind == MAELYS_GIT_FAILURE_NONE);
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
+/* Tests 3 to 5, 17 and 20: every budget exceeded at load is named, and the
+ * bound is the engine's: a policy at that bound loads. No limit is written
+ * here; each is read from the detail. */
+static int test_capacity_details(const refusal_t refusals[REFUSAL_COUNT]) {
+    const refusal_t *atom = &refusals[REFUSAL_ATOM_BYTES];
+    CHECK(capacity_detail(atom, "MAX_POLICY_ATOM_BYTES") && located(atom));
+    CHECK(atom->error.detail.requested == 64u && atom->error.detail.limit == 63u);
+    size_t limit = (size_t)atom->error.detail.limit;
+    char *source = malloc(limit + 64u);
+    CHECK(source != NULL);
+    int prefix = snprintf(source, limit + 64u, "allow(R) :- request(R), user(\"");
+    memset(source + prefix, 'b', limit);
+    (void)snprintf(source + (size_t)prefix + limit, 64u, "\").\n");
+    CHECK(loads("bound-atom-bytes", source));
+
+    const refusal_t *atoms = &refusals[REFUSAL_POLICY_ATOMS];
+    CHECK(capacity_detail(atoms, "MAX_POLICY_ATOMS") && located(atoms));
+    CHECK(atoms->error.detail.requested == atoms->error.detail.limit + 1u);
+    CHECK(loads("bound-policy-atoms", constants_policy((size_t)atoms->error.detail.limit / 2u, "")));
+
+    const refusal_t *rules = &refusals[REFUSAL_RULES];
+    CHECK(capacity_detail(rules, "MAX_RULES") && located(rules));
+    CHECK(rules->error.detail.requested == rules->error.detail.limit + 1u);
+    CHECK(loads("bound-rules", rules_policy((size_t)rules->error.detail.limit)));
+
+    const refusal_t *string = &refusals[REFUSAL_STRING_BYTES];
+    CHECK(capacity_detail(string, "MAX_STRING_BYTES") && located(string));
+    CHECK(string->error.detail.requested == 1025u);
+
+    /* One diagnostic code, three budgets: only the detail tells them apart. */
+    CHECK(!strcmp(atom->error.detail.diagnostic, "lexer_string_too_long"));
+    CHECK(!strcmp(atoms->error.detail.diagnostic, atom->error.detail.diagnostic));
+    CHECK(!strcmp(string->error.detail.diagnostic, atom->error.detail.diagnostic));
+
+    const refusal_t *facts = &refusals[REFUSAL_POLICY_FACTS];
+    CHECK(capacity_detail(facts, "MAX_RULE_FACTS") && located(facts));
+    CHECK(facts->error.detail.requested == facts->error.detail.limit + 1u);
+    CHECK(facts->error.detail.line == facts->error.detail.requested);
+    CHECK(loads("bound-policy-facts", facts_policy((size_t)facts->error.detail.limit)));
+    return 1;
+}
+
+/* Tests 6 to 8: syntax, meaning and manifest, by the engine's code. */
+static int test_other_details(const refusal_t refusals[REFUSAL_COUNT]) {
+    static const struct { size_t refusal; maelys_git_failure_kind_t kind; const char *code; } expected[] = {
+        {REFUSAL_INVALID_TOKEN, MAELYS_GIT_FAILURE_SYNTAX, "lexer_invalid_token"},
+        {REFUSAL_EXPECTED_DOT, MAELYS_GIT_FAILURE_SYNTAX, "parser_expected_dot"},
+        {REFUSAL_UNKNOWN_PREDICATE, MAELYS_GIT_FAILURE_SEMANTICS, "parser_unknown_predicate"},
+        {REFUSAL_DIGEST, MAELYS_GIT_FAILURE_MANIFEST, "manifest_sha_mismatch"},
+        {REFUSAL_NONE_ENABLED, MAELYS_GIT_FAILURE_MANIFEST, ""},
+    };
+    for (size_t i = 0u; i < sizeof(expected) / sizeof(expected[0]); ++i) {
+        const refusal_t *refusal = &refusals[expected[i].refusal];
+        const maelys_git_failure_detail_t *detail = &refusal->error.detail;
+        CHECK(detail->kind == expected[i].kind && !strcmp(detail->diagnostic, expected[i].code));
+        CHECK(detail->budget[0] == '\0' && detail->requested == 0u && detail->limit == 0u);
+        if (expected[i].kind != MAELYS_GIT_FAILURE_MANIFEST) CHECK(located(refusal));
+    }
+    CHECK(!strcmp(maelys_git_failure_kind_name(MAELYS_GIT_FAILURE_SEMANTICS), "semantics"));
+    return 1;
+}
+
+/* The longest valid repository name: 254 segments, one fact each. */
+static void deep_repository(char out[MAELYS_GIT_MAX_REPOSITORY]) {
+    size_t used = 0u;
+    for (size_t i = 0u; i < 253u; ++i) { out[used++] = 'a'; out[used++] = '/'; }
+    memcpy(out + used, "x.git", 6u);
+}
+
+/* Tests 9, 10, 15 and 16: request facts beyond a bound Git Core checks, and
+ * beyond one the engine checks, report the same budget and the same limit:
+ * the profile's, read from the engine. A request at that limit passes. */
+static int test_request_details(const refusal_t refusals[REFUSAL_COUNT]) {
+    const refusal_t *paths = &refusals[REFUSAL_PATHS];
+    CHECK(capacity_detail(paths, "MAX_FACTS_PER_PRED"));
+    CHECK(paths->error.detail.requested == TEST_PATHS && paths->error.detail.diagnostic[0] == '\0');
+    const uint64_t per_predicate = paths->error.detail.limit;
+    const refusal_t *derived = &refusals[REFUSAL_DERIVED];
+    CHECK(capacity_detail(derived, "MAX_FACTS_PER_PRED"));
+    CHECK(!strcmp(derived->error.detail.diagnostic, "solve_idb_overflow"));
+    CHECK(derived->error.detail.limit == per_predicate);
+    CHECK(derived->error.detail.requested == per_predicate + 1u);
+    const maelys_git_failure_detail_t *integer = &refusals[REFUSAL_INTEGER].error.detail;
+    CHECK(integer->kind == MAELYS_GIT_FAILURE_VALUE && integer->budget[0] == '\0');
+
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_error_t error;
+    const char *path = write_policy("request-bounds", k_policy_a);
+    CHECK(path && maelys_git_policy_open(path, &policy, &error) == MAELYS_GIT_OK);
+    static char names[TEST_PATHS][16];
+    static const char *list[TEST_PATHS];
+    for (size_t i = 0u; i < TEST_PATHS; ++i) {
+        (void)snprintf(names[i], sizeof(names[i]), "g%zu", i);
+        list[i] = names[i];
+    }
+    maelys_git_policy_request_t request = {
+        .request_id = "t", .principal = "alice", .repository = "r.git", .operation = "push",
+        .paths = list, .path_count = (size_t)per_predicate};
+    maelys_git_policy_decision_t decision;
+    CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) == MAELYS_GIT_OK);
+    CHECK(decision.allowed && error.detail.kind == MAELYS_GIT_FAILURE_NONE);
+
+    /* A repository name may hold more segments than the SMALL profile admits
+     * facts of one predicate: the engine refuses that batch at the solve. */
+    char repository[MAELYS_GIT_MAX_REPOSITORY];
+    deep_repository(repository);
+    maelys_git_policy_request_t deep = {
+        .request_id = "t", .principal = "alice", .repository = repository, .operation = "push"};
+    maelys_git_result_t result = maelys_git_policy_authorize(policy, &deep, &decision, &error);
+    if (per_predicate < 254u) {
+        CHECK(result == MAELYS_GIT_ERR_POLICY);
+        CHECK(!strncmp(error.message, "policy solve failed: operation_rejected", 39u));
+        CHECK(error.detail.kind == MAELYS_GIT_FAILURE_CAPACITY);
+        CHECK(!strcmp(error.detail.budget, "MAX_FACTS_PER_PRED"));
+        /* The engine counts the attempt that overflowed, not the whole batch. */
+        CHECK(error.detail.requested == per_predicate + 1u && error.detail.limit == per_predicate);
+    } else {
+        CHECK(result == MAELYS_GIT_OK && error.detail.kind == MAELYS_GIT_FAILURE_NONE);
+    }
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
+/* Tests 11 and 18: a call that succeeds, or that fails for another reason,
+ * leaves no policy detail behind; clearing an error clears its detail. */
+static int test_detail_reset(void) {
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_error_t error;
+    const char *path = write_policy("detail-reset", k_policy_a);
+    CHECK(path && maelys_git_policy_open(path, &policy, &error) == MAELYS_GIT_OK);
+    maelys_git_policy_request_t request = {
+        .request_id = "t", .principal = "alice", .repository = "r.git", .operation = "push",
+        .has_summary = 1, .changed_count = SIZE_MAX};
+    maelys_git_policy_decision_t decision;
+    CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) == MAELYS_GIT_ERR_POLICY);
+    CHECK(error.detail.kind == MAELYS_GIT_FAILURE_VALUE);
+    request.changed_count = 1u;
+    CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) == MAELYS_GIT_OK);
+    CHECK(error.detail.kind == MAELYS_GIT_FAILURE_NONE);
+
+    request.changed_count = SIZE_MAX;
+    CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) == MAELYS_GIT_ERR_POLICY);
+    request.principal = NULL;
+    CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) ==
+          MAELYS_GIT_ERR_INVALID_ARGUMENT);
+    CHECK(error.detail.kind == MAELYS_GIT_FAILURE_NONE && error.detail.diagnostic[0] == '\0');
+
+    request.principal = "alice";
+    CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) == MAELYS_GIT_ERR_POLICY);
+    maelys_git_error_clear(&error);
+    maelys_git_error_t zero;
+    memset(&zero, 0, sizeof(zero));
+    CHECK(!memcmp(&error, &zero, sizeof(error)));
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
 static int test_refusals(void) {
     static refusal_t refusals[REFUSAL_COUNT];
     CHECK(collect_refusals(refusals));
     for (size_t i = 0u; i < REFUSAL_COUNT; ++i)
         CHECK(refusals[i].result == MAELYS_GIT_ERR_POLICY);
     CHECK(test_error_messages_unchanged(refusals));
+    CHECK(test_capacity_details(refusals));
+    CHECK(test_other_details(refusals));
+    CHECK(test_request_details(refusals));
+    CHECK(test_detail_reset());
     return 1;
 }
 
