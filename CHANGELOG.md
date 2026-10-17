@@ -53,6 +53,15 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   agent no longer inherits the outer make's flags. It received jobserver
   descriptors that were not open in it: GNU Make warned and fell back to
   one job, or failed where the descriptor numbers were reused.
+- maelys-datalog pinned at v0.23.1 (from v0.22.0). Every capacity
+  diagnostic now names the exceeded budget (`limit_kind`, with
+  `maelys_datalog_limit_name`), at load and on a refused input batch; 0.23.1
+  adds the last one, more than 128 direct policy facts (`MAX_RULE_FACTS`),
+  which 0.22.0 refused with an empty diagnostic. The message of that refusal
+  is the only policy error message that changes: it now names the line,
+  the count and the limit. `maelys_datalog_limit_get` answers
+  `INVALID_ARGUMENT` for an unknown identifier; this repository queries known
+  ones only.
 - maelys-datalog pinned at v0.22.0 (from v0.21.0), maelys-http at v0.1.16
   (from v0.1.15) and maelys-system at v0.13.0 (from v0.11.0).
   maelys-datalog 0.22.0 carries the compatibility freeze of its 0.x public
