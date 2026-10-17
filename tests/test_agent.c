@@ -20,6 +20,79 @@ static char *valid_command(const char *id) {
     return encoded;
 }
 
+/* An authorize command of `principal` on r.git with the given payload. */
+static char *authorize_command(const char *id, const char *principal, json_t *payload) {
+    json_t *root = json_pack("{s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:I,s:I,s:o}",
+        "protocol", MAELYS_GIT_AGENT_PROTOCOL, "message_id", id,
+        "agent_id", "agent-1", "type", "command", "command", "authorize",
+        "principal", principal, "repository", "r.git",
+        "issued_at_ms", (json_int_t)mg_now_ms(),
+        "expires_at_ms", (json_int_t)(mg_now_ms() + 60000), "payload", payload);
+    char *encoded = json_dumps(root, JSON_COMPACT | JSON_SORT_KEYS);
+    json_decref(root);
+    return encoded;
+}
+
+/* Runs one command and returns its result payload, after checking that the
+ * result is a valid protocol result for that command. */
+static json_t *execute(maelys_git_policy_t *policy, const char *raw, const char *status,
+                       maelys_git_error_t *error) {
+    mg_agent_message_t message;
+    if (!raw || mg_protocol_parse(raw, strlen(raw), &message, error) != MAELYS_GIT_OK) return NULL;
+    char *encoded = NULL;
+    json_t *payload = NULL;
+    int succeeded = 1;
+    if (mg_executor_execute(policy, "/usr/bin/git", "/tmp", &message, &encoded, error) == MAELYS_GIT_OK &&
+        mg_protocol_validate_result(encoded, strlen(encoded), &message, &succeeded, error) ==
+            MAELYS_GIT_OK && !succeeded) {
+        json_error_t json_error;
+        json_t *root = json_loads(encoded, 0, &json_error);
+        if (root && !strcmp(json_string_value(json_object_get(root, "status")), status))
+            payload = json_incref(json_object_get(root, "payload"));
+        json_decref(root);
+    }
+    free(encoded);
+    mg_protocol_message_clear(&message);
+    return payload;
+}
+
+/* A policy failure carries its detail in the failure payload, beside the code
+ * and the message it always had; any other failure carries none, even on an
+ * error that held a policy detail before. */
+static int test_policy_failure_detail(void) {
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_error_t error = {0};
+    CHECK(maelys_git_policy_open(FIXTURE_DIR "/derived-overflow/manifest.json", &policy, &error) ==
+          MAELYS_GIT_OK);
+    char *raw = authorize_command("m-detail", "u0", json_pack("{s:s}", "operation", "read"));
+    json_t *payload = execute(policy, raw, "failed", &error);
+    free(raw);
+    CHECK(payload != NULL);
+    CHECK(!strcmp(json_string_value(json_object_get(payload, "code")), "policy_error"));
+    CHECK(!strncmp(json_string_value(json_object_get(payload, "message")), "policy solve failed: ", 21u));
+    json_t *detail = json_object_get(payload, "detail");
+    CHECK(json_is_object(detail));
+    CHECK(!strcmp(json_string_value(json_object_get(detail, "kind")), "capacity"));
+    CHECK(!strcmp(json_string_value(json_object_get(detail, "budget")), "MAX_FACTS_PER_PRED"));
+    CHECK(!strcmp(json_string_value(json_object_get(detail, "diagnostic")), "solve_idb_overflow"));
+    json_int_t limit = json_integer_value(json_object_get(detail, "limit"));
+    CHECK(limit > 0 && json_integer_value(json_object_get(detail, "requested")) == limit + 1);
+    CHECK(json_object_get(detail, "line") == NULL);
+    json_decref(payload);
+    CHECK(error.detail.kind == MAELYS_GIT_FAILURE_CAPACITY);
+
+    raw = authorize_command("m-protocol", "u0", json_pack("{s:s,s:b}", "operation", "read",
+                                                        "surprise", 1));
+    payload = execute(policy, raw, "failed", &error);
+    free(raw);
+    CHECK(payload != NULL);
+    CHECK(!strcmp(json_string_value(json_object_get(payload, "code")), "protocol_error"));
+    CHECK(json_object_get(payload, "detail") == NULL);
+    json_decref(payload);
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
 static int test_protocol_strictness(void) {
     char *raw = valid_command("m1");
     CHECK(raw != NULL);
@@ -156,7 +229,8 @@ int main(void) {
     passed += test_retry_is_bounded();
     passed += test_durable_store();
     passed += test_provision_and_token_security();
-    if (passed != 4) return 1;
+    passed += test_policy_failure_detail();
+    if (passed != 5) return 1;
     (void)printf("ok: %d agent test groups passed\n", passed);
     return 0;
 }

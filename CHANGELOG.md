@@ -5,6 +5,27 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- A policy failure says by machine what it is. `maelys_git_error_t` gains a
+  `detail`: its kind (`capacity`, `syntax`, `semantics`, `manifest`, `value`
+  or `engine`, named by `maelys_git_failure_kind_name`), the engine's
+  diagnostic code, and for a capacity the budget by the engine's own name
+  (`MAX_RULES`, `MAX_POLICY_ATOM_BYTES`, `MAX_FACTS_PER_PRED`…), the
+  attempted count and the bound in effect; the policy line and column when
+  the engine located it. It is filled when a manifest does not load, when a
+  solve is refused and when a request's facts exceed a bound, from the
+  engine's diagnostic or from Git Core's own bounds, never from a message.
+  Every result code and every message stays as it was, byte for byte. The
+  structure grows by about 400 bytes: a program linked against the library
+  must be rebuilt. `MAELYS_GIT_VERSION` does not change here.
+- `maelys-git validate` reports that detail: each element of `diagnostics`
+  keeps `code`, `path` and `message` and gains, when known, `kind`,
+  `diagnostic`, `budget`, `requested`, `limit`, `file`, `line` and
+  `column`; an unknown member is left out. Its output schema now declares
+  the shape of an element instead of any object, and still admits the
+  reports it produced before. Exit codes are unchanged. The agent's failure
+  payload gains the same members under `detail` for a policy failure; its
+  `code` and `message` and the protocol `maelys-git-agent/1` are unchanged.
+  The failure envelopes of the other commands are unchanged.
 - The policy engine is reached through the installed SDK of maelys-datalog
   v0.22.0 (consumer API 2), `<maelys/datalog.h>` alone, and no longer
   through structures private to the engine, which 0.10.0 removed. The
@@ -53,6 +74,15 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   agent no longer inherits the outer make's flags. It received jobserver
   descriptors that were not open in it: GNU Make warned and fell back to
   one job, or failed where the descriptor numbers were reused.
+- maelys-datalog pinned at v0.23.1 (from v0.22.0). Every capacity
+  diagnostic now names the exceeded budget (`limit_kind`, with
+  `maelys_datalog_limit_name`), at load and on a refused input batch; 0.23.1
+  adds the last one, more than 128 direct policy facts (`MAX_RULE_FACTS`),
+  which 0.22.0 refused with an empty diagnostic. The message of that refusal
+  is the only policy error message that changes: it now names the line,
+  the count and the limit. `maelys_datalog_limit_get` answers
+  `INVALID_ARGUMENT` for an unknown identifier; this repository queries known
+  ones only.
 - maelys-datalog pinned at v0.22.0 (from v0.21.0), maelys-http at v0.1.16
   (from v0.1.15) and maelys-system at v0.13.0 (from v0.11.0).
   maelys-datalog 0.22.0 carries the compatibility freeze of its 0.x public

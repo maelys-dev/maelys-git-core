@@ -4,6 +4,8 @@
 #include "test_support.h"
 
 #include <jansson.h>
+#include <maelys/cli/digest.h>
+#include <regex.h>
 
 static const maelys_cli_app_t *const apps[] = {
     &maelys_git_cli_admin_app,
@@ -218,12 +220,198 @@ static int test_envelopes(void) {
     return 1;
 }
 
+/* ---- validate: the policy failure detail ----------------------------------- */
+
+/* Checks a value against the subset of JSON Schema that the validate schema
+ * uses; any other keyword fails, so that nothing is skipped unnoticed. */
+static int conforms(const json_t *value, const json_t *schema) {
+    const char *keyword;
+    const json_t *rule;
+    json_object_foreach((json_t *)schema, keyword, rule) {
+        if (!strcmp(keyword, "type")) {
+            const char *type = json_string_value(rule);
+            int ok = !strcmp(type, "object") ? json_is_object(value)
+                   : !strcmp(type, "array") ? json_is_array(value)
+                   : !strcmp(type, "string") ? json_is_string(value)
+                   : !strcmp(type, "boolean") ? json_is_boolean(value)
+                   : !strcmp(type, "integer") ? json_is_integer(value) : 0;
+            if (!ok) return 0;
+        } else if (!strcmp(keyword, "required")) {
+            size_t i;
+            const json_t *name;
+            json_array_foreach(rule, i, name)
+                if (!json_object_get(value, json_string_value(name))) return 0;
+        } else if (!strcmp(keyword, "properties")) {
+            const char *name;
+            const json_t *member;
+            json_object_foreach((json_t *)value, name, member) {
+                const json_t *property = json_object_get(rule, name);
+                if (property ? !conforms(member, property)
+                             : json_is_false(json_object_get(schema, "additionalProperties")))
+                    return 0;
+            }
+        } else if (!strcmp(keyword, "items")) {
+            size_t i;
+            const json_t *item;
+            json_array_foreach(value, i, item) if (!conforms(item, rule)) return 0;
+        } else if (!strcmp(keyword, "enum")) {
+            size_t i;
+            const json_t *allowed;
+            int found = 0;
+            json_array_foreach(rule, i, allowed) found = found || json_equal(value, allowed);
+            if (!found) return 0;
+        } else if (!strcmp(keyword, "pattern")) {
+            regex_t expression;
+            if (regcomp(&expression, json_string_value(rule), REG_EXTENDED | REG_NOSUB) != 0) return 0;
+            int matched = regexec(&expression, json_string_value(value), 0u, NULL, 0) == 0;
+            regfree(&expression);
+            if (!matched) return 0;
+        } else if (!strcmp(keyword, "minimum")) {
+            if (json_integer_value(value) < json_integer_value(rule)) return 0;
+        } else if (!strcmp(keyword, "minLength")) {
+            if (json_string_length(value) < (size_t)json_integer_value(rule)) return 0;
+        } else if (strcmp(keyword, "additionalProperties") != 0) {
+            (void)fprintf(stderr, "schema keyword not checked: %s\n", keyword);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static json_t *validate_schema(void) {
+    const maelys_cli_app_t *admin = &maelys_git_cli_admin_app;
+    for (size_t i = 0u; i < admin->command_count; ++i)
+        if (!strcmp(admin->commands[i].id, "validate"))
+            return json_loads(admin->commands[i].output_schema_json, 0, NULL);
+    return NULL;
+}
+
+/* Writes DIRECTORY/policy.dl and DIRECTORY/manifest.json; returns the manifest. */
+static const char *write_manifest(const char *directory, const char *source) {
+    static char manifest_path[512];
+    char policy_path[512], digest[MAELYS_CLI_SHA256_HEX_SIZE];
+    if (mkdir(directory, 0700) != 0) return NULL;
+    (void)snprintf(policy_path, sizeof(policy_path), "%s/policy.dl", directory);
+    (void)snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.json", directory);
+    FILE *file = fopen(policy_path, "w");
+    if (!file || fputs(source, file) < 0 || fclose(file) != 0) return NULL;
+    maelys_cli_sha256_hex(source, strlen(source), digest);
+    file = fopen(manifest_path, "w");
+    if (!file) return NULL;
+    int ok = fprintf(file,
+        "{\"policy_set_id\":\"cli\",\"policy_set_version\":\"1\",\"manifest_version\":\"1\","
+        "\"default_profile\":\"enforce\",\"created_for\":\"tests\",\"strict_loading\":true,"
+        "\"fail_closed\":true,\"capabilities\":[],\"policies\":[{\"policy_id\":\"cli.main\","
+        "\"domain\":\"maelys_git\",\"file\":\"policy.dl\",\"sha256\":\"%s\",\"mode\":\"enforce\","
+        "\"enabled\":true,\"description\":\"test\",\"queries\":[{\"name\":\"allow\",\"arity\":1},"
+        "{\"name\":\"deny\",\"arity\":1}]}]}\n", digest) > 0;
+    return fclose(file) == 0 && ok ? manifest_path : NULL;
+}
+
+/* Runs validate on a manifest and returns its data, checked against the schema. */
+static json_t *validate(const char *manifest, int expected_exit, const json_t *schema) {
+    run_result_t result;
+    ARGV(argv, "validate", (char *)manifest, "--json", "--compact");
+    if (!run(&maelys_git_cli_admin_app, argv, argv_count, &result)) return NULL;
+    json_t *data = NULL;
+    if (result.code == expected_exit && result.err[0] == '\0') {
+        json_t *root = json_loads(result.out, 0, NULL);
+        data = json_incref(json_object_get(root, "data"));
+        json_decref(root);
+        if (data && !conforms(data, schema)) {
+            json_decref(data);
+            data = NULL;
+        }
+    }
+    run_clear(&result);
+    return data;
+}
+
+/* Tests 12 and 19: a refused manifest reports its detail beside the code,
+ * path and message it always had; a valid one reports what it did; the
+ * reports of the baseline still conform to the schema. */
+static int test_validate_detail(void) {
+    json_t *schema = validate_schema();
+    CHECK(schema != NULL);
+    char template[] = "/tmp/maelys_git_cli_validate_XXXXXX";
+    char *root = mkdtemp(template);
+    CHECK(root != NULL);
+    char directory[256], atom[65];
+    memset(atom, 'a', 64u);
+    atom[64] = '\0';
+    char source[256];
+    (void)snprintf(source, sizeof(source), "allow(R) :- request(R), user(\"%s\").\n", atom);
+    (void)snprintf(directory, sizeof(directory), "%s/atom", root);
+    const char *manifest = write_manifest(directory, source);
+    CHECK(manifest != NULL);
+    json_t *data = validate(manifest, 2, schema);
+    CHECK(data != NULL && json_is_false(json_object_get(data, "valid")));
+    json_t *item = json_array_get(json_object_get(data, "diagnostics"), 0u);
+    CHECK(!strcmp(json_string_value(json_object_get(item, "code")), "POLICY_INVALID"));
+    CHECK(!strcmp(json_string_value(json_object_get(item, "path")), manifest));
+    CHECK(strstr(json_string_value(json_object_get(item, "message")), "(64 requested, limit 63)"));
+    CHECK(!strcmp(json_string_value(json_object_get(item, "kind")), "capacity"));
+    CHECK(!strcmp(json_string_value(json_object_get(item, "diagnostic")), "lexer_string_too_long"));
+    CHECK(!strcmp(json_string_value(json_object_get(item, "budget")), "MAX_POLICY_ATOM_BYTES"));
+    CHECK(json_integer_value(json_object_get(item, "requested")) == 64);
+    CHECK(json_integer_value(json_object_get(item, "limit")) == 63);
+    CHECK(!strcmp(json_string_value(json_object_get(item, "file")), "cli.main"));
+    CHECK(json_integer_value(json_object_get(item, "line")) == 1);
+    json_decref(data);
+
+    (void)snprintf(directory, sizeof(directory), "%s/syntax", root);
+    manifest = write_manifest(directory, "allow(R) :- request(R) $.\n");
+    data = validate(manifest, 2, schema);
+    CHECK(data != NULL);
+    item = json_array_get(json_object_get(data, "diagnostics"), 0u);
+    CHECK(!strcmp(json_string_value(json_object_get(item, "kind")), "syntax"));
+    CHECK(json_object_get(item, "budget") == NULL && json_object_get(item, "requested") == NULL);
+    json_decref(data);
+
+    (void)snprintf(directory, sizeof(directory), "%s/missing.json", root);
+    data = validate(directory, 2, schema);
+    CHECK(data != NULL);
+    item = json_array_get(json_object_get(data, "diagnostics"), 0u);
+    CHECK(!strcmp(json_string_value(json_object_get(item, "kind")), "manifest"));
+    CHECK(json_object_get(item, "line") == NULL);
+    json_decref(data);
+
+    data = validate(FIXTURE_DIR "/filters/manifest.json", 0, schema);
+    CHECK(data != NULL && json_is_true(json_object_get(data, "valid")));
+    CHECK(json_array_size(json_object_get(data, "diagnostics")) == 0u);
+    json_decref(data);
+    CHECK(test_remove_tree(root));
+
+    FILE *baseline = fopen(FIXTURE_DIR "/validate-baseline.jsonl", "r");
+    CHECK(baseline != NULL);
+    char line[4096];
+    size_t reports = 0u;
+    while (fgets(line, sizeof(line), baseline)) {
+        json_t *report = json_loads(line, 0, NULL);
+        CHECK(report && conforms(json_object_get(report, "data"), schema));
+        json_decref(report);
+        ++reports;
+    }
+    (void)fclose(baseline);
+    CHECK(reports == 5u);
+
+    ARGV(describe, "describe", "validate", "--json", "--compact");
+    run_result_t result;
+    CHECK(run(&maelys_git_cli_admin_app, describe, describe_count, &result));
+    CHECK(result.code == 0);
+    CHECK(strstr(result.out, "\"budget\":{\"type\":\"string\",\"pattern\":\"^[A-Z][A-Z0-9_]*$\"}"));
+    run_clear(&result);
+    json_decref(schema);
+    return 1;
+}
+
 int main(void) {
     int passed = 0;
     passed += test_catalogs();
     passed += test_parser();
     passed += test_envelopes();
-    if (passed != 3) return 1;
+    passed += test_validate_detail();
+    if (passed != 4) return 1;
     (void)printf("ok: %d CLI contract test groups passed\n", passed);
     return 0;
 }

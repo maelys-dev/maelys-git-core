@@ -332,6 +332,61 @@
             "properties": {
               "diagnostics": {
                 "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "budget": {
+                      "pattern": "^[A-Z][A-Z0-9_]*$",
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "column": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "diagnostic": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "file": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "capacity",
+                        "syntax",
+                        "semantics",
+                        "manifest",
+                        "value",
+                        "engine"
+                      ]
+                    },
+                    "limit": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "line": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "requested": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "path",
+                    "message"
+                  ],
                   "type": "object"
                 },
                 "type": "array"

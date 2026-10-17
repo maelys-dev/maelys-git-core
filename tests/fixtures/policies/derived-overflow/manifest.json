@@ -1,0 +1,31 @@
+{
+  "policy_set_id": "test.derived-overflow",
+  "policy_set_version": "1",
+  "manifest_version": "1",
+  "default_profile": "enforce",
+  "created_for": "maelys-git-core-tests",
+  "strict_loading": true,
+  "fail_closed": true,
+  "capabilities": [],
+  "policies": [
+    {
+      "policy_id": "test.derived-overflow.main",
+      "domain": "maelys_git",
+      "file": "policy.dl",
+      "sha256": "170b26906654bee0afa6a4352ed2d7eaab1680d6755880894199f514bf454130",
+      "mode": "enforce",
+      "enabled": true,
+      "description": "refused at the solve",
+      "queries": [
+        {
+          "name": "allow",
+          "arity": 1
+        },
+        {
+          "name": "deny",
+          "arity": 1
+        }
+      ]
+    }
+  ]
+}

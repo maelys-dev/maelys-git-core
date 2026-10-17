@@ -93,6 +93,32 @@ static maelys_git_result_t pr_source_from_payload(
     return MAELYS_GIT_OK;
 }
 
+/* The detail of a policy failure, as `validate` reports it (src/cli/admin.c):
+ * the members that are known, none written empty. */
+static json_t *failure_detail(const maelys_git_failure_detail_t *detail) {
+    json_t *object = json_pack("{s:s}", "kind", maelys_git_failure_kind_name(detail->kind));
+    int ok = object != NULL;
+    if (ok && detail->diagnostic[0])
+        ok = json_object_set_new(object, "diagnostic", json_string(detail->diagnostic)) == 0;
+    if (ok && detail->budget[0])
+        ok = json_object_set_new(object, "budget", json_string(detail->budget)) == 0;
+    if (ok && detail->kind == MAELYS_GIT_FAILURE_CAPACITY)
+        ok = json_object_set_new(object, "requested", json_integer((json_int_t)detail->requested)) == 0 &&
+             json_object_set_new(object, "limit", json_integer((json_int_t)detail->limit)) == 0;
+    if (ok && detail->file[0])
+        ok = json_object_set_new(object, "file", json_string(detail->file)) == 0;
+    if (ok && detail->line > 0u)
+        ok = json_object_set_new(object, "line", json_integer((json_int_t)detail->line)) == 0 &&
+             json_object_set_new(object, "column", json_integer((json_int_t)detail->column)) == 0;
+    if (!ok) {
+        json_decref(object);
+        return NULL;
+    }
+    return object;
+}
+
+/* A failed command reports its result code and message; a policy failure
+ * adds its detail. The detail is read before encoding, which may reset it. */
 static char *failure(const mg_agent_message_t *message,
                      const char *status,
                      maelys_git_result_t code,
@@ -100,6 +126,14 @@ static char *failure(const mg_agent_message_t *message,
                      maelys_git_error_t *error) {
     json_t *payload = json_pack("{s:s,s:s}", "code", maelys_git_result_name(code),
                                 "message", description && *description ? description : "operation failed");
+    if (payload && code == MAELYS_GIT_ERR_POLICY && error && error->code == MAELYS_GIT_ERR_POLICY &&
+        error->detail.kind != MAELYS_GIT_FAILURE_NONE) {
+        json_t *detail = failure_detail(&error->detail);
+        if (!detail || json_object_set_new(payload, "detail", detail) != 0) {
+            json_decref(payload);
+            payload = NULL;
+        }
+    }
     char *encoded = payload ? mg_protocol_encode_result(message, status, payload, error) : NULL;
     json_decref(payload);
     return encoded;

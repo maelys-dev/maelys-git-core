@@ -380,7 +380,8 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_link_libraries(test-maelys-git-agent PRIVATE
         maelys_git_agent_core PkgConfig::JANSSON SQLite::SQLite3 maelys_git_build_flags)
     target_compile_definitions(test-maelys-git-agent PRIVATE
-        TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}")
+        TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}"
+        FIXTURE_DIR="${MAELYS_GIT_POLICY_FIXTURES}")
     add_test(NAME maelys-git-agent COMMAND test-maelys-git-agent)
 
     add_executable(test-maelys-git-agent-config tests/test_agent_config.c)
@@ -402,6 +403,8 @@ if(MAELYS_GIT_BUILD_TESTS)
     set_tests_properties(maelys-git-agent-protocol maelys-git-protocol-reader PROPERTIES TIMEOUT 60)
 
     add_executable(test-maelys-git-cli tests/test_cli.c)
+    target_compile_definitions(test-maelys-git-cli PRIVATE
+        FIXTURE_DIR="${MAELYS_GIT_POLICY_FIXTURES}")
     target_link_libraries(test-maelys-git-cli PRIVATE
         maelys_git_cli_agent PkgConfig::JANSSON maelys_git_build_flags)
     add_test(NAME maelys-git-cli COMMAND test-maelys-git-cli)

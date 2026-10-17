@@ -33,11 +33,15 @@
 
 /* ---- diagnostics and strings ------------------------------------------- */
 
+/* Sets the code and message and resets the failure detail. */
 void mg_error_set(maelys_git_error_t *error,
                   maelys_git_result_t code,
                   int system_error,
                   const char *format,
                   ...) MG_PRINTF(4, 5);
+/* Records the detail of the policy failure just set by mg_error_set; an
+ * error whose code is not MAELYS_GIT_ERR_POLICY keeps none. */
+void mg_error_set_detail(maelys_git_error_t *error, const maelys_git_failure_detail_t *detail);
 int mg_copy_string(char *out, size_t capacity, const char *value);
 int mg_is_oid(const char *value);
 int mg_is_zero_oid(const char *value);

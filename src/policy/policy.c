@@ -10,6 +10,14 @@
 
 #define MG_POLICY_ID_MAX 128u
 
+/* The bound of Git Core that refused a request's facts, if any. */
+typedef enum {
+    REQUEST_BOUND_NONE = 0,
+    REQUEST_BOUND_EDB_FACTS,  /* the fact buffer, MAX_EDB_FACTS */
+    REQUEST_BOUND_PATHS,      /* one fact per path, MAX_FACTS_PER_PRED */
+    REQUEST_BOUND_INTEGER     /* a value beyond INT64_MAX */
+} request_bound_t;
+
 /* One enabled policy of the manifest: its session, kept for the life of the
  * handle and reused by every request, and what a decision reports about it. */
 typedef struct {
@@ -28,6 +36,7 @@ struct maelys_git_policy {
     size_t fact_capacity;
     size_t fact_count;
     size_t path_limit;
+    request_bound_t exceeded; /* the bound that refused the last request facts */
     char repository_copy[MAELYS_GIT_MAX_REPOSITORY];
     char fingerprint[MAELYS_DATALOG_PUBLIC_FINGERPRINT_BYTES];
 };
@@ -156,6 +165,75 @@ static maelys_git_result_t engine_failure(maelys_git_error_t *error,
     return MAELYS_GIT_ERR_POLICY;
 }
 
+/* The kind of failure a diagnostic code reports, by an explicit table over
+ * the engine's enumeration. A code this table does not know, including one a
+ * later engine adds, is an engine failure. A capacity section overrides it. */
+static maelys_git_failure_kind_t failure_kind(maelys_datalog_diag_code_t code) {
+    switch (code) {
+        case MAELYS_DATALOG_DIAG_MANIFEST_INVALID_JSON:
+        case MAELYS_DATALOG_DIAG_MANIFEST_INVALID_FIELD:
+        case MAELYS_DATALOG_DIAG_MANIFEST_UNKNOWN_FIELD:
+        case MAELYS_DATALOG_DIAG_MANIFEST_UNKNOWN_DOMAIN:
+        case MAELYS_DATALOG_DIAG_MANIFEST_SHA_MISMATCH:
+        case MAELYS_DATALOG_DIAG_MANIFEST_POLICY_NOT_FOUND:
+        case MAELYS_DATALOG_DIAG_MANIFEST_TEST_ONLY_REJECTED:
+            return MAELYS_GIT_FAILURE_MANIFEST;
+        case MAELYS_DATALOG_DIAG_LEXER_INVALID_TOKEN:
+        case MAELYS_DATALOG_DIAG_LEXER_UNSUPPORTED_CONSTRUCT:
+        case MAELYS_DATALOG_DIAG_LEXER_INVALID_UTF8:
+        case MAELYS_DATALOG_DIAG_LEXER_STRING_TOO_LONG:
+        case MAELYS_DATALOG_DIAG_PARSER_EXPECTED_PREDICATE:
+        case MAELYS_DATALOG_DIAG_PARSER_EXPECTED_DOT:
+        case MAELYS_DATALOG_DIAG_PARSER_EXPECTED_NECK:
+            return MAELYS_GIT_FAILURE_SYNTAX;
+        case MAELYS_DATALOG_DIAG_PARSER_UNKNOWN_PREDICATE:
+        case MAELYS_DATALOG_DIAG_PARSER_ARITY_MISMATCH:
+        case MAELYS_DATALOG_DIAG_PARSER_UNKNOWN_ATOM:
+        case MAELYS_DATALOG_DIAG_PARSER_RULE_HEAD_EDB_FORBIDDEN:
+        case MAELYS_DATALOG_DIAG_PARSER_RULE_BODY_LITERAL_OVERFLOW:
+        case MAELYS_DATALOG_DIAG_PARSER_UNSAFE_VARIABLE:
+        case MAELYS_DATALOG_DIAG_PARSER_INVALID_COMPARISON:
+        case MAELYS_DATALOG_DIAG_PARSER_INVALID_FILTER:
+        case MAELYS_DATALOG_DIAG_PARSER_FACT_USES_NON_BASE_PREDICATE:
+        case MAELYS_DATALOG_DIAG_PARSER_ANONYMOUS_VARIABLE_IN_HEAD:
+        case MAELYS_DATALOG_DIAG_PARSER_ANONYMOUS_VARIABLE_IN_COMPARISON:
+        case MAELYS_DATALOG_DIAG_PARSER_ANONYMOUS_VARIABLE_IN_FACT:
+        case MAELYS_DATALOG_DIAG_PARSER_TOO_MANY_VARIABLES:
+        case MAELYS_DATALOG_DIAG_POLICY_NOT_STRATIFIABLE:
+        case MAELYS_DATALOG_DIAG_REGISTRY_CONFLICT:
+        case MAELYS_DATALOG_DIAG_REGISTRY_MUTATION_AFTER_FREEZE:
+            return MAELYS_GIT_FAILURE_SEMANTICS;
+        default:
+            return MAELYS_GIT_FAILURE_ENGINE;
+    }
+}
+
+/* Records what the engine's diagnostic says, after mg_error_set: its code,
+ * its location and, for a capacity, the budget by its engine name, the
+ * attempted count and the bound in effect. No number comes from a message. */
+static void set_diagnostic_detail(maelys_git_error_t *error,
+                                  const maelys_datalog_diagnostic_t *diagnostic) {
+    maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_ENGINE};
+    if (diagnostic->source != MAELYS_DATALOG_DIAGNOSTIC_NONE) {
+        detail.kind = failure_kind(diagnostic->code);
+        (void)mg_copy_string(detail.diagnostic, sizeof(detail.diagnostic),
+                             maelys_datalog_diag_code_name(diagnostic->code));
+        if (diagnostic->present & MAELYS_DATALOG_DIAGNOSTIC_CAPACITY) {
+            const char *budget = maelys_datalog_limit_name(diagnostic->limit_kind);
+            detail.kind = MAELYS_GIT_FAILURE_CAPACITY;
+            if (budget) (void)mg_copy_string(detail.budget, sizeof(detail.budget), budget);
+            detail.requested = diagnostic->observed_count;
+            detail.limit = diagnostic->limit;
+        }
+        (void)mg_copy_string(detail.file, sizeof(detail.file), diagnostic->file);
+        if (diagnostic->present & MAELYS_DATALOG_DIAGNOSTIC_LOCATION) {
+            detail.line = diagnostic->line;
+            detail.column = diagnostic->column;
+        }
+    }
+    mg_error_set_detail(error, &detail);
+}
+
 /* A refused manifest reports the engine's own diagnostic: its code, where it
  * is in the policy when the engine located it, and the capacity it exceeded.
  * Whatever the cause, a manifest that does not load is a policy error: the
@@ -166,6 +244,7 @@ static maelys_git_result_t load_failure(maelys_git_error_t *error,
     if (diagnostic->source == MAELYS_DATALOG_DIAGNOSTIC_NONE) {
         mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "policy load failed: %s",
                      maelys_datalog_status_name(status));
+        set_diagnostic_detail(error, diagnostic);
         return MAELYS_GIT_ERR_POLICY;
     }
     char location[384] = "";
@@ -182,6 +261,7 @@ static maelys_git_result_t load_failure(maelys_git_error_t *error,
     mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "policy load failed (%s)%s: %s%s%s%s",
                  maelys_datalog_diag_code_name(diagnostic->code), location, diagnostic->message,
                  capacity, diagnostic->hint[0] ? "; " : "", diagnostic->hint);
+    set_diagnostic_detail(error, diagnostic);
     return MAELYS_GIT_ERR_POLICY;
 }
 
@@ -255,6 +335,8 @@ maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
         if (status == MAELYS_DATALOG_STATUS_INVALID_STATE ||
             (status == MAELYS_DATALOG_STATUS_OK && count == 0u)) {
             mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "manifest contains no enabled policy file");
+            const maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_MANIFEST};
+            mg_error_set_detail(error, &detail);
             result = MAELYS_GIT_ERR_POLICY;
         } else if (status != MAELYS_DATALOG_STATUS_OK) {
             result = engine_failure(error, "policy count", status);
@@ -333,7 +415,10 @@ static maelys_datalog_value_t boolean_value(int enabled) {
 
 static int push_fact(maelys_git_policy_t *policy, const char *predicate,
                      const maelys_datalog_value_t *terms, size_t arity) {
-    if (policy->fact_count >= policy->fact_capacity) return 0;
+    if (policy->fact_count >= policy->fact_capacity) {
+        policy->exceeded = REQUEST_BOUND_EDB_FACTS;
+        return 0;
+    }
     maelys_datalog_fact_t *fact = &policy->facts[policy->fact_count];
     memset(fact, 0, sizeof(*fact));
     fact->predicate = predicate;
@@ -352,7 +437,10 @@ static int push_symbol(maelys_git_policy_t *policy, const char *predicate, const
 
 static int push_integer(maelys_git_policy_t *policy, const char *predicate,
                         unsigned long long number) {
-    if (number > INT64_MAX) return 0;
+    if (number > INT64_MAX) {
+        policy->exceeded = REQUEST_BOUND_INTEGER;
+        return 0;
+    }
     maelys_datalog_value_t value = integer_value((int64_t)number);
     return push_fact(policy, predicate, &value, 1u);
 }
@@ -393,11 +481,13 @@ static int push_repository_structure(maelys_git_policy_t *policy, const char *re
 }
 
 /* The single builder of request facts. They borrow the request's strings and
- * stay valid, in the handle, until the next request. */
+ * stay valid, in the handle, until the next request. On failure the handle
+ * says which bound refused them. */
 static int build_request_facts(maelys_git_policy_t *policy,
                                const maelys_git_policy_request_t *request,
                                const char *request_id) {
     policy->fact_count = 0u;
+    policy->exceeded = REQUEST_BOUND_NONE;
     int ok = push_symbol(policy, "request", request_id) &&
              push_symbol(policy, "user", request->principal) &&
              push_symbol(policy, "repository", request->repository) &&
@@ -437,10 +527,42 @@ static int build_request_facts(maelys_git_policy_t *policy,
              push_boolean(policy, "change_symlink", request->change_symlink) &&
              push_boolean(policy, "change_submodule", request->change_submodule) &&
              push_boolean(policy, "change_lfs_pointer", request->change_lfs_pointer);
-    if (ok && request->path_count > policy->path_limit) ok = 0;
+    if (ok && request->path_count > policy->path_limit) {
+        policy->exceeded = REQUEST_BOUND_PATHS;
+        ok = 0;
+    }
     for (size_t i = 0u; ok && i < request->path_count; ++i)
         ok = push_symbol(policy, "path", request->paths[i]);
     return ok;
+}
+
+/* The detail of refused request facts: the bound that refused them, its
+ * engine name and the capacity read from the engine. The fact buffer reports,
+ * as the engine does, the attempted count: one more than it holds. */
+static void set_request_detail(maelys_git_error_t *error, const maelys_git_policy_t *policy,
+                               const maelys_git_policy_request_t *request) {
+    maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_CAPACITY};
+    maelys_datalog_limit_t budget = MAELYS_DATALOG_LIMIT_MAX_EDB_FACTS;
+    switch (policy->exceeded) {
+        case REQUEST_BOUND_EDB_FACTS:
+            detail.requested = policy->fact_capacity + 1u;
+            detail.limit = policy->fact_capacity;
+            break;
+        case REQUEST_BOUND_PATHS:
+            budget = MAELYS_DATALOG_LIMIT_MAX_FACTS_PER_PRED;
+            detail.requested = request->path_count;
+            detail.limit = policy->path_limit;
+            break;
+        case REQUEST_BOUND_INTEGER:
+            detail.kind = MAELYS_GIT_FAILURE_VALUE;
+            break;
+        case REQUEST_BOUND_NONE:
+            return;
+    }
+    const char *name = maelys_datalog_limit_name(budget);
+    if (detail.kind == MAELYS_GIT_FAILURE_CAPACITY && name)
+        (void)mg_copy_string(detail.budget, sizeof(detail.budget), name);
+    mg_error_set_detail(error, &detail);
 }
 
 static const char *request_identifier(const maelys_git_policy_request_t *request) {
@@ -462,6 +584,7 @@ static maelys_git_result_t solve_entry(maelys_git_policy_t *policy, const policy
                  diagnostic.source == MAELYS_DATALOG_DIAGNOSTIC_NONE
                      ? "no diagnostic" : maelys_datalog_diag_code_name(diagnostic.code),
                  maelys_datalog_status_name(status));
+    set_diagnostic_detail(error, &diagnostic);
     return MAELYS_GIT_ERR_POLICY;
 }
 
@@ -507,6 +630,7 @@ maelys_git_result_t maelys_git_policy_authorize(
     if (!build_request_facts(policy, request, request_id)) {
         mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
                      "request fact construction failed: a value or the fact count exceeds the engine limits");
+        set_request_detail(error, policy, request);
         result = MAELYS_GIT_ERR_POLICY;
     }
     size_t allow_policy = SIZE_MAX;

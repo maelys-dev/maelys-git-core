@@ -591,6 +591,415 @@ static int test_explain_multiple_policies(void) {
     return 1;
 }
 
+/* ---- refused policies and requests --------------------------------------- */
+
+/* Every refusal the policy layer reports: a manifest that does not load, a
+ * request whose facts exceed the engine, a solve the engine rejects. */
+typedef struct {
+    const char *name;
+    maelys_git_result_t result;
+    maelys_git_error_t error;
+} refusal_t;
+
+/* `count` rules that differ by an integer only, so that no rule adds a
+ * constant to the policy. */
+static char *rules_policy(size_t count) {
+    size_t capacity = count * 72u + 1u;
+    char *source = malloc(capacity);
+    if (!source) return NULL;
+    size_t used = 0u;
+    for (size_t i = 0u; i < count; ++i)
+        used += (size_t)snprintf(source + used, capacity - used,
+                                 "allow(R) :- request(R), changed_count(C), C > %zu.\n", i);
+    return source;
+}
+
+/* `count` direct policy facts naming the same two constants. */
+static char *facts_policy(size_t count) {
+    size_t capacity = count * 48u + 128u;
+    char *source = malloc(capacity);
+    if (!source) return NULL;
+    size_t used = 0u;
+    for (size_t i = 0u; i < count; ++i)
+        used += (size_t)snprintf(source + used, capacity - used,
+                                 "vref_deny_count(\"u\", \"r\", %zu).\n", i);
+    (void)snprintf(source + used, capacity - used, "allow(R) :- request(R).\n");
+    return source;
+}
+
+/* A literal string of `length` bytes in a rule. */
+static char *literal_policy(size_t length) {
+    char *source = malloc(length + 64u);
+    if (!source) return NULL;
+    int prefix = snprintf(source, length + 64u, "allow(R) :- request(R), user(\"");
+    memset(source + prefix, 'a', length);
+    (void)snprintf(source + (size_t)prefix + length, 64u, "\").\n");
+    return source;
+}
+
+static int refuse_load(const char *name, const char *source, refusal_t *out) {
+    maelys_git_policy_t *policy = NULL;
+    const char *path = source ? write_policy(name, source) : NULL;
+    if (!path) return 0;
+    out->name = name;
+    out->result = maelys_git_policy_open(path, &policy, &out->error);
+    maelys_git_policy_close(policy);
+    return out->result != MAELYS_GIT_OK && policy == NULL;
+}
+
+static int refuse_owned(const char *name, char *source, refusal_t *out) {
+    int ok = refuse_load(name, source, out);
+    free(source);
+    return ok;
+}
+
+/* Changes a policy after its manifest was written: its source, so that the
+ * recorded digest no longer matches, or the manifest, so that no entry is
+ * enabled. */
+static int refuse_manifest(const char *name, int edit_source, refusal_t *out) {
+    const char *path = write_policy(name, k_policy_a);
+    char manifest[2048], patched[2048];
+    if (!path || !read_text(path, manifest, sizeof(manifest))) return 0;
+    if (edit_source) {
+        char source_path[512];
+        (void)snprintf(source_path, sizeof(source_path), "%s/%s/policy.dl", g_root, name);
+        (void)snprintf(patched, sizeof(patched), "%s%s", k_policy_a, "deny(R) :- request(R).\n");
+        if (!write_text(source_path, patched)) return 0;
+    } else {
+        char *at = strstr(manifest, "\"enabled\":true");
+        if (!at) return 0;
+        (void)snprintf(patched, sizeof(patched), "%.*s\"enabled\":false%s",
+                       (int)(at - manifest), manifest, at + 14);
+        if (!write_text(path, patched)) return 0;
+    }
+    maelys_git_policy_t *policy = NULL;
+    out->name = name;
+    out->result = maelys_git_policy_open(path, &policy, &out->error);
+    maelys_git_policy_close(policy);
+    return out->result != MAELYS_GIT_OK && policy == NULL;
+}
+
+static int refuse_request(const char *name, const char *source,
+                          const maelys_git_policy_request_t *request, refusal_t *out) {
+    maelys_git_policy_t *policy = NULL;
+    const char *path = write_policy(name, source);
+    if (!path || maelys_git_policy_open(path, &policy, &out->error) != MAELYS_GIT_OK) return 0;
+    maelys_git_policy_decision_t decision;
+    out->name = name;
+    out->result = maelys_git_policy_authorize(policy, request, &decision, &out->error);
+    maelys_git_policy_close(policy);
+    return out->result != MAELYS_GIT_OK;
+}
+
+/* 300 paths: more than MAX_FACTS_PER_PRED in either profile. */
+#define TEST_PATHS 300u
+
+enum {
+    REFUSAL_ATOM_BYTES, REFUSAL_POLICY_ATOMS, REFUSAL_RULES, REFUSAL_STRING_BYTES,
+    REFUSAL_POLICY_FACTS, REFUSAL_INVALID_TOKEN, REFUSAL_EXPECTED_DOT,
+    REFUSAL_UNKNOWN_PREDICATE, REFUSAL_DIGEST, REFUSAL_NONE_ENABLED,
+    REFUSAL_PATHS, REFUSAL_INTEGER, REFUSAL_DERIVED, REFUSAL_COUNT
+};
+
+static int collect_refusals(refusal_t out[REFUSAL_COUNT]) {
+    char atom[65];
+    memset(atom, 'a', 64u);
+    atom[64] = '\0';
+    char source[256];
+    (void)snprintf(source, sizeof(source), "allow(R) :- request(R), user(\"%s\").\n", atom);
+    CHECK(refuse_load("refused-atom-bytes", source, &out[REFUSAL_ATOM_BYTES]));
+    CHECK(refuse_owned("refused-policy-atoms",
+                       constants_policy(128u, "deny(R) :- request(R), user(\"one-too-many\").\n"),
+                       &out[REFUSAL_POLICY_ATOMS]));
+    CHECK(refuse_owned("refused-rules", rules_policy(1024u), &out[REFUSAL_RULES]));
+    CHECK(refuse_owned("refused-string-bytes", literal_policy(1025u), &out[REFUSAL_STRING_BYTES]));
+    CHECK(refuse_owned("refused-policy-facts", facts_policy(129u), &out[REFUSAL_POLICY_FACTS]));
+    CHECK(refuse_load("refused-invalid-token", "allow(R) :- request(R) $.\n",
+                      &out[REFUSAL_INVALID_TOKEN]));
+    CHECK(refuse_load("refused-expected-dot", "allow(R) :- request(R)\n",
+                      &out[REFUSAL_EXPECTED_DOT]));
+    CHECK(refuse_load("refused-unknown-predicate", "allow(R) :- request(R), nosuch(R).\n",
+                      &out[REFUSAL_UNKNOWN_PREDICATE]));
+    CHECK(refuse_manifest("refused-digest", 1, &out[REFUSAL_DIGEST]));
+    CHECK(refuse_manifest("refused-none-enabled", 0, &out[REFUSAL_NONE_ENABLED]));
+
+    static char paths[TEST_PATHS][16];
+    static const char *path_list[TEST_PATHS];
+    for (size_t i = 0u; i < TEST_PATHS; ++i) {
+        (void)snprintf(paths[i], sizeof(paths[i]), "f%zu", i);
+        path_list[i] = paths[i];
+    }
+    maelys_git_policy_request_t request = {
+        .request_id = "t", .principal = "alice", .repository = "r.git", .operation = "push",
+        .paths = path_list, .path_count = TEST_PATHS};
+    CHECK(refuse_request("refused-paths", k_policy_a, &request, &out[REFUSAL_PATHS]));
+    maelys_git_policy_request_t integer = {
+        .request_id = "t", .principal = "alice", .repository = "r.git", .operation = "push",
+        .has_summary = 1, .changed_count = SIZE_MAX};
+    CHECK(refuse_request("refused-integer", k_policy_a, &integer, &out[REFUSAL_INTEGER]));
+    /* 17 by 17 facts joined: 289 derived facts of one predicate, beyond
+     * MAX_FACTS_PER_PRED in either profile. */
+    char derived[2048];
+    size_t used = 0u;
+    for (size_t i = 0u; i < 17u; ++i)
+        used += (size_t)snprintf(derived + used, sizeof(derived) - used,
+                                 "group_member(\"u%zu\", \"g\"). grant_read(\"x\", \"p%zu\").\n", i, i);
+    (void)snprintf(derived + used, sizeof(derived) - used,
+                   "effective_group_member(U, P) :- group_member(U, G), grant_read(X, P).\n"
+                   "allow(R) :- request(R), user(U), effective_group_member(U, \"p0\").\n");
+    maelys_git_policy_request_t plain = {
+        .request_id = "t", .principal = "u0", .repository = "r.git", .operation = "read"};
+    CHECK(refuse_request("refused-derived", derived, &plain, &out[REFUSAL_DERIVED]));
+    return 1;
+}
+
+/* The message with the temporary root replaced, so that it compares across runs. */
+static void portable_message(const char *message, char *out, size_t capacity) {
+    size_t root = strlen(g_root), used = 0u;
+    for (const char *p = message; *p && used + 1u < capacity;) {
+        if (!strncmp(p, g_root, root)) {
+            used += (size_t)snprintf(out + used, capacity - used, "ROOT");
+            p += root;
+        } else {
+            out[used++] = *p++;
+        }
+    }
+    out[used < capacity ? used : capacity - 1u] = '\0';
+}
+
+/* The result code and message of every refusal are those recorded on the
+ * baseline, byte for byte; the message is quoted so that its end shows.
+ * MG_RECORD_ERROR_MESSAGES=FILE writes them instead. */
+static int test_error_messages_unchanged(const refusal_t refusals[REFUSAL_COUNT]) {
+    char lines[REFUSAL_COUNT][MAELYS_GIT_MAX_ERROR + 128u];
+    for (size_t i = 0u; i < REFUSAL_COUNT; ++i) {
+        char message[MAELYS_GIT_MAX_ERROR + 64u];
+        portable_message(refusals[i].error.message, message, sizeof(message));
+        (void)snprintf(lines[i], sizeof(lines[i]), "%s\t%s\t\"%s\"\n", refusals[i].name,
+                       maelys_git_result_name(refusals[i].result), message);
+    }
+    const char *record = getenv("MG_RECORD_ERROR_MESSAGES");
+    if (record && *record) {
+        FILE *file = fopen(record, "w");
+        CHECK(file != NULL);
+        for (size_t i = 0u; i < REFUSAL_COUNT; ++i) CHECK(fputs(lines[i], file) >= 0);
+        CHECK(fclose(file) == 0);
+        return 1;
+    }
+    static char expected[REFUSAL_COUNT * (MAELYS_GIT_MAX_ERROR + 128u)];
+    CHECK(read_text(FIXTURE_DIR "/error-messages.tsv", expected, sizeof(expected)));
+    const char *cursor = expected;
+    for (size_t i = 0u; i < REFUSAL_COUNT; ++i) {
+        size_t length = strlen(lines[i]);
+        if (strncmp(cursor, lines[i], length) != 0) {
+            (void)fprintf(stderr, "message changed: %s", lines[i]);
+            return 0;
+        }
+        cursor += length;
+    }
+    CHECK(*cursor == '\0');
+    return 1;
+}
+
+/* A capacity detail names its budget as the engine does, and reports the
+ * attempted count and the bound; the policy is located when the engine
+ * located it. */
+static int capacity_detail(const refusal_t *refusal, const char *budget) {
+    const maelys_git_failure_detail_t *detail = &refusal->error.detail;
+    CHECK(detail->kind == MAELYS_GIT_FAILURE_CAPACITY);
+    CHECK(!strcmp(detail->budget, budget));
+    CHECK(detail->limit > 0u && detail->requested > detail->limit);
+    return 1;
+}
+
+static int located(const refusal_t *refusal) {
+    const maelys_git_failure_detail_t *detail = &refusal->error.detail;
+    CHECK(detail->line > 0u && detail->column > 0u);
+    CHECK(strstr(detail->file, refusal->name) != NULL);
+    return 1;
+}
+
+static int loads(const char *name, char *source) {
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_error_t error;
+    const char *path = source ? write_policy(name, source) : NULL;
+    free(source);
+    CHECK(path && maelys_git_policy_open(path, &policy, &error) == MAELYS_GIT_OK);
+    CHECK(error.detail.kind == MAELYS_GIT_FAILURE_NONE);
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
+/* Tests 3 to 5, 17 and 20: every budget exceeded at load is named, and the
+ * bound is the engine's: a policy at that bound loads. No limit is written
+ * here; each is read from the detail. */
+static int test_capacity_details(const refusal_t refusals[REFUSAL_COUNT]) {
+    const refusal_t *atom = &refusals[REFUSAL_ATOM_BYTES];
+    CHECK(capacity_detail(atom, "MAX_POLICY_ATOM_BYTES") && located(atom));
+    CHECK(atom->error.detail.requested == 64u && atom->error.detail.limit == 63u);
+    size_t limit = (size_t)atom->error.detail.limit;
+    char *source = malloc(limit + 64u);
+    CHECK(source != NULL);
+    int prefix = snprintf(source, limit + 64u, "allow(R) :- request(R), user(\"");
+    memset(source + prefix, 'b', limit);
+    (void)snprintf(source + (size_t)prefix + limit, 64u, "\").\n");
+    CHECK(loads("bound-atom-bytes", source));
+
+    const refusal_t *atoms = &refusals[REFUSAL_POLICY_ATOMS];
+    CHECK(capacity_detail(atoms, "MAX_POLICY_ATOMS") && located(atoms));
+    CHECK(atoms->error.detail.requested == atoms->error.detail.limit + 1u);
+    CHECK(loads("bound-policy-atoms", constants_policy((size_t)atoms->error.detail.limit / 2u, "")));
+
+    const refusal_t *rules = &refusals[REFUSAL_RULES];
+    CHECK(capacity_detail(rules, "MAX_RULES") && located(rules));
+    CHECK(rules->error.detail.requested == rules->error.detail.limit + 1u);
+    CHECK(loads("bound-rules", rules_policy((size_t)rules->error.detail.limit)));
+
+    const refusal_t *string = &refusals[REFUSAL_STRING_BYTES];
+    CHECK(capacity_detail(string, "MAX_STRING_BYTES") && located(string));
+    CHECK(string->error.detail.requested == 1025u);
+
+    /* One diagnostic code, three budgets: only the detail tells them apart. */
+    CHECK(!strcmp(atom->error.detail.diagnostic, "lexer_string_too_long"));
+    CHECK(!strcmp(atoms->error.detail.diagnostic, atom->error.detail.diagnostic));
+    CHECK(!strcmp(string->error.detail.diagnostic, atom->error.detail.diagnostic));
+
+    const refusal_t *facts = &refusals[REFUSAL_POLICY_FACTS];
+    CHECK(capacity_detail(facts, "MAX_RULE_FACTS") && located(facts));
+    CHECK(facts->error.detail.requested == facts->error.detail.limit + 1u);
+    CHECK(facts->error.detail.line == facts->error.detail.requested);
+    CHECK(loads("bound-policy-facts", facts_policy((size_t)facts->error.detail.limit)));
+    return 1;
+}
+
+/* Tests 6 to 8: syntax, meaning and manifest, by the engine's code. */
+static int test_other_details(const refusal_t refusals[REFUSAL_COUNT]) {
+    static const struct { size_t refusal; maelys_git_failure_kind_t kind; const char *code; } expected[] = {
+        {REFUSAL_INVALID_TOKEN, MAELYS_GIT_FAILURE_SYNTAX, "lexer_invalid_token"},
+        {REFUSAL_EXPECTED_DOT, MAELYS_GIT_FAILURE_SYNTAX, "parser_expected_dot"},
+        {REFUSAL_UNKNOWN_PREDICATE, MAELYS_GIT_FAILURE_SEMANTICS, "parser_unknown_predicate"},
+        {REFUSAL_DIGEST, MAELYS_GIT_FAILURE_MANIFEST, "manifest_sha_mismatch"},
+        {REFUSAL_NONE_ENABLED, MAELYS_GIT_FAILURE_MANIFEST, ""},
+    };
+    for (size_t i = 0u; i < sizeof(expected) / sizeof(expected[0]); ++i) {
+        const refusal_t *refusal = &refusals[expected[i].refusal];
+        const maelys_git_failure_detail_t *detail = &refusal->error.detail;
+        CHECK(detail->kind == expected[i].kind && !strcmp(detail->diagnostic, expected[i].code));
+        CHECK(detail->budget[0] == '\0' && detail->requested == 0u && detail->limit == 0u);
+        if (expected[i].kind != MAELYS_GIT_FAILURE_MANIFEST) CHECK(located(refusal));
+    }
+    CHECK(!strcmp(maelys_git_failure_kind_name(MAELYS_GIT_FAILURE_SEMANTICS), "semantics"));
+    return 1;
+}
+
+/* The longest valid repository name: 254 segments, one fact each. */
+static void deep_repository(char out[MAELYS_GIT_MAX_REPOSITORY]) {
+    size_t used = 0u;
+    for (size_t i = 0u; i < 253u; ++i) { out[used++] = 'a'; out[used++] = '/'; }
+    memcpy(out + used, "x.git", 6u);
+}
+
+/* Tests 9, 10, 15 and 16: request facts beyond a bound Git Core checks, and
+ * beyond one the engine checks, report the same budget and the same limit:
+ * the profile's, read from the engine. A request at that limit passes. */
+static int test_request_details(const refusal_t refusals[REFUSAL_COUNT]) {
+    const refusal_t *paths = &refusals[REFUSAL_PATHS];
+    CHECK(capacity_detail(paths, "MAX_FACTS_PER_PRED"));
+    CHECK(paths->error.detail.requested == TEST_PATHS && paths->error.detail.diagnostic[0] == '\0');
+    const uint64_t per_predicate = paths->error.detail.limit;
+    const refusal_t *derived = &refusals[REFUSAL_DERIVED];
+    CHECK(capacity_detail(derived, "MAX_FACTS_PER_PRED"));
+    CHECK(!strcmp(derived->error.detail.diagnostic, "solve_idb_overflow"));
+    CHECK(derived->error.detail.limit == per_predicate);
+    CHECK(derived->error.detail.requested == per_predicate + 1u);
+    const maelys_git_failure_detail_t *integer = &refusals[REFUSAL_INTEGER].error.detail;
+    CHECK(integer->kind == MAELYS_GIT_FAILURE_VALUE && integer->budget[0] == '\0');
+
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_error_t error;
+    const char *path = write_policy("request-bounds", k_policy_a);
+    CHECK(path && maelys_git_policy_open(path, &policy, &error) == MAELYS_GIT_OK);
+    static char names[TEST_PATHS][16];
+    static const char *list[TEST_PATHS];
+    for (size_t i = 0u; i < TEST_PATHS; ++i) {
+        (void)snprintf(names[i], sizeof(names[i]), "g%zu", i);
+        list[i] = names[i];
+    }
+    maelys_git_policy_request_t request = {
+        .request_id = "t", .principal = "alice", .repository = "r.git", .operation = "push",
+        .paths = list, .path_count = (size_t)per_predicate};
+    maelys_git_policy_decision_t decision;
+    CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) == MAELYS_GIT_OK);
+    CHECK(decision.allowed && error.detail.kind == MAELYS_GIT_FAILURE_NONE);
+
+    /* A repository name may hold more segments than the SMALL profile admits
+     * facts of one predicate: the engine refuses that batch at the solve. */
+    char repository[MAELYS_GIT_MAX_REPOSITORY];
+    deep_repository(repository);
+    maelys_git_policy_request_t deep = {
+        .request_id = "t", .principal = "alice", .repository = repository, .operation = "push"};
+    maelys_git_result_t result = maelys_git_policy_authorize(policy, &deep, &decision, &error);
+    if (per_predicate < 254u) {
+        CHECK(result == MAELYS_GIT_ERR_POLICY);
+        CHECK(!strncmp(error.message, "policy solve failed: operation_rejected", 39u));
+        CHECK(error.detail.kind == MAELYS_GIT_FAILURE_CAPACITY);
+        CHECK(!strcmp(error.detail.budget, "MAX_FACTS_PER_PRED"));
+        /* The engine counts the attempt that overflowed, not the whole batch. */
+        CHECK(error.detail.requested == per_predicate + 1u && error.detail.limit == per_predicate);
+    } else {
+        CHECK(result == MAELYS_GIT_OK && error.detail.kind == MAELYS_GIT_FAILURE_NONE);
+    }
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
+/* Tests 11 and 18: a call that succeeds, or that fails for another reason,
+ * leaves no policy detail behind; clearing an error clears its detail. */
+static int test_detail_reset(void) {
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_error_t error;
+    const char *path = write_policy("detail-reset", k_policy_a);
+    CHECK(path && maelys_git_policy_open(path, &policy, &error) == MAELYS_GIT_OK);
+    maelys_git_policy_request_t request = {
+        .request_id = "t", .principal = "alice", .repository = "r.git", .operation = "push",
+        .has_summary = 1, .changed_count = SIZE_MAX};
+    maelys_git_policy_decision_t decision;
+    CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) == MAELYS_GIT_ERR_POLICY);
+    CHECK(error.detail.kind == MAELYS_GIT_FAILURE_VALUE);
+    request.changed_count = 1u;
+    CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) == MAELYS_GIT_OK);
+    CHECK(error.detail.kind == MAELYS_GIT_FAILURE_NONE);
+
+    request.changed_count = SIZE_MAX;
+    CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) == MAELYS_GIT_ERR_POLICY);
+    request.principal = NULL;
+    CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) ==
+          MAELYS_GIT_ERR_INVALID_ARGUMENT);
+    CHECK(error.detail.kind == MAELYS_GIT_FAILURE_NONE && error.detail.diagnostic[0] == '\0');
+
+    request.principal = "alice";
+    CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) == MAELYS_GIT_ERR_POLICY);
+    maelys_git_error_clear(&error);
+    maelys_git_error_t zero;
+    memset(&zero, 0, sizeof(zero));
+    CHECK(!memcmp(&error, &zero, sizeof(error)));
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
+static int test_refusals(void) {
+    static refusal_t refusals[REFUSAL_COUNT];
+    CHECK(collect_refusals(refusals));
+    for (size_t i = 0u; i < REFUSAL_COUNT; ++i)
+        CHECK(refusals[i].result == MAELYS_GIT_ERR_POLICY);
+    CHECK(test_error_messages_unchanged(refusals));
+    CHECK(test_capacity_details(refusals));
+    CHECK(test_other_details(refusals));
+    CHECK(test_request_details(refusals));
+    CHECK(test_detail_reset());
+    return 1;
+}
+
 int main(void) {
     char template[] = "/tmp/maelys_git_policy_XXXXXX";
     char *root = mkdtemp(template);
@@ -602,7 +1011,7 @@ int main(void) {
              test_gitolite_prefixes() && test_exact_refs_unchanged() &&
              test_fixture_migration_matches_baseline() &&
              test_unsupported_refex() && test_rule_budget_exceeded() &&
-             test_explanations() && test_explain_multiple_policies();
+             test_explanations() && test_explain_multiple_policies() && test_refusals();
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok) puts("local vocabulary, engine limits, Gitolite prefixes, explanations and identities: ok");
     return ok ? 0 : 1;
