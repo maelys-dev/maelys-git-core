@@ -383,7 +383,7 @@ if(MAELYS_GIT_BUILD_TESTS)
     # Timing is not a test: built on demand, never run by CTest.
     add_executable(bench-maelys-git-authorize EXCLUDE_FROM_ALL tests/bench_authorize.c)
     target_link_libraries(bench-maelys-git-authorize PRIVATE
-        maelys_git_core maelys_git_build_flags)
+        maelys_git_receipt maelys_git_build_flags)
 
     # Production code reaches the engine through its installed SDK only.
     add_test(NAME maelys-git-datalog-boundary

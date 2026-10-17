@@ -35,7 +35,12 @@ maelys-git authorize policies/manifest.json alice example.git read \
 ```
 
 Une autorisation refusée produit `exitCode: 0`, `ok: true` et
-`data.allowed: false`. Une politique impossible à charger produit une erreur
+`data.allowed: false`. Toute décision porte `data.receipt`, son reçu en Maelys
+Canonical JSON v1, et `data.receiptSha256`, l'empreinte de ses octets
+canoniques : relisez le reçu par un lecteur conforme, réécrivez-le en forme
+canonique, et l'empreinte de ces octets est celle-là. `--explain`, écrit
+avant `--`, ajoute le document d'explication du moteur dans
+`data.explanationText` ; après `--`, c'est un chemin comme un autre. Une politique impossible à charger produit une erreur
 stable. `validate` produit plutôt un rapport réussi avec le code de processus
 `2` lorsqu'il peut établir que le manifeste est invalide.
 

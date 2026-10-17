@@ -2,15 +2,19 @@
 # Wall-clock cost of a real three-ref push through the pre-receive hook,
 # next to the cost of one authorization measured by bench-maelys-git-authorize.
 #
-#   tests/bench_push.sh HOOK_BINARY MANIFEST [PUSHES]
+#   tests/bench_push.sh HOOK_BINARY MANIFEST [PUSHES [receipts]]
 #
+# With `receipts`, every push also appends its receipt line to a file.
 # Not a test: timing depends on the machine and has no place in CTest.
 set -eu
 hook_bin=$1
 manifest=$2
 pushes=${3:-30}
+receipts=${4:-}
 root=$(mktemp -d "${TMPDIR:-/tmp}/maelys-git-bench.XXXXXX")
 trap 'rm -rf "$root"' EXIT HUP INT TERM
+set --
+[ "$receipts" = receipts ] && set -- --receipts "$root/receipts.jsonl"
 
 git init -q --bare "$root/example.git"
 git init -q "$root/work"
@@ -31,13 +35,13 @@ updates=$(printf '%s %s %s\n%s %s %s\n%s %s %s\n' \
 
 # One push to fail early and loudly, then the timed ones.
 printf '%s\n' "$updates" | "$hook_bin" pre-receive --repository example.git \
-  --manifest "$manifest" --user alice --git-dir "$root/example.git" >/dev/null
+  --manifest "$manifest" --user alice --git-dir "$root/example.git" "$@" >/dev/null
 
 started=$(python3 -c 'import time; print(time.time())')
 count=0
 while [ "$count" -lt "$pushes" ]; do
   printf '%s\n' "$updates" | "$hook_bin" pre-receive --repository example.git \
-    --manifest "$manifest" --user alice --git-dir "$root/example.git" >/dev/null
+    --manifest "$manifest" --user alice --git-dir "$root/example.git" "$@" >/dev/null
   count=$((count + 1))
 done
-python3 -c "import sys, time; n = int(sys.argv[2]); print('%.2f ms per three-ref push (%d pushes)' % ((time.time() - float(sys.argv[1])) * 1000.0 / n, n))" "$started" "$pushes"
+python3 -c "import sys, time; n = int(sys.argv[2]); print('%.2f ms per three-ref push (%d pushes%s)' % ((time.time() - float(sys.argv[1])) * 1000.0 / n, n, sys.argv[3]))" "$started" "$pushes" "${receipts:+, with receipts}"
