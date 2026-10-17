@@ -1,6 +1,6 @@
 # Matrice concurrentielle : Maelys Git Core, Gitolite et Forgejo
 
-Etat verifie le 15 octobre 2026. La comparaison porte sur le code present
+Etat verifie le 17 octobre 2026. La comparaison porte sur le code present
 et teste dans ce depot. Elle ne credite pas a Maelys Git Core les fonctions
 prevues pour une future forge Cloudflare.
 
@@ -171,14 +171,14 @@ deterministe, les comparaisons d'entiers et des explications de preuve. Les
 ameliorations les plus rentables restent :
 
 - une API batch pour plusieurs jeux de faits de requete independants ;
-- des diagnostics de capacite qui nomment le budget depasse au chargement et
-  sur un lot d'entree refuse ;
 - des hooks explicites d'annulation et d'echeance.
 
 Fait depuis : une session reutilisable par politique, dont l'EDB est remplace
-a chaque requete sans recompiler les regles (cycle GIT-C01). Le recu de
-decision se construit dans Git Core sur les vues d'explication du moteur
-(cycle GIT-C02).
+a chaque requete sans recompiler les regles (cycle GIT-C01) ; des diagnostics
+de capacite qui nomment le budget depasse, au chargement comme sur un lot
+d'entree refuse, fournis par maelys-datalog 0.23.1, que Git Core exposera au
+cycle GIT-C04. Le recu de decision se construit dans Git Core sur les vues
+d'explication du moteur (cycle GIT-C02).
 
 Le hook receive streame deja les enregistrements Git. Un solveur Datalog
 streaming n'est pas necessaire pour la correction : sessions reutilisables et
