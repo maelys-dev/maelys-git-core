@@ -22,6 +22,90 @@ static int execute(sqlite3 *db, const char *sql) {
     return sqlite3_exec(db, sql, NULL, NULL, NULL) == SQLITE_OK;
 }
 
+/* The form of commands.raw_json this build compares, recorded in metadata. */
+#define DEDUPLICATION_FORM "v2"
+
+/* Rewrites every raw_json of a v1 journal in the v2 form. A row that does not
+ * convert stops the conversion and is named; the caller rolls back. */
+static maelys_git_result_t convert_journal(sqlite3 *db, maelys_git_error_t *error) {
+    sqlite3_stmt *rows = NULL, *update = NULL;
+    if (sqlite3_prepare_v2(db, "SELECT id,raw_json FROM commands ORDER BY id", -1, &rows, NULL) != SQLITE_OK ||
+        sqlite3_prepare_v2(db, "UPDATE commands SET raw_json=? WHERE id=?", -1, &update, NULL) != SQLITE_OK) {
+        sqlite3_finalize(rows);
+        return database_error(db, error, "prepare journal conversion");
+    }
+    maelys_git_result_t result = MAELYS_GIT_OK;
+    int step;
+    while (result == MAELYS_GIT_OK && (step = sqlite3_step(rows)) == SQLITE_ROW) {
+        const char *id = (const char *)sqlite3_column_text(rows, 0);
+        const char *raw = (const char *)sqlite3_column_text(rows, 1);
+        int size = sqlite3_column_bytes(rows, 1);
+        maelys_git_error_t conversion = {0};
+        char *form = raw ? mg_protocol_deduplication_form(raw, (size_t)size, &conversion) : NULL;
+        if (!form) {
+            mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
+                         "journal command %.256s cannot take the deduplication form " DEDUPLICATION_FORM
+                         ": %.512s", id ? id : "(null)", conversion.message);
+            result = MAELYS_GIT_ERR_PROTOCOL;
+            break;
+        }
+        sqlite3_bind_text(update, 1, form, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(update, 2, id, -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(update) != SQLITE_DONE) result = database_error(db, error, "convert journal command");
+        sqlite3_reset(update);
+        free(form);
+    }
+    if (result == MAELYS_GIT_OK && step != SQLITE_DONE) result = database_error(db, error, "read journal commands");
+    sqlite3_finalize(rows);
+    sqlite3_finalize(update);
+    return result;
+}
+
+/* The logical opening of a journal, in one transaction: refuse a form this
+ * build does not know, convert a v1 journal to the v2 form and record it,
+ * then put back to pending the commands a stopped agent left running. A
+ * failure changes nothing. A journal without the marker is v1 when it has
+ * commands; an empty one is born v2. */
+static maelys_git_result_t open_journal(sqlite3 *db, maelys_git_error_t *error) {
+    if (!execute(db, "BEGIN IMMEDIATE")) return database_error(db, error, "begin journal opening");
+    maelys_git_result_t result = MAELYS_GIT_OK;
+    sqlite3_stmt *statement = NULL;
+    char form[32] = "";
+    int commands = 0;
+    if (sqlite3_prepare_v2(db, "SELECT value FROM metadata WHERE key='dedup_form'", -1, &statement, NULL) != SQLITE_OK) {
+        result = database_error(db, error, "read deduplication form");
+    } else {
+        if (sqlite3_step(statement) == SQLITE_ROW) {
+            const unsigned char *value = sqlite3_column_text(statement, 0);
+            (void)snprintf(form, sizeof(form), "%s", value ? (const char *)value : "?");
+        }
+        sqlite3_finalize(statement);
+    }
+    if (result == MAELYS_GIT_OK && form[0] && strcmp(form, DEDUPLICATION_FORM) != 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
+                     "agent journal has an unknown deduplication form: %s", form);
+        result = MAELYS_GIT_ERR_PROTOCOL;
+    }
+    if (result == MAELYS_GIT_OK && !form[0]) {
+        if (sqlite3_prepare_v2(db, "SELECT count(*) FROM commands", -1, &statement, NULL) != SQLITE_OK ||
+            sqlite3_step(statement) != SQLITE_ROW)
+            result = database_error(db, error, "count journal commands");
+        else
+            commands = sqlite3_column_int(statement, 0);
+        sqlite3_finalize(statement);
+        if (result == MAELYS_GIT_OK && commands > 0) result = convert_journal(db, error);
+        if (result == MAELYS_GIT_OK &&
+            !execute(db, "INSERT INTO metadata(key,value) VALUES('dedup_form','" DEDUPLICATION_FORM "')"))
+            result = database_error(db, error, "record deduplication form");
+    }
+    if (result == MAELYS_GIT_OK &&
+        !execute(db, "UPDATE commands SET state='pending' WHERE state='running'"))
+        result = database_error(db, error, "recover running commands");
+    if (result == MAELYS_GIT_OK && !execute(db, "COMMIT")) result = database_error(db, error, "commit journal opening");
+    if (result != MAELYS_GIT_OK) (void)execute(db, "ROLLBACK");
+    return result;
+}
+
 maelys_git_result_t mg_store_open(const char *path,
                                   maelys_git_agent_store_t **out,
                                   maelys_git_error_t *error) {
@@ -70,12 +154,16 @@ maelys_git_result_t mg_store_open(const char *path,
         "CREATE INDEX IF NOT EXISTS outbox_pending ON outbox(acked_at_ms,next_attempt_ms,created_at_ms);"
         "CREATE TABLE IF NOT EXISTS audit("
         " sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT UNIQUE NOT NULL,"
-        " kind TEXT NOT NULL, payload TEXT NOT NULL, created_at_ms INTEGER NOT NULL);"
-        "UPDATE commands SET state='pending' WHERE state='running';";
+        " kind TEXT NOT NULL, payload TEXT NOT NULL, created_at_ms INTEGER NOT NULL);";
     if (!execute(store->database, schema)) {
         database_error(store->database, error, "cannot initialize agent database");
         mg_store_close(store);
         return MAELYS_GIT_ERR_IO;
+    }
+    maelys_git_result_t opened = open_journal(store->database, error);
+    if (opened != MAELYS_GIT_OK) {
+        mg_store_close(store);
+        return opened;
     }
     char sidecar[4096 + 8u];
     int sidecar_length = snprintf(sidecar, sizeof(sidecar), "%s-wal", path);

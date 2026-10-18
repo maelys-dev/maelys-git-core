@@ -17,8 +17,7 @@ static const char *const k_names[] = {
 /* The deduplication form of command `index` of a parsed poll, as the agent
  * stores it in commands.raw_json. */
 static char *deduplication_form(const mg_agent_poll_t *poll, size_t index) {
-    return json_dumps(json_array_get(poll->deduplication_commands, index),
-                      JSON_COMPACT | JSON_ENSURE_ASCII | JSON_SORT_KEYS);
+    return mg_protocol_poll_command_form(poll, index, NULL);
 }
 
 /* Five commands, each with a payload whose keys or strings need escapes. */

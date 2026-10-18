@@ -138,8 +138,9 @@ void mg_protocol_message_clear(mg_agent_message_t *message) {
 }
 
 /* Used only after bounded parsing, so recursion is capped at poll depth 34.
- * Jansson's compatibility tree must not round fractions or lose uint64 values. */
-static int numbers_fit_jansson(const maelys_json_document_t *document,
+ * Every number of a poll is a signed 64-bit integer: no fraction, no
+ * exponent, no value beyond INT64_MAX, before any command is read. */
+static int numbers_fit_int64(const maelys_json_document_t *document,
                                maelys_json_value_t value) {
     maelys_json_type_t type = maelys_json_value_type(document, value);
     if (type == MAELYS_JSON_TYPE_NUMBER) {
@@ -158,14 +159,13 @@ static int numbers_fit_jansson(const maelys_json_document_t *document,
         result = type == MAELYS_JSON_TYPE_OBJECT ?
             maelys_json_object_member_at(document, value, i, &key, &child) :
             maelys_json_array_get(document, value, i, &child);
-        if (result != MAELYS_JSON_OK || !numbers_fit_jansson(document, child)) return 0;
+        if (result != MAELYS_JSON_OK || !numbers_fit_int64(document, child)) return 0;
     }
     return 1;
 }
 
 void mg_protocol_poll_clear(mg_agent_poll_t *poll) {
     if (!poll) return;
-    json_decref(poll->deduplication_commands);
     maelys_json_document_release(poll->document);
     memset(poll, 0, sizeof(*poll));
 }
@@ -185,27 +185,56 @@ maelys_git_result_t mg_protocol_poll_parse(const char *bytes, size_t length,
         out->cursor.size >= 1024u ||
         maelys_json_object_get(out->document, root, "commands", &commands) != MAELYS_JSON_OK ||
         maelys_json_array_size(out->document, commands, &out->command_count) != MAELYS_JSON_OK ||
-        out->command_count > MG_POLL_MAX_COMMANDS || !numbers_fit_jansson(out->document, root)) {
+        out->command_count > MG_POLL_MAX_COMMANDS || !numbers_fit_int64(out->document, root)) {
         mg_protocol_poll_clear(out);
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
                      "invalid command poll response or non-int64 numeric lexeme");
         return MAELYS_GIT_ERR_PROTOCOL;
     }
-    /* Transitional double parse of exactly the same bytes after strict bounds,
-     * poll schema and numeric-domain validation. This tree only supplies v1
-     * deduplication bytes; command schemas and authorization remain mandatory. */
-    json_error_t legacy_error;
-    json_t *legacy = json_loadb(bytes, length, JSON_REJECT_DUPLICATES, &legacy_error);
-    if (!legacy) {
-        mg_protocol_poll_clear(out);
-        result = json_error_code(&legacy_error) == json_error_out_of_memory ?
-            MAELYS_GIT_ERR_IO : MAELYS_GIT_ERR_PROTOCOL;
-        mg_error_set(error, result, 0, "could not create poll deduplication tree");
-        return result;
-    }
-    out->deduplication_commands = json_incref(json_object_get(legacy, "commands"));
-    json_decref(legacy);
+    out->commands = commands;
     return MAELYS_GIT_OK;
+}
+
+static char *deduplication_form(const maelys_json_document_t *document, maelys_json_value_t command,
+                                mg_json_use_t use, maelys_git_error_t *error) {
+    mg_json_t json;
+    mg_json_begin(&json, use);
+    mg_json_copy(&json, NULL, document, command);
+    char *form = NULL;
+    if (mg_json_finish(&json, &form, NULL) != MAELYS_JSON_OK)
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "could not write the deduplication form of a command");
+    return form;
+}
+
+static char *poll_command(const mg_agent_poll_t *poll, size_t index, mg_json_use_t use,
+                          maelys_git_error_t *error) {
+    maelys_json_value_t command;
+    if (!poll || !poll->document || index >= poll->command_count ||
+        maelys_json_array_get(poll->document, poll->commands, index, &command) != MAELYS_JSON_OK) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0, "no such command in the poll");
+        return NULL;
+    }
+    return deduplication_form(poll->document, command, use, error);
+}
+
+char *mg_protocol_poll_command_form(const mg_agent_poll_t *poll, size_t index,
+                                    maelys_git_error_t *error) {
+    return poll_command(poll, index, MG_JSON_DEDUPLICATION, error);
+}
+
+char *mg_protocol_poll_command_text(const mg_agent_poll_t *poll, size_t index,
+                                    maelys_git_error_t *error) {
+    return poll_command(poll, index, MG_JSON_DATA, error);
+}
+
+char *mg_protocol_deduplication_form(const char *bytes, size_t length, maelys_git_error_t *error) {
+    maelys_json_document_t *document = NULL;
+    if (!bytes || parse_document(bytes, length, MG_PROTOCOL_MAX_DEPTH, &document, error) != MAELYS_GIT_OK)
+        return NULL;
+    char *form = deduplication_form(document, maelys_json_document_root(document),
+                                    MG_JSON_DEDUPLICATION, error);
+    maelys_json_document_release(document);
+    return form;
 }
 
 static int text_equals(const maelys_json_document_t *document,

@@ -1,3 +1,4 @@
+#include <jansson.h>
 #include "agent/agent_internal.h"
 #include "test_support.h"
 

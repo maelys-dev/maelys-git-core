@@ -2,7 +2,6 @@
 import http.server
 import json
 from pathlib import Path
-import re
 import sqlite3
 import ssl
 import subprocess
@@ -197,11 +196,19 @@ with tempfile.TemporaryDirectory(prefix="maelys-cloud-test-") as temporary:
         unicode_command = dict(command, message_id="unicode", payload={"\ue000": 1, "\U00010000": 2, "text": "café"})
         state["body"] = poll_bytes([unicode_command])
         cycle()
-        expected_v1 = json.dumps(unicode_command, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
-        expected_v1 = re.sub(r"\\u([0-9a-f]{4})", lambda match: "\\u" + match[1].upper(), expected_v1)
+        # Deduplication form v2: keys sorted by UTF-16 code units, printable
+        # ASCII with lower-case escapes, compact.
+        def form_v2(value):
+            if isinstance(value, dict):
+                return "{" + ",".join(json.dumps(key) + ":" + form_v2(value[key]) for key in
+                                      sorted(value, key=lambda key: key.encode("utf-16-be"))) + "}"
+            return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+        expected_v2 = form_v2(unicode_command)
+        assert expected_v2.index("\\ud800\\udc00") < expected_v2.index("\\ue000"), expected_v2
         with sqlite3.connect(path) as connection:
             first = connection.execute("SELECT raw_json,result_json FROM commands WHERE id='unicode'").fetchone()
-            assert first[0] == expected_v1, first
+            assert first[0] == expected_v2, first
+            assert connection.execute("SELECT value FROM metadata WHERE key='dedup_form'").fetchone() == ("v2",)
         state["body"] = json.dumps(dict(commands=[unicode_command], cursor="replayed"), ensure_ascii=False, indent=2).encode()
         cycle()
         with sqlite3.connect(path) as connection:

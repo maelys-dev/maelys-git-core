@@ -440,6 +440,14 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_link_libraries(test-maelys-git-agent-protocol PRIVATE
         maelys_git_agent_core PkgConfig::JANSSON SQLite::SQLite3 maelys_git_build_flags)
     add_test(NAME maelys-git-agent-protocol COMMAND test-maelys-git-agent-protocol)
+
+    add_executable(test-maelys-git-store-migration tests/test_store_migration.c)
+    target_include_directories(test-maelys-git-store-migration PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_definitions(test-maelys-git-store-migration PRIVATE
+        STORE_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/agent-store/v1.sqlite3")
+    target_link_libraries(test-maelys-git-store-migration PRIVATE
+        maelys_git_agent_core SQLite::SQLite3 maelys_git_build_flags)
+    add_test(NAME maelys-git-store-migration COMMAND test-maelys-git-store-migration)
     add_test(NAME maelys-git-protocol-reader
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_protocol_reader.py
             $<TARGET_FILE:maelys-git-agent> $<TARGET_FILE:maelys-git-executor>

@@ -1,3 +1,4 @@
+#include <jansson.h>
 #include "agent/agent_internal.h"
 #include "test_support.h"
 
@@ -149,30 +150,40 @@ static int test_structure_budgets(void) {
     return 1;
 }
 
-static int test_deduplication_v1(void) {
-    /* Regression vectors for Jansson's UTF-8 key order and ASCII escaping. */
-    json_error_t json_error;
-    json_t *payload = json_loads("{\"\\ue000\":1,\"\\ud800\\udc00\":2,\"text\":\"caf\\u00e9\"}",
-                                JSON_REJECT_DUPLICATES, &json_error);
-    json_t *root = command_object("durable-unicode", payload);
-    CHECK(payload != NULL && root != NULL);
-    char *v1 = json_dumps(root, JSON_COMPACT | JSON_ENSURE_ASCII | JSON_SORT_KEYS);
-    CHECK(v1 != NULL);
-    CHECK(strstr(v1, "caf\\u00E9") != NULL);
-    CHECK(strstr(v1, "\\uE000") != NULL && strstr(v1, "\\uD800\\uDC00") != NULL);
-    CHECK(strstr(v1, "\\uE000") < strstr(v1, "\\uD800\\uDC00"));
-    mg_agent_message_t message;
-    CHECK(mg_protocol_parse(v1, strlen(v1), &message, NULL) == MAELYS_GIT_OK);
-    maelys_json_writer_t *writer = NULL;
-    CHECK(maelys_json_writer_create(MAELYS_JSON_PROFILE_RFC8259, NULL, 0u, &writer) == MAELYS_JSON_OK);
-    CHECK(maelys_json_writer_value(writer, message.document,
-        maelys_json_document_root(message.document)) == MAELYS_JSON_OK);
-    char *canonical = NULL;
-    size_t size;
-    CHECK(maelys_json_writer_finish(writer, &canonical, &size) == MAELYS_JSON_OK);
-    maelys_json_writer_release(writer);
-    CHECK(strcmp(canonical, v1) != 0);
+/* The deduplication forms of one command, as the journal stores them. v1 is
+ * what Jansson wrote: keys by UTF-8 bytes, escapes in upper case. v2 is what
+ * maelys-json writes: keys by UTF-16 code units, escapes in lower case. */
+static const char k_v1[] =
+    "{\"agent_id\":\"agent-1\",\"command\":\"health\",\"expires_at_ms\":2,\"issued_at_ms\":1,"
+    "\"message_id\":\"durable-unicode\",\"payload\":{\"text\":\"caf\\u00E9\",\"\\uE000\":1,"
+    "\"\\uD800\\uDC00\":2},\"protocol\":\"maelys-git-agent/1\",\"type\":\"command\"}";
+static const char k_v2[] =
+    "{\"agent_id\":\"agent-1\",\"command\":\"health\",\"expires_at_ms\":2,\"issued_at_ms\":1,"
+    "\"message_id\":\"durable-unicode\",\"payload\":{\"text\":\"caf\\u00e9\",\"\\ud800\\udc00\":2,"
+    "\"\\ue000\":1},\"protocol\":\"maelys-git-agent/1\",\"type\":\"command\"}";
 
+static int test_deduplication_v2(void) {
+    maelys_git_error_t error = {0};
+    /* A v1 form, read back, is written in the v2 form. */
+    char *form = mg_protocol_deduplication_form(k_v1, strlen(k_v1), &error);
+    CHECK(form != NULL && strcmp(form, k_v2) == 0);
+    free(form);
+    /* A command received in a poll, raw UTF-8 here, takes the same v2 form. */
+    static const char poll_body[] =
+        "{\"cursor\":\"c\",\"commands\":[{\"type\":\"command\",\"protocol\":\"maelys-git-agent/1\","
+        "\"message_id\":\"durable-unicode\",\"agent_id\":\"agent-1\",\"command\":\"health\","
+        "\"issued_at_ms\":1,\"expires_at_ms\":2,"
+        "\"payload\":{\"\xee\x80\x80\":1,\"\xf0\x90\x80\x80\":2,\"text\":\"caf\xc3\xa9\"}}]}";
+    mg_agent_poll_t poll;
+    CHECK(mg_protocol_poll_parse(poll_body, strlen(poll_body), &poll, &error) == MAELYS_GIT_OK);
+    form = mg_protocol_poll_command_form(&poll, 0u, &error);
+    CHECK(form != NULL && strcmp(form, k_v2) == 0);
+    CHECK(mg_protocol_poll_command_form(&poll, 1u, &error) == NULL);
+    mg_protocol_poll_clear(&poll);
+
+    /* A new journal compares v2 forms byte for byte. */
+    mg_agent_message_t message;
+    CHECK(mg_protocol_parse(form, strlen(form), &message, NULL) == MAELYS_GIT_OK);
     char directory[] = "/tmp/maelys_protocol_journal_XXXXXX";
     CHECK(mkdtemp(directory) != NULL);
     char path[4096];
@@ -181,30 +192,19 @@ static int test_deduplication_v1(void) {
     CHECK(mg_store_open(path, &store, NULL) == MAELYS_GIT_OK);
     mg_store_command_state_t state;
     char *result = NULL;
-    CHECK(mg_store_record_command(store, &message, v1, &state, &result, NULL) == MAELYS_GIT_OK);
+    CHECK(mg_store_record_command(store, &message, form, &state, &result, NULL) == MAELYS_GIT_OK);
     CHECK(state == MG_STORE_COMMAND_NEW);
     CHECK(mg_store_mark_running(store, message.message_id, NULL) == MAELYS_GIT_OK);
     CHECK(mg_store_complete_command(store, message.message_id, 1, "{\"status\":\"ok\"}", NULL, 1, NULL) == MAELYS_GIT_OK);
     mg_store_close(store);
     CHECK(mg_store_open(path, &store, NULL) == MAELYS_GIT_OK);
-    char *pretty = json_dumps(root, JSON_INDENT(2));
-    CHECK(pretty != NULL);
-    json_t *replayed = json_loads(pretty, JSON_REJECT_DUPLICATES, &json_error);
-    char *replayed_v1 = json_dumps(replayed, JSON_COMPACT | JSON_ENSURE_ASCII | JSON_SORT_KEYS);
-    CHECK(replayed_v1 != NULL && strcmp(replayed_v1, v1) == 0);
-    CHECK(mg_store_record_command(store, &message, replayed_v1, &state, &result, NULL) == MAELYS_GIT_OK);
+    CHECK(mg_store_record_command(store, &message, form, &state, &result, NULL) == MAELYS_GIT_OK);
     CHECK(state == MG_STORE_COMMAND_COMPLETE && result != NULL);
     free(result);
-    CHECK(mg_store_record_command(store, &message, canonical, &state, &result, NULL) == MAELYS_GIT_ERR_PROTOCOL);
+    CHECK(mg_store_record_command(store, &message, k_v1, &state, &result, NULL) == MAELYS_GIT_ERR_PROTOCOL);
     mg_store_close(store);
     mg_protocol_message_clear(&message);
-    json_decref(replayed);
-    json_decref(root);
-    json_decref(payload);
-    free(pretty);
-    free(replayed_v1);
-    free(canonical);
-    free(v1);
+    free(form);
     CHECK(test_remove_tree(directory));
     return 1;
 }
@@ -223,7 +223,7 @@ static int test_poll_reader(void) {
     mg_agent_poll_t poll;
     for (size_t i = 0u; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
         CHECK(mg_protocol_poll_parse(invalid[i], strlen(invalid[i]), &poll, NULL) == MAELYS_GIT_ERR_PROTOCOL);
-        CHECK(poll.document == NULL && poll.deduplication_commands == NULL && poll.cursor.data == NULL);
+        CHECK(poll.document == NULL && poll.cursor.data == NULL);
         mg_protocol_poll_clear(&poll);
     }
     const char *numbers[] = {"-9223372036854775808", "9223372036854775807", "0",
@@ -235,10 +235,11 @@ static int test_poll_reader(void) {
         CHECK(mg_protocol_poll_parse(bytes, strlen(bytes), &poll, NULL) ==
               (i < 3u ? MAELYS_GIT_OK : MAELYS_GIT_ERR_PROTOCOL));
         if (i < 3u) {
-            maelys_json_value_t commands;
-            CHECK(maelys_json_object_get(poll.document, maelys_json_document_root(poll.document),
-                                         "commands", &commands) == MAELYS_JSON_OK);
-            CHECK(same_value(poll.document, commands, poll.deduplication_commands));
+            char expected[200];
+            (void)snprintf(expected, sizeof(expected), "{\"nested\":[%s]}", numbers[i]);
+            char *form = mg_protocol_poll_command_form(&poll, 0u, NULL);
+            CHECK(form != NULL && strcmp(form, expected) == 0);
+            free(form);
         }
         mg_protocol_poll_clear(&poll);
     }
@@ -269,7 +270,13 @@ static int test_poll_reader(void) {
     CHECK(maelys_json_object_get(poll.document, maelys_json_document_root(poll.document),
                                  "commands", &parsed_commands) == MAELYS_JSON_OK);
     CHECK(same_value(poll.document, parsed_commands, commands));
-    CHECK(json_equal(poll.deduplication_commands, commands));
+    for (size_t i = 0u; i < 32u; ++i) {
+        char *form = mg_protocol_poll_command_form(&poll, i, NULL);
+        char *expected = json_dumps(json_array_get(commands, i), JSON_COMPACT | JSON_SORT_KEYS);
+        CHECK(form != NULL && expected != NULL && strcmp(form, expected) == 0);
+        free(form);
+        free(expected);
+    }
     mg_protocol_poll_clear(&poll);
     CHECK(json_array_append_new(commands, json_object()) == 0);
     bytes = json_dumps(root, JSON_COMPACT);
@@ -369,7 +376,7 @@ static int test_result_line_limit(void) {
 int main(void) {
     int passed = test_owned_documents();
     passed += test_structure_budgets();
-    passed += test_deduplication_v1();
+    passed += test_deduplication_v2();
     passed += test_poll_reader();
     passed += test_result_envelope();
     passed += test_result_line_limit();

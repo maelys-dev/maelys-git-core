@@ -1,3 +1,4 @@
+#include <jansson.h>
 #include "agent/agent_internal.h"
 #include "maelys_git_receipt.h"
 #include "test_support.h"

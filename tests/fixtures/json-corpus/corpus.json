@@ -157,7 +157,9 @@
  },
  {
   "label": "emitter/dedup/unicode",
-  "baseline": "{\"agent_id\":\"a\",\"command\":\"authorize\",\"expires_at_ms\":2,\"issued_at_ms\":1,\"message_id\":\"u-1\",\"payload\":{\"ctl\":\"a\\u001Fb\",\"\\uE000\":\"caf\\u00E9\",\"\\uD800\\uDC00\":2},\"principal\":\"alice\",\"protocol\":\"maelys-git-agent/1\",\"repository\":\"r.git\",\"type\":\"command\"}"
+  "baseline": "{\"agent_id\":\"a\",\"command\":\"authorize\",\"expires_at_ms\":2,\"issued_at_ms\":1,\"message_id\":\"u-1\",\"payload\":{\"ctl\":\"a\\u001Fb\",\"\\uE000\":\"caf\\u00E9\",\"\\uD800\\uDC00\":2},\"principal\":\"alice\",\"protocol\":\"maelys-git-agent/1\",\"repository\":\"r.git\",\"type\":\"command\"}",
+  "case": "sort",
+  "v2": "{\"agent_id\":\"a\",\"command\":\"authorize\",\"expires_at_ms\":2,\"issued_at_ms\":1,\"message_id\":\"u-1\",\"payload\":{\"ctl\":\"a\\u001fb\",\"\\ud800\\udc00\":2,\"\\ue000\":\"caf\\u00e9\"},\"principal\":\"alice\",\"protocol\":\"maelys-git-agent/1\",\"repository\":\"r.git\",\"type\":\"command\"}"
  },
  {
   "label": "emitter/dedup/ascii",
