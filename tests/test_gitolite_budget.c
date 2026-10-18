@@ -3,6 +3,7 @@
  * worst cases of execution the generator computes, and the capacities that
  * follow, proven by effective authorizations at their bounds. */
 #include "maelys_git.h"
+#include "policy/policy_reads.h"
 #include "test_support.h"
 
 #include <maelys/cli/digest.h>
@@ -502,7 +503,11 @@ static int test_prefix_facts_only_when_read(void) {
         "deny(R) :- request(R), ref(_), not(ref_prefix(\"refs/heads/\")).\n");
     maelys_git_policy_t *aggregate = open_written("reads-aggregate",
         "allow(R) :- request(R), count(X, ref_prefix(X), N), N >= 3.\n");
-    CHECK(none && count && prefix && negated && aggregate);
+    /* The names only as text, in a filter and a comparison: no read. */
+    maelys_git_policy_t *named = open_written("reads-named",
+        "allow(R) :- request(R), ref(F), starts_with(F, \"ref_prefix\"), F != \"ref_prefix_count\".\n"
+        "allow(R) :- request(R), ref(_).\n");
+    CHECK(none && count && prefix && negated && aggregate && named);
     int allowed = 0;
     size_t base = edb_facts(none, "refs/heads/x", &allowed);
     CHECK(base > 0u && allowed);
@@ -515,11 +520,110 @@ static int test_prefix_facts_only_when_read(void) {
     CHECK(edb_facts(negated, "refs/heads/x", &allowed) == base + 2u && allowed);
     CHECK(edb_facts(aggregate, "refs/heads/a/b", &allowed) == base + 3u && allowed);
     CHECK(edb_facts(aggregate, "refs/heads/x", &allowed) == base + 2u && !allowed);
+    CHECK(edb_facts(named, "refs/heads/x", &allowed) == base && allowed);
+    maelys_git_policy_close(named);
     maelys_git_policy_close(none);
     maelys_git_policy_close(count);
     maelys_git_policy_close(prefix);
     maelys_git_policy_close(negated);
     maelys_git_policy_close(aggregate);
+    return 1;
+}
+
+/* A manifest NAME of COUNT policies, each with its source and its enabled
+ * flag; the path of the manifest, or NULL. */
+static const char *write_set(const char *name, size_t count, const char *const sources[],
+                             const int enabled[]) {
+    static char manifest_path[512];
+    char directory[400], policy_path[512], manifest[8192], digest[MAELYS_CLI_SHA256_HEX_SIZE];
+    (void)snprintf(directory, sizeof(directory), "%s/%s", g_root, name);
+    if (mkdir(directory, 0700) != 0) return NULL;
+    size_t used = (size_t)snprintf(manifest, sizeof(manifest),
+        "{\"policy_set_id\":\"test.%s\",\"policy_set_version\":\"1\",\"manifest_version\":\"1\","
+        "\"default_profile\":\"enforce\",\"created_for\":\"maelys-git-core-tests\","
+        "\"strict_loading\":true,\"fail_closed\":true,\"capabilities\":[],\"policies\":[", name);
+    for (size_t i = 0u; i < count; ++i) {
+        (void)snprintf(policy_path, sizeof(policy_path), "%s/policy-%zu.dl", directory, i);
+        if (!write_text(policy_path, sources[i])) return NULL;
+        maelys_cli_sha256_hex(sources[i], strlen(sources[i]), digest);
+        used += (size_t)snprintf(manifest + used, sizeof(manifest) - used,
+            "%s{\"policy_id\":\"test.%s.%zu\",\"domain\":\"maelys_git\",\"file\":\"policy-%zu.dl\","
+            "\"sha256\":\"%s\",\"mode\":\"enforce\",\"enabled\":%s,\"description\":\"test\","
+            "\"queries\":[{\"name\":\"allow\",\"arity\":1},{\"name\":\"deny\",\"arity\":1}]}",
+            i ? "," : "", name, i, i, digest, enabled[i] ? "true" : "false");
+    }
+    (void)snprintf(manifest + used, sizeof(manifest) - used, "]}\n");
+    (void)snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.json", directory);
+    return write_text(manifest_path, manifest) ? manifest_path : NULL;
+}
+
+static const char k_reads_none[] = "allow(R) :- request(R), ref(_).\n";
+static const char k_reads_prefix[] = "allow(R) :- request(R), ref_prefix(\"refs/heads/\").\n";
+static const char k_reads_count[] = "allow(R) :- request(R), ref_prefix_count(N), N > 0.\n";
+
+/* Test 7: the reads of every enabled policy, each at its own index, decide
+ * one batch of facts; a disabled policy reads nothing. The first enabled
+ * policy reads neither predicate, a disabled one reads ref_prefix_count, the
+ * last enabled one reads ref_prefix: only ref_prefix is given, observed by
+ * the count of the receipt, which adds no read. refs/heads/x has two
+ * prefixes. */
+static int test_prefix_reads_across_policies(void) {
+    maelys_git_policy_t *witness = open_written("set-witness", k_reads_none);
+    static const char *const sources[] = {k_reads_none, k_reads_count, k_reads_prefix};
+    static const int enabled[] = {1, 0, 1};
+    const char *manifest = write_set("set-three", 3u, sources, enabled);
+    maelys_git_policy_t *set = NULL;
+    maelys_git_error_t error;
+    CHECK(witness && manifest && maelys_git_policy_open(manifest, &set, &error) == MAELYS_GIT_OK);
+    size_t base = edb_facts(witness, "refs/heads/x", NULL);
+    CHECK(base > 0u && edb_facts(set, "refs/heads/x", NULL) == base + 2u);
+    maelys_git_policy_close(set);
+    maelys_git_policy_close(witness);
+    return 1;
+}
+
+/* The engine's answer, except a failed one for the predicate and the
+ * enabled policy a test names. The failed answer writes 0 beside its status:
+ * Git Core decides on the status, never on an output a failure left. */
+static size_t g_failing_index;
+static const char *g_failing_name;
+
+static maelys_datalog_status_t failing_reads(const maelys_datalog_policy_t *policy, size_t index,
+                                             const char *name, size_t arity, int *out_reads) {
+    if (index == g_failing_index && !strcmp(name, g_failing_name)) {
+        *out_reads = 0;
+        return MAELYS_DATALOG_STATUS_INTERNAL;
+    }
+    return maelys_datalog_policy_reads_predicate(policy, index, name, arity, out_reads);
+}
+
+/* Test 8: a failed answer, for one enabled policy and one predicate, gives
+ * that predicate to the common batch, through the code that opens a policy;
+ * the other predicate, answered false everywhere, is not given. Two enabled
+ * policies read neither: the second fails. */
+static int test_prefix_reads_on_error(void) {
+    maelys_git_policy_t *witness = open_written("error-witness", k_reads_none);
+    static const char *const sources[] = {k_reads_none, k_reads_none};
+    static const int enabled[] = {1, 1};
+    const char *manifest = write_set("error-set", 2u, sources, enabled);
+    CHECK(witness && manifest);
+    size_t base = edb_facts(witness, "refs/heads/x", NULL);
+    maelys_git_policy_t *set = NULL;
+    maelys_git_error_t error;
+    g_failing_index = 1u;
+    g_failing_name = "ref_prefix_count";
+    CHECK(mg_policy_open_reads(manifest, failing_reads, &set, &error) == MAELYS_GIT_OK);
+    CHECK(edb_facts(set, "refs/heads/x", NULL) == base + 1u);
+    maelys_git_policy_close(set);
+    g_failing_name = "ref_prefix";
+    CHECK(mg_policy_open_reads(manifest, failing_reads, &set, &error) == MAELYS_GIT_OK);
+    CHECK(edb_facts(set, "refs/heads/x", NULL) == base + 2u);
+    maelys_git_policy_close(set);
+    /* The engine's own answers: nothing is given. */
+    CHECK(maelys_git_policy_open(manifest, &set, &error) == MAELYS_GIT_OK);
+    CHECK(edb_facts(set, "refs/heads/x", NULL) == base);
+    maelys_git_policy_close(set);
+    maelys_git_policy_close(witness);
     return 1;
 }
 
@@ -583,6 +687,7 @@ int main(void) {
              test_rule_capacity() && test_large_group() && test_groups_of_a_user() &&
              test_rule_form_prefixes() && test_rule_form_fallback() && test_ref_prefix_facts() &&
              test_requests_without_new_predicates() && test_prefix_facts_only_when_read() &&
+             test_prefix_reads_across_policies() && test_prefix_reads_on_error() &&
              test_rules_restricted();
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok) puts("Gitolite policy budget: compilation, execution and capacities: ok");

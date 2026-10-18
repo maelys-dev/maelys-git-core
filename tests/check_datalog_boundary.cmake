@@ -3,13 +3,13 @@
 # usage: cmake -DSOURCE_DIR=... -DARCHIVE=... -DSDK_INCLUDE=... [-DNM=nm]
 #              -P tests/check_datalog_boundary.cmake
 #
-# 1. src/, cmd/ and include/ may include <maelys/datalog.h> and the
-#    application headers they use, <maelys/datalog_explanations.h> and
-#    <maelys/datalog_program.h>; no integrator or component-author header.
+# 1. src/, cmd/ and include/ may include <maelys/datalog.h> and the one
+#    application header they use, <maelys/datalog_explanations.h>; no other
+#    application header, no integrator or component-author header.
 # 2. They may not name an internal type, a test-only macro, the retired atom
 #    scanner or a compile-time engine capacity.
 # 3. Every maelys_datalog_ symbol the core archive leaves undefined must be
-#    declared by one of those three headers.
+#    declared by one of those two headers.
 cmake_minimum_required(VERSION 3.20)
 foreach(variable IN ITEMS SOURCE_DIR ARCHIVE SDK_INCLUDE)
     if(NOT DEFINED ${variable})
@@ -33,7 +33,7 @@ foreach(source IN LISTS sources)
     file(RELATIVE_PATH name "${SOURCE_DIR}" "${source}")
     string(REGEX MATCHALL "#[ \t]*include[ \t]*[<\"][^>\"]*datalog[^>\"]*[>\"]" includes "${text}")
     foreach(include IN LISTS includes)
-        if(NOT include MATCHES "<maelys/datalog(_explanations|_program)?\\.h>")
+        if(NOT include MATCHES "<maelys/datalog(_explanations)?\\.h>")
             list(APPEND violations "${name}: forbidden engine include ${include}")
         endif()
     endforeach()
@@ -63,12 +63,10 @@ list(LENGTH symbols symbol_count)
 if(symbol_count EQUAL 0)
     list(APPEND violations "the core archive references no engine symbol: the check is not looking at the policy code")
 endif()
-# The consumer SDK: the facade, the structured explanation views and the
-# read-only view of a compiled program.
+# The consumer SDK: the facade and the structured explanation views.
 file(READ "${SDK_INCLUDE}/maelys/datalog.h" consumer_header)
 file(READ "${SDK_INCLUDE}/maelys/datalog_explanations.h" explanation_header)
-file(READ "${SDK_INCLUDE}/maelys/datalog_program.h" program_header)
-string(APPEND consumer_header "${explanation_header}" "${program_header}")
+string(APPEND consumer_header "${explanation_header}")
 foreach(symbol IN LISTS symbols)
     if(NOT consumer_header MATCHES "[^a-z0-9_]${symbol}\\(")
         list(APPEND violations "libmaelys_git_core.a references ${symbol}, which the consumer SDK headers do not declare")

@@ -369,6 +369,7 @@ if(MAELYS_GIT_BUILD_TESTS)
     add_test(NAME maelys-git-policy-facade COMMAND test-maelys-git-policy-facade)
 
     add_executable(test-maelys-git-gitolite-budget tests/test_gitolite_budget.c)
+    target_include_directories(test-maelys-git-gitolite-budget PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_definitions(test-maelys-git-gitolite-budget PRIVATE
         TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}")
     target_link_libraries(test-maelys-git-gitolite-budget PRIVATE
@@ -416,6 +417,16 @@ if(MAELYS_GIT_BUILD_TESTS)
             -DSDK_INCLUDE=${MAELYS_DATALOG_SOURCE_DIR}/include
             -DNM=${CMAKE_NM}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_datalog_boundary.cmake)
+    # The same check on a source that includes the compiled-program view: refused.
+    add_test(NAME maelys-git-datalog-boundary-refuses-program
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/datalog-boundary/program
+            -DARCHIVE=$<TARGET_FILE:maelys_git_core>
+            -DSDK_INCLUDE=${MAELYS_DATALOG_SOURCE_DIR}/include
+            -DNM=${CMAKE_NM}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_datalog_boundary.cmake)
+    set_tests_properties(maelys-git-datalog-boundary-refuses-program PROPERTIES
+        PASS_REGULAR_EXPRESSION "src/program.c: forbidden engine include #include <maelys/datalog_program.h>")
     set_tests_properties(maelys-git-policy-sessions PROPERTIES TIMEOUT 120)
 
     add_executable(test-maelys-git-agent tests/test_agent.c)
