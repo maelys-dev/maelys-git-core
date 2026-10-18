@@ -53,7 +53,7 @@ For a different Datalog checkout, pass
 `-DMAELYS_DATALOG_SOURCE_DIR=/absolute/path/to/maelys-datalog`. The CLI
 framework is taken from an installed `maelys-cli` (found through
 `find_package(maelys-cli)`) or, by default, built from the sibling source
-tree named by `MAELYS_CLI_SOURCE_DIR` through its own CMake project. Jansson >= 2.14.1 and SQLite 3 are required. The
+tree named by `MAELYS_CLI_SOURCE_DIR` through its own CMake project. SQLite 3 is required. The
 default Cloud agent also requires Maelys HTTP, Maelys System and mbedTLS; it
 can be excluded with `-DMAELYS_GIT_ENABLE_CLOUD_AGENT=OFF`.
 Both configurations run the CLI reference check. The generated reference
@@ -69,11 +69,12 @@ recorded version exactly. HTTP/System objects are also private to each build,
 and inherit its compiler and sanitizer flags. Project headers take precedence
 over older installed headers in `CPPFLAGS`.
 Only the dependency-free core of `maelys-cli` is linked; its extension
-archive and `maelys` dispatcher are not built here. The agent configuration
-and command readers link maelys-json separately, pinned to the published release
-recorded in `cmake/dependencies.cmake` (`v0.2.0`). Its source
-checkout can be selected with `-DMAELYS_JSON_SOURCE_DIR=/absolute/path/to/maelys-json`.
-Jansson still builds the configuration output, CLI data and agent messages.
+archive and `maelys` dispatcher are not built here. maelys-json is the one
+JSON library: it reads every external document and writes the CLI data, the
+agent messages, the journal's deduplication form and the generated
+configuration. It is pinned to the published release recorded in
+`cmake/dependencies.cmake` (`v0.3.0`); its source checkout can be selected
+with `-DMAELYS_JSON_SOURCE_DIR=/absolute/path/to/maelys-json`.
 
 ## Policy model
 
@@ -293,12 +294,11 @@ payloads. Unknown envelope and command fields fail closed. The reader explicitly
 bounds JSON to 65,536 bytes, 32 nesting levels and 32,768 tokens, and rejects
 decoded duplicates, U+0000 and invalid Unicode. Integer fields retain their
 signed 64-bit ranges and reject fractions and exponents. The message owns its
-document throughout execution. Jansson builds results and preserves the durable
-v1 command deduplication bytes. Cloud validates bounded polls before creating
-its transient Jansson compatibility tree. The supervisor validates and
-correlates result envelopes before persistence. These JSON libraries stay out
-of the SSH shell and receive-hook
-hot paths. See the [protocol contract](protocol/README.md) for framing and limits.
+document throughout execution. maelys-json writes the results, each within
+the 65,536-byte line, and the durable deduplication form v2 of each command.
+Cloud validates bounded polls before processing their commands. The
+supervisor validates and correlates result envelopes before persistence. The
+SSH shell and receive hook write only their receipts with maelys-json. See the [protocol contract](protocol/README.md) for framing and limits.
 
 Supported executor commands are:
 
@@ -388,7 +388,8 @@ The configuration must be a regular file owned by the agent or root, without
 group/world write permission or a final symlink. The loader opens it once,
 checks that descriptor with `fstat`, and reads a bounded byte buffer from the
 same descriptor. FIFOs and other non-regular files are rejected without waiting
-for input. Provisioning continues to write the configuration with Jansson.
+for input. Provisioning writes the configuration with maelys-json, within the
+same limits the loader applies.
 
 The Cloud command endpoint returns an exact object shaped as
 `{"cursor":"...","commands":[...]}` or HTTP 204. The event endpoint accepts
@@ -400,9 +401,9 @@ durably accepted the idempotency key.
 The JSON architecture decision in [docs/json-boundaries.md](docs/json-boundaries.md)
 maps each reader and writer. Configuration, command envelopes and executor
 payload reads, Cloud polls and supervisor result validation now use
-maelys-json, and maelys-json alone writes and reads authorization receipts.
-Coordinated manifest loading remains planned migration work. Jansson remains for mutable internal trees and ordinary
-responses, including the existing command deduplication representation.
+maelys-json, and maelys-json alone writes and reads authorization receipts,
+command-line data, agent messages and the journal's deduplication form.
+Coordinated manifest loading remains planned migration work.
 
 The SSH shell and hook should run under a dedicated Unix account that owns only
 the intended repositories. The agent should use a separate service account when

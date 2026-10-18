@@ -1,4 +1,4 @@
-/* The agent journal written by the build that used Jansson (fixture
+/* The agent journal written by the build of 1016d1b (fixture
  * agent-store/v1.sqlite3: five commands, complete, failed, pending and
  * running, raw_json in deduplication form v1) opened by this build: the
  * opening converts it to the v2 form in one transaction, with the recovery

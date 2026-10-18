@@ -1,5 +1,5 @@
 """The JSON the programs write, byte for byte, against a corpus recorded with
-Jansson before it was removed.
+the build of 1016d1b, before the change of JSON library.
 
 Every case runs a program on fixed inputs and keeps its whole standard output
 (the framework writes the data it receives verbatim in compact mode), the

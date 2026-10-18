@@ -5,6 +5,31 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- Jansson is no longer a dependency: maelys-json, already pinned, writes
+  every JSON document the programs produce, and the build, the CI and the
+  Linux image no longer install Jansson. The bytes written are those of the
+  previous version but for three differences: `\u` escapes in lower case
+  (`\u001f`, was `\u001F`); keys in RFC 8785 order (UTF-16 code units, was
+  UTF-8 bytes), which only changes received payloads copied into the
+  deduplication form, since the product writes ASCII keys; and two lines that
+  were written in insertion order now have sorted keys, the agent's protocol
+  error and the line of the public `maelys_git_protocol_write_decision`.
+  Receipts do not change. No new limit applies to command-line data.
+- The agent journal compares commands in deduplication form v2, the form
+  maelys-json writes, and records it in `metadata('dedup_form')`. A journal
+  of form v1 is converted when the agent opens it, in one transaction that
+  also returns interrupted commands to `pending`; a row that does not convert
+  refuses the opening, names its command and changes nothing, and an unknown
+  form is refused. Completed commands keep their results. Going back to an
+  earlier build after the conversion is not supported: it would refuse the
+  replayed commands as reused `message_id`s.
+- The executor writes each result within the protocol's 65,536-byte line. A
+  result that would exceed it, such as the diff of a few thousand long paths,
+  is answered by a correlated `failed` result with code `limit_exceeded`, and
+  the next command of the stream is executed; the previous version wrote the
+  line, which the reader refused before stopping the stream. A decision whose
+  explanation text alone makes it too long is first written without
+  `explanation_text`, its receipt unchanged.
 - The Gitolite migration writes one policy fact per elementary grant (a
   subject, a repository or namespace, a ref or a prefix, a level):
   `gitolite_access/3`, `gitolite_ref_access/4`, their `group_` forms and
