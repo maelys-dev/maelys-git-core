@@ -232,7 +232,9 @@ empreinte.
 | Audit SQLite, `authorization_explanation` | — | le texte d'un refus ou d'une demande |
 | Hook avec `--receipts FILE`, refus | sur refus | dans le fichier |
 | Hook avec `--receipts FILE`, acceptation | jamais | non |
-| `maelys-git-agent stdio`, client Git | — | jamais |
+| `maelys-git-agent stdio`, refus de `create_repository` ou `update_ref` | jamais | non ; le reçu n'a pas de résumé (`explanation.kind` vaut `none`) |
+| Refus de policy de `pr_merge` | — | aucun reçu (voir plus bas) |
+| Client Git | — | jamais |
 
 - `maelys-git authorize` ajoute `receipt` et `receiptSha256` à ses quatre
   membres, inchangés.
@@ -244,6 +246,24 @@ empreinte.
 - Le hook écrit une ligne par push, `{"explanationText":…,"receipt":{…},
   "receiptSha256":"…"}`, par maelys-json ; le flux vers le client Git est le
   même avec ou sans l'option.
+- `maelys-git-agent stdio` publie ce que l'agent Cloud publierait, sans
+  l'audit qui seul justifie de rendre le texte d'un refus : il n'explique
+  donc pas le refus d'une commande qui modifie un dépôt.
+- **Exception : le refus de policy de `pr_merge` ne porte pas de reçu.** La
+  réautorisation d'une fusion se fait dans `maelys_git_pr_merge_with_source`,
+  qui ne rend pas de décision, et le même résultat `denied` couvre aussi des
+  refus sans policy (gates de PR, PR non fusionnable, configuration Git
+  interdite). Ce refus garde sa charge `{code, message}` et n'écrit aucun
+  événement d'audit de reçu ; un cycle ultérieur lui donnera le reçu de la
+  décision décisive, comme pour `update_ref`.
+
+### Corpus de référence
+
+`tests/fixtures/receipts/receipts.tsv` est le contrat d'octets de la version
+1 : trente reçus, comparés à l'octet près dans les profils SMALL et LARGE. Il
+est régénéré par `MG_RECORD_RECEIPTS=FICHIER` uniquement dans un commit qui
+explique chaque ligne changée ; une montée du moteur qui change une empreinte
+le régénère dans son propre commit, jamais dans celui d'une fonctionnalité.
 
 ## 8. Préalables
 

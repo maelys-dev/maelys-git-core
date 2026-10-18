@@ -338,6 +338,45 @@ static int test_denial_audit(void) {
     return 1;
 }
 
+/* The local front-end publishes what it executes and keeps no audit: the
+ * denial of a repository change carries its receipt, without an explanation
+ * and without its summary, exactly as the Cloud agent would publish it. */
+static int test_stdio_denial(void) {
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_error_t error = {0};
+    CHECK(maelys_git_policy_open(TEST_MANIFEST_FILE, &policy, &error) == MAELYS_GIT_OK);
+    char *raw = command_for("stdio-1", "create_repository", "nobody", json_object());
+    CHECK(raw != NULL);
+    size_t length = strlen(raw);
+    char *line = malloc(length + 2u);
+    CHECK(line != NULL);
+    (void)snprintf(line, length + 2u, "%s\n", raw);
+    free(raw);
+    char root[] = "/tmp/maelys_git_stdio_XXXXXX";
+    CHECK(mkdtemp(root) != NULL);
+    FILE *input = fmemopen(line, length + 1u, "r");
+    char *output_text = NULL;
+    size_t output_size = 0u;
+    FILE *output = open_memstream(&output_text, &output_size);
+    CHECK(input && output);
+    CHECK(maelys_git_agent_serve(policy, "/usr/bin/git", root, input, output, stderr, &error) == MAELYS_GIT_OK);
+    (void)fclose(input);
+    (void)fclose(output);
+    free(line);
+    json_t *result = json_loads(output_text, JSON_DISABLE_EOF_CHECK, NULL);
+    free(output_text);
+    json_t *payload = json_object_get(result, "payload");
+    CHECK(!strcmp(json_string_value(json_object_get(result, "status")), "denied"));
+    CHECK(json_object_get(payload, "explanation_text") == NULL);
+    json_t *explanation = json_object_get(json_object_get(payload, "receipt"), "explanation");
+    CHECK(!strcmp(json_string_value(json_object_get(explanation, "kind")), "none"));
+    CHECK(!strcmp(json_string_value(json_object_get(explanation, "status")), "not_requested"));
+    json_decref(result);
+    CHECK(test_remove_tree(root));
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
 static int test_protocol_strictness(void) {
     char *raw = valid_command("m1");
     CHECK(raw != NULL);
@@ -477,7 +516,8 @@ int main(void) {
     passed += test_policy_failure_detail();
     passed += test_authorize_receipt();
     passed += test_denial_audit();
-    if (passed != 7) return 1;
+    passed += test_stdio_denial();
+    if (passed != 8) return 1;
     (void)printf("ok: %d agent test groups passed\n", passed);
     return 0;
 }

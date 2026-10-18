@@ -3,7 +3,12 @@
  * views, and the authorization path without a receipt.
  *
  *   test-maelys-git-receipt                       compare with the corpus
- *   MG_RECORD_RECEIPTS=FILE test-maelys-git-receipt   write the corpus to FILE */
+ *   MG_RECORD_RECEIPTS=FILE test-maelys-git-receipt   write the corpus to FILE
+ *
+ * The corpus is the byte contract of receipt version 1. It is regenerated
+ * only in a commit that explains every line it changes; an engine upgrade
+ * that changes a fingerprint regenerates it in a commit of its own, never in
+ * the commit of a feature. */
 #include "internal.h"
 #include "maelys_git_receipt.h"
 #include "receipt/receipt_internal.h"
@@ -53,6 +58,9 @@ static receipt_case_t g_cases[] = {
     {"filters-deny-default", FIXTURE_DIR "/filters/manifest.json",
      {.request_id = "t", .principal = "zed", .repository = "team/app.git", .operation = "push",
       .ref_name = "refs/heads/x"}},
+    {"filters-deny-error-value", FIXTURE_DIR "/filters/manifest.json",
+     {.request_id = "t", .principal = "alice", .repository = "team/app.git", .operation = "push",
+      .has_summary = 1, .changed_count = SIZE_MAX}},
     {"gitolite-deny-default", FIXTURE_DIR "/gitolite-exact/manifest.json",
      {.request_id = "t", .principal = "zed", .repository = "refs.git", .operation = "push",
       .ref_name = "refs/heads/x"}},
@@ -435,7 +443,7 @@ static int test_summary(void) {
 
     maelys_git_policy_t *gitolite = open_policy(FIXTURE_DIR "/gitolite-exact/manifest.json");
     CHECK(gitolite != NULL);
-    CHECK(produce(gitolite, &g_cases[8].request, MAELYS_GIT_EXPLAIN_ALWAYS, text, sizeof(text), &produced));
+    CHECK(produce(gitolite, &g_cases[9].request, MAELYS_GIT_EXPLAIN_ALWAYS, text, sizeof(text), &produced));
     CHECK(explanation->status == MAELYS_GIT_RECEIPT_STATUS_TRUNCATED && explanation->limit_hits != 0u);
     CHECK(header_value(text, "status", value, sizeof(value)) && !strcmp(value, "truncated"));
     CHECK(header_value(text, "limit-hits", value, sizeof(value)) && !strcmp(value, "diagnostics"));
