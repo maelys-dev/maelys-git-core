@@ -98,7 +98,11 @@ that end with `/`, shortest first and never the ref itself, and
 `refs/heads/a/b` gives `refs/`, `refs/heads/`, `refs/heads/a/` and 3. A
 prefix is then matched as a fact, `ref_prefix("refs/heads/release/")`, with no
 filter rule. A policy that tests a deeper prefix never sees it and can close
-on the count, `deny(R) :- request(R), ref_prefix_count(N), N > 16.`
+on the count, `deny(R) :- request(R), ref_prefix_count(N), N > 16.` Each of
+the two is given only when a policy of the manifest reads it, in a rule body,
+negated or as the source of an aggregate, as the engine's view of the
+compiled program says at open time; a policy that reads neither pays nothing
+for them.
 
 The domain also declares policy facts for direct and group grants, admins,
 protected refs and protected paths, and those the Gitolite migration writes:

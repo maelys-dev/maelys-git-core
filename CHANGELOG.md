@@ -31,9 +31,11 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   `maelys_git_gitolite_migration_result_t` gains `budget`, a
   `maelys_git_policy_budget_t`: a program linked against the library must be
   rebuilt.
-- Every request with a valid ref carries `ref_prefix/1`, its first sixteen
-  prefixes ending with `/`, and `ref_prefix_count/1`, their untruncated count.
-  A receipt's `stats.edbFacts` grows by that many facts.
+- A request with a valid ref carries `ref_prefix/1`, its first sixteen
+  prefixes ending with `/`, and `ref_prefix_count/1`, their untruncated count,
+  each only when a policy of the manifest reads it, as the engine's read-only
+  view of the compiled program says when the manifest is opened. A policy
+  that reads neither gets the same facts, and the same receipts, as before.
 - Authorization receipts. `maelys_git_policy_authorize_receipt` decides
   exactly as `maelys_git_policy_authorize` and fills a
   `maelys_git_receipt_t`: the decision (`allow`, `deny_explicit`,

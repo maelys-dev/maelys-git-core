@@ -3,6 +3,7 @@
 #include <maelys/cli/digest.h>
 #include <maelys/datalog.h>
 #include <maelys/datalog_explanations.h>
+#include <maelys/datalog_program.h>
 
 #include <pthread.h>
 #include <stdint.h>
@@ -42,6 +43,10 @@ struct maelys_git_policy {
     char repository_copy[MAELYS_GIT_MAX_REPOSITORY];
     /* The first '/'-terminated prefixes of the request's ref, one string each. */
     char ref_prefixes[MG_REF_PREFIX_FACTS][MAELYS_GIT_MAX_REF];
+    /* Whether a policy of the set reads ref_prefix/1, ref_prefix_count/1:
+     * only then does a request carry those facts. */
+    int emit_ref_prefix;
+    int emit_ref_prefix_count;
     /* The largest compiled program of the set, as the engine counts it. */
     size_t compiled_rules;
     size_t compiled_facts;
@@ -343,6 +348,49 @@ static maelys_git_result_t largest_stat(const maelys_datalog_policy_t *loaded, s
     return MAELYS_GIT_OK;
 }
 
+/* Whether the compiled program of a session reads NAME/ARITY in a rule body,
+ * from the engine's read-only program view, never from the policy text. An
+ * atom, its negation and the source of an aggregate read their predicate; a
+ * comparison and a filter read none. A predicate the registry does not hold
+ * cannot be read. Anything the view cannot answer, an unknown literal kind or
+ * a program ABI other than this one, reads: a fact is never withheld from a
+ * policy that may need it. */
+static int session_reads(const maelys_datalog_session_t *session, const char *name, size_t arity) {
+    const maelys_datalog_program_t *program = NULL;
+    maelys_datalog_program_info_t info;
+    if (maelys_datalog_session_program(session, &program) != MAELYS_DATALOG_STATUS_OK || !program ||
+        maelys_datalog_program_info(program, &info) != MAELYS_DATALOG_STATUS_OK ||
+        info.abi_version != MAELYS_DATALOG_PROGRAM_ABI_VERSION)
+        return 1;
+    for (size_t r = 0u; r < info.rule_count; ++r) {
+        maelys_datalog_ir_rule_t rule;
+        if (maelys_datalog_program_rule(program, r, &rule) != MAELYS_DATALOG_STATUS_OK ||
+            rule.body_count > MAELYS_DATALOG_IR_MAX_BODY)
+            return 1;
+        for (size_t b = 0u; b < rule.body_count; ++b) {
+            const maelys_datalog_ir_literal_t *literal = &rule.body[b];
+            switch (literal->kind) {
+                case MAELYS_DATALOG_IR_ATOM:
+                case MAELYS_DATALOG_IR_NEGATION:
+                case MAELYS_DATALOG_IR_COUNT:
+                case MAELYS_DATALOG_IR_MIN:
+                case MAELYS_DATALOG_IR_MAX:
+                case MAELYS_DATALOG_IR_SUM:
+                    if (!literal->atom.predicate ||
+                        (literal->atom.arity == arity && !strcmp(literal->atom.predicate, name)))
+                        return 1;
+                    break;
+                case MAELYS_DATALOG_IR_COMPARISON:
+                case MAELYS_DATALOG_IR_FILTER:
+                    break;
+                default:
+                    return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 /* Builds the handle of a loaded set and releases the set, whatever happens. */
 static maelys_git_result_t open_loaded(maelys_datalog_policy_t *loaded,
                                        maelys_git_policy_t **out_policy,
@@ -404,6 +452,11 @@ static maelys_git_result_t open_loaded(maelys_datalog_policy_t *loaded,
     for (size_t i = 0u; result == MAELYS_GIT_OK && i < count; ++i) {
         result = prepare_entry(loaded, i, &policy->entries[i], error);
         policy->count = i + 1u; /* close releases a session created before a failure */
+    }
+    for (size_t i = 0u; result == MAELYS_GIT_OK && i < count; ++i) {
+        policy->emit_ref_prefix |= session_reads(policy->entries[i].session, "ref_prefix", 1u);
+        policy->emit_ref_prefix_count |=
+            session_reads(policy->entries[i].session, "ref_prefix_count", 1u);
     }
     /* Sessions keep their own snapshot of the policy they were created from. */
     (void)maelys_datalog_policy_free(loaded);
@@ -597,14 +650,17 @@ static int push_repository_structure(maelys_git_policy_t *policy, const char *re
 /* ref_prefix/1 for each of the first MG_REF_PREFIX_FACTS prefixes of a valid
  * ref that end with '/', shortest first, never the ref itself, and
  * ref_prefix_count/1, the number of such prefixes, untruncated. A policy that
- * tests a deeper prefix can close on that count. The prefixes are copied into
- * the handle, which outlives the solve. */
+ * tests a deeper prefix can close on that count. Each is given only when a
+ * policy of the set reads it. The prefixes are copied into the handle, which
+ * outlives the solve. */
 static int push_ref_structure(maelys_git_policy_t *policy, const char *ref) {
-    if (!ref || !maelys_git_ref_name_is_valid(ref)) return 1;
+    if (!ref || (!policy->emit_ref_prefix && !policy->emit_ref_prefix_count) ||
+        !maelys_git_ref_name_is_valid(ref))
+        return 1;
     size_t count = 0u;
     for (size_t i = 0u; ref[i]; ++i) {
         if (ref[i] != '/') continue;
-        if (count < MG_REF_PREFIX_FACTS) {
+        if (policy->emit_ref_prefix && count < MG_REF_PREFIX_FACTS) {
             char *prefix = policy->ref_prefixes[count];
             memcpy(prefix, ref, i + 1u);
             prefix[i + 1u] = '\0';
@@ -612,7 +668,7 @@ static int push_ref_structure(maelys_git_policy_t *policy, const char *ref) {
         }
         ++count;
     }
-    return push_integer(policy, "ref_prefix_count", count);
+    return !policy->emit_ref_prefix_count || push_integer(policy, "ref_prefix_count", count);
 }
 
 /* The single builder of request facts. They borrow the request's strings and

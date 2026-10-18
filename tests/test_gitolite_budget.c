@@ -471,6 +471,58 @@ static int test_ref_prefix_facts(void) {
     return 1;
 }
 
+/* The request facts a decision used, as its receipt counts them. */
+static size_t edb_facts(maelys_git_policy_t *policy, const char *ref, int *allowed) {
+    maelys_git_policy_request_t request = {
+        .request_id = "t", .principal = "u", .repository = "r.git", .operation = "push",
+        .ref_name = ref};
+    maelys_git_policy_decision_t decision;
+    maelys_git_receipt_t receipt;
+    maelys_git_error_t error;
+    if (maelys_git_policy_authorize_receipt(policy, &request, MAELYS_GIT_EXPLAIN_NEVER, NULL, 0u,
+                                            &decision, &receipt, &error) != MAELYS_GIT_OK) {
+        (void)fprintf(stderr, "authorize: %s\n", error.message);
+        return 0u;
+    }
+    if (allowed) *allowed = decision.allowed;
+    return (size_t)receipt.edb_facts;
+}
+
+/* A request carries ref_prefix and ref_prefix_count only when a policy of
+ * the set reads them, each on its own: positively, under negation or as the
+ * source of an aggregate. refs/heads/x has two prefixes, refs/heads/a/b three. */
+static int test_prefix_facts_only_when_read(void) {
+    maelys_git_policy_t *none = open_written("reads-none", "allow(R) :- request(R), ref(_).\n");
+    maelys_git_policy_t *count = open_written("reads-count",
+        "allow(R) :- request(R), ref_prefix_count(N), N > 0.\n");
+    maelys_git_policy_t *prefix = open_written("reads-prefix",
+        "allow(R) :- request(R), ref_prefix(\"refs/heads/\").\n");
+    maelys_git_policy_t *negated = open_written("reads-negated",
+        "allow(R) :- request(R), ref(_).\n"
+        "deny(R) :- request(R), ref(_), not(ref_prefix(\"refs/heads/\")).\n");
+    maelys_git_policy_t *aggregate = open_written("reads-aggregate",
+        "allow(R) :- request(R), count(X, ref_prefix(X), N), N >= 3.\n");
+    CHECK(none && count && prefix && negated && aggregate);
+    int allowed = 0;
+    size_t base = edb_facts(none, "refs/heads/x", &allowed);
+    CHECK(base > 0u && allowed);
+    CHECK(edb_facts(none, "refs/heads/a/b", NULL) == base);
+    CHECK(edb_facts(count, "refs/heads/x", &allowed) == base + 1u && allowed);
+    CHECK(edb_facts(count, "refs/heads/a/b", NULL) == base + 1u);
+    CHECK(edb_facts(prefix, "refs/heads/x", &allowed) == base + 2u && allowed);
+    CHECK(edb_facts(prefix, "refs/heads/a/b", NULL) == base + 3u);
+    /* Withheld from the negation, the deny would hold: it must not. */
+    CHECK(edb_facts(negated, "refs/heads/x", &allowed) == base + 2u && allowed);
+    CHECK(edb_facts(aggregate, "refs/heads/a/b", &allowed) == base + 3u && allowed);
+    CHECK(edb_facts(aggregate, "refs/heads/x", &allowed) == base + 2u && !allowed);
+    maelys_git_policy_close(none);
+    maelys_git_policy_close(count);
+    maelys_git_policy_close(prefix);
+    maelys_git_policy_close(negated);
+    maelys_git_policy_close(aggregate);
+    return 1;
+}
+
 /* The review's counterexample: a policy that reads none of the new facts
  * decides a ref of 65 prefixes, and one of 511 bytes, as before. */
 static int test_requests_without_new_predicates(void) {
@@ -530,7 +582,8 @@ int main(void) {
     int ok = test_minimal_budget() && test_rw_capacity() && test_prefix_capacity() &&
              test_rule_capacity() && test_large_group() && test_groups_of_a_user() &&
              test_rule_form_prefixes() && test_rule_form_fallback() && test_ref_prefix_facts() &&
-             test_requests_without_new_predicates() && test_rules_restricted();
+             test_requests_without_new_predicates() && test_prefix_facts_only_when_read() &&
+             test_rules_restricted();
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok) puts("Gitolite policy budget: compilation, execution and capacities: ok");
     return ok ? 0 : 1;
