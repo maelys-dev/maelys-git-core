@@ -42,18 +42,22 @@ The Cloud poll reader uses maelys-json on the exact HTTP body: at most 65,536
 bytes, depth 34 (two containers around a command), 32,768 tokens and a cursor
 shorter than 1,024 UTF-8 bytes. Before processing any command, it validates the
 poll shape and refuses every fractional/exponent lexeme and every integer
-outside `[INT64_MIN, INT64_MAX]`, including nested payload values. A transient
-Jansson tree then rereads the same bytes solely to produce deduplication v1.
-Each command still passes envelope, payload and authorization checks; validating
+outside `[INT64_MIN, INT64_MAX]`, including nested payload values. Each command still passes envelope, payload and authorization checks; validating
 the poll alone does not authorize its commands. A rejected poll leaves its
 cursor unchanged.
 
 The durable idempotency key is `message_id`. Its stored comparison value is the
-**deduplication form v1, produced by Jansson** with
-`JSON_COMPACT | JSON_ENSURE_ASCII | JSON_SORT_KEYS`, without a final LF. This
-contract preserves Jansson's ASCII escapes and UTF-8 `strcmp` key order across
-journal reopen/replay. It is distinct from canonical receipt bytes: never
-compare a maelys-json serialization against the journal's `raw_json`.
+**deduplication form v2**: the command written again by maelys-json, compact,
+in printable ASCII (`\u` escapes in lower case), keys in RFC 8785 order (UTF-16
+code units), without a final LF, at most 65,536 bytes. The journal records the
+form in `metadata('dedup_form')`. A journal of form v1 (the form of earlier
+builds: keys by UTF-8 bytes, escapes in upper case) is converted when the agent
+opens it, in the same transaction that returns interrupted commands to
+`pending`; a row that does not convert refuses the opening and changes
+nothing, and an unknown form is refused. An older build cannot read a
+converted journal. The form is distinct from canonical receipt bytes, which are
+not ASCII-escaped: never compare a receipt serialization against the journal's
+`raw_json`.
 
 Results reuse the command's `message_id`, set `type` to `result`, and carry a
 terminal `status` (`ok`, `denied`, or `failed`) plus an object `payload`.
@@ -67,7 +71,10 @@ trailing data and multiple frames are rejected. The payload remains an opaque
 bounded object here; its command-specific semantics belong to its consumers.
 
 Only the validated status determines journal success; Cloud does not reparse
-it with Jansson. Invalid executor output is replaced by a locally constructed,
+it. The executor writes each result within the 65,536-byte line. A result that
+would exceed it is answered by a correlated `failed` result with code
+`limit_exceeded`; a decision whose explanation text makes it too long is first
+written again without `explanation_text`, its receipt unchanged. Invalid executor output is replaced by a locally constructed,
 correlated `failed` result with code `executor_failed`. The rejected output is
 never persisted or posted as a command result. Cached results are revalidated
 against the command and journal state before re-enqueue; a corrupt cached result

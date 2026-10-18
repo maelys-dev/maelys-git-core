@@ -138,8 +138,9 @@ void mg_protocol_message_clear(mg_agent_message_t *message) {
 }
 
 /* Used only after bounded parsing, so recursion is capped at poll depth 34.
- * Jansson's compatibility tree must not round fractions or lose uint64 values. */
-static int numbers_fit_jansson(const maelys_json_document_t *document,
+ * Every number of a poll is a signed 64-bit integer: no fraction, no
+ * exponent, no value beyond INT64_MAX, before any command is read. */
+static int numbers_fit_int64(const maelys_json_document_t *document,
                                maelys_json_value_t value) {
     maelys_json_type_t type = maelys_json_value_type(document, value);
     if (type == MAELYS_JSON_TYPE_NUMBER) {
@@ -158,14 +159,13 @@ static int numbers_fit_jansson(const maelys_json_document_t *document,
         result = type == MAELYS_JSON_TYPE_OBJECT ?
             maelys_json_object_member_at(document, value, i, &key, &child) :
             maelys_json_array_get(document, value, i, &child);
-        if (result != MAELYS_JSON_OK || !numbers_fit_jansson(document, child)) return 0;
+        if (result != MAELYS_JSON_OK || !numbers_fit_int64(document, child)) return 0;
     }
     return 1;
 }
 
 void mg_protocol_poll_clear(mg_agent_poll_t *poll) {
     if (!poll) return;
-    json_decref(poll->deduplication_commands);
     maelys_json_document_release(poll->document);
     memset(poll, 0, sizeof(*poll));
 }
@@ -185,27 +185,56 @@ maelys_git_result_t mg_protocol_poll_parse(const char *bytes, size_t length,
         out->cursor.size >= 1024u ||
         maelys_json_object_get(out->document, root, "commands", &commands) != MAELYS_JSON_OK ||
         maelys_json_array_size(out->document, commands, &out->command_count) != MAELYS_JSON_OK ||
-        out->command_count > MG_POLL_MAX_COMMANDS || !numbers_fit_jansson(out->document, root)) {
+        out->command_count > MG_POLL_MAX_COMMANDS || !numbers_fit_int64(out->document, root)) {
         mg_protocol_poll_clear(out);
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
                      "invalid command poll response or non-int64 numeric lexeme");
         return MAELYS_GIT_ERR_PROTOCOL;
     }
-    /* Transitional double parse of exactly the same bytes after strict bounds,
-     * poll schema and numeric-domain validation. This tree only supplies v1
-     * deduplication bytes; command schemas and authorization remain mandatory. */
-    json_error_t legacy_error;
-    json_t *legacy = json_loadb(bytes, length, JSON_REJECT_DUPLICATES, &legacy_error);
-    if (!legacy) {
-        mg_protocol_poll_clear(out);
-        result = json_error_code(&legacy_error) == json_error_out_of_memory ?
-            MAELYS_GIT_ERR_IO : MAELYS_GIT_ERR_PROTOCOL;
-        mg_error_set(error, result, 0, "could not create poll deduplication tree");
-        return result;
-    }
-    out->deduplication_commands = json_incref(json_object_get(legacy, "commands"));
-    json_decref(legacy);
+    out->commands = commands;
     return MAELYS_GIT_OK;
+}
+
+static char *deduplication_form(const maelys_json_document_t *document, maelys_json_value_t command,
+                                mg_json_use_t use, maelys_git_error_t *error) {
+    mg_json_t json;
+    mg_json_begin(&json, use);
+    mg_json_copy(&json, NULL, document, command);
+    char *form = NULL;
+    if (mg_json_finish(&json, &form, NULL) != MAELYS_JSON_OK)
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0, "could not write the deduplication form of a command");
+    return form;
+}
+
+static char *poll_command(const mg_agent_poll_t *poll, size_t index, mg_json_use_t use,
+                          maelys_git_error_t *error) {
+    maelys_json_value_t command;
+    if (!poll || !poll->document || index >= poll->command_count ||
+        maelys_json_array_get(poll->document, poll->commands, index, &command) != MAELYS_JSON_OK) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0, "no such command in the poll");
+        return NULL;
+    }
+    return deduplication_form(poll->document, command, use, error);
+}
+
+char *mg_protocol_poll_command_form(const mg_agent_poll_t *poll, size_t index,
+                                    maelys_git_error_t *error) {
+    return poll_command(poll, index, MG_JSON_DEDUPLICATION, error);
+}
+
+char *mg_protocol_poll_command_text(const mg_agent_poll_t *poll, size_t index,
+                                    maelys_git_error_t *error) {
+    return poll_command(poll, index, MG_JSON_DATA, error);
+}
+
+char *mg_protocol_deduplication_form(const char *bytes, size_t length, maelys_git_error_t *error) {
+    maelys_json_document_t *document = NULL;
+    if (!bytes || parse_document(bytes, length, MG_PROTOCOL_MAX_DEPTH, &document, error) != MAELYS_GIT_OK)
+        return NULL;
+    char *form = deduplication_form(document, maelys_json_document_root(document),
+                                    MG_JSON_DEDUPLICATION, error);
+    maelys_json_document_release(document);
+    return form;
 }
 
 static int text_equals(const maelys_json_document_t *document,
@@ -248,54 +277,29 @@ maelys_git_result_t mg_protocol_validate_result(const char *bytes, size_t length
     return MAELYS_GIT_OK;
 }
 
-static char *dump_message(json_t *root, maelys_git_error_t *error) {
-    char *encoded = json_dumps(root, JSON_COMPACT | JSON_ENSURE_ASCII | JSON_SORT_KEYS);
-    if (!encoded) mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "could not encode JSON message");
-    return encoded;
+void mg_protocol_result_begin(mg_json_t *json, const mg_agent_message_t *command,
+                              const char *status) {
+    mg_json_begin(json, MG_JSON_PROTOCOL_LINE);
+    mg_json_object(json, NULL);
+    mg_json_string(json, "protocol", MAELYS_GIT_AGENT_PROTOCOL);
+    mg_json_string(json, "message_id", command->message_id);
+    mg_json_string(json, "agent_id", command->agent_id);
+    mg_json_string(json, "type", "result");
+    mg_json_string(json, "command", command->command);
+    mg_json_string(json, "status", status);
+    mg_json_object(json, "payload");
 }
 
-char *mg_protocol_encode_result(const mg_agent_message_t *command,
-                                const char *status,
-                                json_t *payload,
-                                maelys_git_error_t *error) {
-    if (!command || !status || !payload || !json_is_object(payload)) return NULL;
-    json_t *root = json_object();
-    if (!root || json_object_set_new(root, "protocol", json_string(MAELYS_GIT_AGENT_PROTOCOL)) != 0 ||
-        json_object_set_new(root, "message_id", json_string(command->message_id)) != 0 ||
-        json_object_set_new(root, "agent_id", json_string(command->agent_id)) != 0 ||
-        json_object_set_new(root, "type", json_string("result")) != 0 ||
-        json_object_set_new(root, "command", json_string(command->command)) != 0 ||
-        json_object_set_new(root, "status", json_string(status)) != 0 ||
-        json_object_set(root, "payload", payload) != 0) {
-        json_decref(root);
+char *mg_protocol_result_end(mg_json_t *json, maelys_git_error_t *error) {
+    mg_json_end_object(json);
+    mg_json_end_object(json);
+    char *encoded = NULL;
+    maelys_json_result_t status = mg_json_finish(json, &encoded, NULL);
+    if (status == MAELYS_JSON_ERR_LIMIT)
+        mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0,
+                     "result exceeds the %u-byte protocol line", MAELYS_GIT_MAX_PROTOCOL_LINE);
+    else if (status != MAELYS_JSON_OK)
         mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "could not build result JSON");
-        return NULL;
-    }
-    char *encoded = dump_message(root, error);
-    json_decref(root);
-    return encoded;
-}
-
-char *mg_protocol_encode_event(const char *agent_id,
-                               const char *message_id,
-                               const char *event_type,
-                               json_t *payload,
-                               maelys_git_error_t *error) {
-    if (!agent_id || !message_id || !event_type || !json_is_object(payload)) return NULL;
-    json_t *root = json_pack("{s:s,s:s,s:s,s:s,s:s,s:I,s:o}",
-                             "protocol", MAELYS_GIT_AGENT_PROTOCOL,
-                             "message_id", message_id,
-                             "agent_id", agent_id,
-                             "type", "event",
-                             "event", event_type,
-                             "created_at_ms", (json_int_t)mg_now_ms(),
-                             "payload", json_incref(payload));
-    if (!root) {
-        mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "could not build event JSON");
-        return NULL;
-    }
-    char *encoded = dump_message(root, error);
-    json_decref(root);
     return encoded;
 }
 
@@ -305,19 +309,25 @@ maelys_git_result_t maelys_git_protocol_write_decision(
     const maelys_git_policy_decision_t *decision,
     maelys_git_error_t *error) {
     if (!output || !decision) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
-    json_t *root = json_pack("{s:s,s:s,s:s,s:b,s:b,s:s}",
-                             "protocol", MAELYS_GIT_AGENT_PROTOCOL,
-                             "type", "decision",
-                             "message_id", request_id ? request_id : "",
-                             "allowed", decision->allowed,
-                             "explicit_deny", decision->explicit_deny,
-                             "reason", decision->reason);
-    if (!root || json_dumpf(root, output, JSON_COMPACT | JSON_ENSURE_ASCII) != 0 ||
-        fputc('\n', output) == EOF || fflush(output) != 0) {
-        json_decref(root);
+    mg_json_t json;
+    mg_json_begin(&json, MG_JSON_PROTOCOL_LINE);
+    mg_json_object(&json, NULL);
+    mg_json_string(&json, "protocol", MAELYS_GIT_AGENT_PROTOCOL);
+    mg_json_string(&json, "type", "decision");
+    mg_json_string(&json, "message_id", request_id ? request_id : "");
+    mg_json_boolean(&json, "allowed", decision->allowed);
+    mg_json_boolean(&json, "explicit_deny", decision->explicit_deny);
+    mg_json_string(&json, "reason", decision->reason);
+    mg_json_end_object(&json);
+    char *line = NULL;
+    size_t size = 0u;
+    int failed = mg_json_finish(&json, &line, &size) != MAELYS_JSON_OK ||
+                 fwrite(line, 1u, size, output) != size || fputc('\n', output) == EOF ||
+                 fflush(output) != 0;
+    free(line);
+    if (failed) {
         mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "failed to write protocol response");
         return MAELYS_GIT_ERR_IO;
     }
-    json_decref(root);
     return MAELYS_GIT_OK;
 }

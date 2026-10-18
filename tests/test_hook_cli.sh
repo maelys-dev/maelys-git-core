@@ -180,11 +180,3 @@ printf '%s %s %s\n%s %s %s\n%s %s %s\n' \
     --git-dir "$test_root/example.git" --receipts "$test_root/accepted.jsonl" \
     >/dev/null 2>"$test_root/accepted-diagnostics"
 check_receipts "$test_root/accepted.jsonl" allow none
-
-# The hook and the shell carry no Jansson: receipts are written by maelys-json.
-for program in "$maelys_hook_bin" "$maelys_shell_bin"; do
-  if nm -g "$program" | grep -E ' _?json_[a-z_]+$' >/dev/null; then
-    printf '%s links Jansson\n' "$program" >&2
-    exit 1
-  fi
-done

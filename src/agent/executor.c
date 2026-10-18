@@ -94,50 +94,27 @@ static maelys_git_result_t pr_source_from_payload(
     return MAELYS_GIT_OK;
 }
 
-/* The detail of a policy failure, as `validate` reports it (src/cli/admin.c):
- * the members that are known, none written empty. */
-static json_t *failure_detail(const maelys_git_failure_detail_t *detail) {
-    json_t *object = json_pack("{s:s}", "kind", maelys_git_failure_kind_name(detail->kind));
-    int ok = object != NULL;
-    if (ok && detail->diagnostic[0])
-        ok = json_object_set_new(object, "diagnostic", json_string(detail->diagnostic)) == 0;
-    if (ok && detail->budget[0])
-        ok = json_object_set_new(object, "budget", json_string(detail->budget)) == 0;
-    if (ok && detail->kind == MAELYS_GIT_FAILURE_CAPACITY)
-        ok = json_object_set_new(object, "requested", json_integer((json_int_t)detail->requested)) == 0 &&
-             json_object_set_new(object, "limit", json_integer((json_int_t)detail->limit)) == 0;
-    if (ok && detail->file[0])
-        ok = json_object_set_new(object, "file", json_string(detail->file)) == 0;
-    if (ok && detail->line > 0u)
-        ok = json_object_set_new(object, "line", json_integer((json_int_t)detail->line)) == 0 &&
-             json_object_set_new(object, "column", json_integer((json_int_t)detail->column)) == 0;
-    if (!ok) {
-        json_decref(object);
-        return NULL;
-    }
-    return object;
-}
-
 /* A failed command reports its result code and message; a policy failure
- * adds its detail. The detail is read before encoding, which may reset it. */
+ * adds its detail, with the members `validate` reports (mg_json_failure_detail).
+ * The detail is read before encoding, which may reset it. */
 static char *failure(const mg_agent_message_t *message,
                      const char *status,
                      maelys_git_result_t code,
                      const char *description,
                      maelys_git_error_t *error) {
-    json_t *payload = json_pack("{s:s,s:s}", "code", maelys_git_result_name(code),
-                                "message", description && *description ? description : "operation failed");
-    if (payload && code == MAELYS_GIT_ERR_POLICY && error && error->code == MAELYS_GIT_ERR_POLICY &&
-        error->detail.kind != MAELYS_GIT_FAILURE_NONE) {
-        json_t *detail = failure_detail(&error->detail);
-        if (!detail || json_object_set_new(payload, "detail", detail) != 0) {
-            json_decref(payload);
-            payload = NULL;
-        }
+    maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_NONE};
+    if (code == MAELYS_GIT_ERR_POLICY && error && error->code == MAELYS_GIT_ERR_POLICY)
+        detail = error->detail;
+    mg_json_t json;
+    mg_protocol_result_begin(&json, message, status);
+    mg_json_string(&json, "code", maelys_git_result_name(code));
+    mg_json_string(&json, "message", description && *description ? description : "operation failed");
+    if (detail.kind != MAELYS_GIT_FAILURE_NONE) {
+        mg_json_object(&json, "detail");
+        mg_json_failure_detail(&json, &detail);
+        mg_json_end_object(&json);
     }
-    char *encoded = payload ? mg_protocol_encode_result(message, status, payload, error) : NULL;
-    json_decref(payload);
-    return encoded;
+    return mg_protocol_result_end(&json, error);
 }
 
 /* A decision with its receipt, and the explanation text when one was asked
@@ -183,10 +160,29 @@ static maelys_git_result_t authorize(maelys_git_policy_t *policy,
                                                &out->decision, &out->receipt, error);
 }
 
+/* One attempt at a decision result, with or without the explanation text. */
+static char *decision_line(const mg_agent_message_t *message, const judged_t *judged,
+                           const maelys_json_document_t *receipt, const char *sha256,
+                           int with_text, maelys_git_error_t *error) {
+    const maelys_git_policy_decision_t *decision = &judged->decision;
+    mg_json_t json;
+    mg_protocol_result_begin(&json, message, decision->allowed ? "ok" : "denied");
+    mg_json_boolean(&json, "allowed", decision->allowed);
+    mg_json_boolean(&json, "explicit_deny", decision->explicit_deny);
+    mg_json_string(&json, "reason", decision->reason);
+    if (decision->matched_policy == SIZE_MAX) mg_json_null(&json, "matched_policy");
+    else mg_json_i64(&json, "matched_policy", (int64_t)decision->matched_policy);
+    mg_json_copy(&json, "receipt", receipt, maelys_json_document_root(receipt));
+    mg_json_string(&json, "receipt_sha256", sha256);
+    if (with_text) mg_json_string(&json, "explanation_text", judged->text);
+    return mg_protocol_result_end(&json, error);
+}
+
 /* The only exit of a decision: its members, the deciding policy, the receipt
- * read back from its canonical bytes and their digest, and the explanation
- * text when one was rendered. A result longer than a protocol line goes
- * without the text; the receipt keeps its size and digest. */
+ * copied from its canonical bytes and their digest, and the explanation
+ * text when one was rendered. A result that does not fit a protocol line is
+ * built again, in a new document, without the text; the receipt keeps its
+ * size and digest. */
 static char *decision_result(const mg_agent_message_t *message,
                              const judged_t *judged,
                              maelys_git_error_t *error) {
@@ -195,29 +191,21 @@ static char *decision_result(const mg_agent_message_t *message,
     char sha256[65];
     if (maelys_git_receipt_serialize(&judged->receipt, &bytes, &size, sha256, error) != MAELYS_GIT_OK)
         return NULL;
-    json_t *receipt = json_loadb(bytes, size, JSON_REJECT_DUPLICATES, NULL);
+    const maelys_json_limits_t limits = {
+        .maximum_bytes = MAELYS_GIT_RECEIPT_MAX_BYTES, .maximum_depth = 4u, .maximum_tokens = 512u};
+    maelys_json_document_t *receipt = NULL;
+    maelys_json_result_t parsed = maelys_json_document_parse(
+        bytes, size, MAELYS_JSON_PROFILE_RFC8259, &limits, &receipt, NULL);
     free(bytes);
-    if (!receipt) return NULL;
-    const maelys_git_policy_decision_t *decision = &judged->decision;
-    json_t *matched = decision->matched_policy == SIZE_MAX ?
-        json_null() : json_integer((json_int_t)decision->matched_policy);
-    json_t *payload = json_pack("{s:b,s:b,s:s,s:o,s:o,s:s}",
-        "allowed", decision->allowed, "explicit_deny", decision->explicit_deny,
-        "reason", decision->reason, "matched_policy", matched, "receipt", receipt,
-        "receipt_sha256", sha256);
-    int with_text = payload && judged->text && judged->receipt.explanation.has_text && judged->text[0];
-    if (with_text && json_object_set_new(payload, "explanation_text", json_string(judged->text)) != 0) {
-        json_decref(payload);
-        payload = NULL;
+    if (parsed != MAELYS_JSON_OK) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "could not read the receipt back");
+        return NULL;
     }
-    const char *status = decision->allowed ? "ok" : "denied";
-    char *encoded = payload ? mg_protocol_encode_result(message, status, payload, error) : NULL;
-    if (encoded && with_text && strlen(encoded) > MAELYS_GIT_MAX_PROTOCOL_LINE) {
-        free(encoded);
-        (void)json_object_del(payload, "explanation_text");
-        encoded = mg_protocol_encode_result(message, status, payload, error);
-    }
-    json_decref(payload);
+    int with_text = judged->text && judged->receipt.explanation.has_text && judged->text[0];
+    char *encoded = decision_line(message, judged, receipt, sha256, with_text, error);
+    if (!encoded && with_text && error && error->code == MAELYS_GIT_ERR_LIMIT)
+        encoded = decision_line(message, judged, receipt, sha256, 0, error);
+    maelys_json_document_release(receipt);
     return encoded;
 }
 
@@ -280,10 +268,11 @@ static char *execute_repository_info(maelys_git_policy_t *policy,
     result = maelys_git_resolve_repository(root, message->repository, repository_path,
                                            sizeof(repository_path), error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
-    json_t *payload = json_pack("{s:s,s:b}", "repository", message->repository, "exists", 1);
-    char *encoded = payload ? mg_protocol_encode_result(message, "ok", payload, error) : NULL;
-    json_decref(payload);
-    return encoded;
+    mg_json_t json;
+    mg_protocol_result_begin(&json, message, "ok");
+    mg_json_string(&json, "repository", message->repository);
+    mg_json_boolean(&json, "exists", 1);
+    return mg_protocol_result_end(&json, error);
 }
 
 static char *execute_diff(maelys_git_policy_t *policy,
@@ -308,17 +297,13 @@ static char *execute_diff(maelys_git_policy_t *policy,
     if (result == MAELYS_GIT_OK)
         result = maelys_git_repository_changed_paths(git, repository_path, old_oid, new_oid, &paths, error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
-    json_t *array = json_array();
-    for (size_t i = 0u; array && i < paths.count; ++i) {
-        if (json_array_append_new(array, json_string(paths.items[i])) != 0) {
-            json_decref(array); array = NULL;
-        }
-    }
+    mg_json_t json;
+    mg_protocol_result_begin(&json, message, "ok");
+    mg_json_array(&json, "paths");
+    for (size_t i = 0u; i < paths.count; ++i) mg_json_string(&json, NULL, paths.items[i]);
+    mg_json_end_array(&json);
     maelys_git_path_list_clear(&paths);
-    json_t *payload = array ? json_pack("{s:o}", "paths", array) : NULL;
-    char *encoded = payload ? mg_protocol_encode_result(message, "ok", payload, error) : NULL;
-    json_decref(payload);
-    return encoded;
+    return mg_protocol_result_end(&json, error);
 }
 
 static char *execute_update_ref(maelys_git_policy_t *policy,
@@ -373,10 +358,11 @@ static char *execute_update_ref(maelys_git_policy_t *policy,
     result = maelys_git_repository_update_ref(git, repository_path, ref, new_oid, old_oid, error);
     size_t changed_count = summary.changed_count + summary.renamed_count;
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
-    json_t *payload = json_pack("{s:s,s:I}", "ref", ref, "changed_paths", (json_int_t)changed_count);
-    char *encoded = payload ? mg_protocol_encode_result(message, "ok", payload, error) : NULL;
-    json_decref(payload);
-    return encoded;
+    mg_json_t json;
+    mg_protocol_result_begin(&json, message, "ok");
+    mg_json_string(&json, "ref", ref);
+    mg_json_i64(&json, "changed_paths", (int64_t)changed_count);
+    return mg_protocol_result_end(&json, error);
 }
 
 static char *execute_create_repository(maelys_git_policy_t *policy,
@@ -396,77 +382,53 @@ static char *execute_create_repository(maelys_git_policy_t *policy,
     if (!judged.decision.allowed) return decision_result(message, &judged, error);
     result = maelys_git_repository_init_bare(git, root, message->repository, error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
-    json_t *payload = json_pack("{s:s}", "repository", message->repository);
-    char *encoded = payload ? mg_protocol_encode_result(message, "ok", payload, error) : NULL;
-    json_decref(payload);
-    return encoded;
+    mg_json_t json;
+    mg_protocol_result_begin(&json, message, "ok");
+    mg_json_string(&json, "repository", message->repository);
+    return mg_protocol_result_end(&json, error);
 }
 
-static json_t *pr_payload(maelys_git_pr_check_result_t *result, int applied) {
-    json_t *payload = json_object();
-    json_t *conflicts = json_array();
-    if (!payload || !conflicts) {
-        json_decref(payload);
-        json_decref(conflicts);
-        return NULL;
-    }
-    for (size_t i = 0u; i < result->conflict_paths.count; ++i)
-        if (json_array_append_new(conflicts, json_string(result->conflict_paths.items[i])) != 0) {
-            json_decref(payload);
-            json_decref(conflicts);
-            return NULL;
-        }
-    if (json_object_set(payload, "conflicts", conflicts) != 0) {
-        json_decref(payload);
-        json_decref(conflicts);
-        return NULL;
-    }
-    json_decref(conflicts);
+/* The result of a pull request check or merge. */
+static char *pr_result(const mg_agent_message_t *message, maelys_git_pr_check_result_t *result,
+                       int applied, maelys_git_error_t *error) {
     const char *event_type = applied ? "pr_merged" :
                              (result->pr_id[0] ? "pr_planned" : "pr_checked");
-    if (json_object_set_new(payload, "applied", json_boolean(applied)) != 0 ||
-        json_object_set_new(payload, "mergeable", json_boolean(result->mergeable)) != 0 ||
-        json_object_set_new(payload, "empty", json_boolean(result->empty)) != 0 ||
-        json_object_set_new(payload, "cross_repository", json_boolean(result->cross_repository)) != 0 ||
-        json_object_set_new(payload, "source_repository", json_string(result->source_repository)) != 0 ||
-        json_object_set_new(payload, "source_ref", json_string(result->source_ref)) != 0 ||
-        json_object_set_new(payload, "source_oid", json_string(result->source_oid)) != 0 ||
-        json_object_set_new(payload, "source_identity", json_string(result->source_identity)) != 0 ||
-        json_object_set_new(payload, "source_object_count",
-                            json_integer((json_int_t)result->source_object_count)) != 0 ||
-        json_object_set_new(payload, "source_object_bytes",
-                            json_integer((json_int_t)result->source_object_bytes)) != 0 ||
-        json_object_set_new(payload, "target_identity",
-                            json_string(result->target_identity)) != 0 ||
-        json_object_set_new(payload, "merge_base_oid", json_string(result->merge_base_oid)) != 0 ||
-        json_object_set_new(payload, "merge_tree_oid", json_string(result->merge_tree_oid)) != 0 ||
-        json_object_set_new(payload, "prepared_oid", json_string(result->prepared_oid)) != 0 ||
-        json_object_set_new(payload, "policy_fingerprint", json_string(result->policy_fingerprint)) != 0 ||
-        json_object_set_new(payload, "pr_id", json_string(result->pr_id)) != 0 ||
-        json_object_set_new(payload, "pr_head_ref", json_string(result->pr_head_ref)) != 0 ||
-        json_object_set_new(payload, "pr_merged_ref", json_string(result->pr_merged_ref)) != 0 ||
-        json_object_set_new(payload, "event_type", json_string(event_type)) != 0 ||
-        json_object_set_new(payload, "changed_count",
-                            json_integer((json_int_t)result->changes.changed_count)) != 0 ||
-        json_object_set_new(payload, "added_count",
-                            json_integer((json_int_t)result->changes.added_count)) != 0 ||
-        json_object_set_new(payload, "modified_count",
-                            json_integer((json_int_t)result->changes.modified_count)) != 0 ||
-        json_object_set_new(payload, "deleted_count",
-                            json_integer((json_int_t)result->changes.deleted_count)) != 0 ||
-        json_object_set_new(payload, "renamed_count",
-                            json_integer((json_int_t)result->changes.renamed_count)) != 0 ||
-        json_object_set_new(payload, "max_new_blob_size",
-                            json_integer((json_int_t)result->changes.max_new_blob_size)) != 0 ||
-        json_object_set_new(payload, "total_new_blob_size",
-                            json_integer((json_int_t)result->changes.total_new_blob_size)) != 0 ||
-        json_object_set_new(payload, "inspected_blob_bytes",
-                            json_integer((json_int_t)result->changes.inspected_blob_bytes)) != 0 ||
-        json_object_set_new(payload, "has_binary", json_boolean(result->changes.has_binary)) != 0) {
-        json_decref(payload);
-        return NULL;
-    }
-    return payload;
+    mg_json_t json;
+    mg_protocol_result_begin(&json, message, "ok");
+    mg_json_array(&json, "conflicts");
+    for (size_t i = 0u; i < result->conflict_paths.count; ++i)
+        mg_json_string(&json, NULL, result->conflict_paths.items[i]);
+    mg_json_end_array(&json);
+    mg_json_boolean(&json, "applied", applied);
+    mg_json_boolean(&json, "mergeable", result->mergeable);
+    mg_json_boolean(&json, "empty", result->empty);
+    mg_json_boolean(&json, "cross_repository", result->cross_repository);
+    mg_json_string(&json, "source_repository", result->source_repository);
+    mg_json_string(&json, "source_ref", result->source_ref);
+    mg_json_string(&json, "source_oid", result->source_oid);
+    mg_json_string(&json, "source_identity", result->source_identity);
+    mg_json_i64(&json, "source_object_count", (int64_t)result->source_object_count);
+    mg_json_i64(&json, "source_object_bytes", (int64_t)result->source_object_bytes);
+    mg_json_string(&json, "target_identity", result->target_identity);
+    mg_json_string(&json, "merge_base_oid", result->merge_base_oid);
+    mg_json_string(&json, "merge_tree_oid", result->merge_tree_oid);
+    mg_json_string(&json, "prepared_oid", result->prepared_oid);
+    mg_json_string(&json, "policy_fingerprint", result->policy_fingerprint);
+    mg_json_string(&json, "pr_id", result->pr_id);
+    mg_json_string(&json, "pr_head_ref", result->pr_head_ref);
+    mg_json_string(&json, "pr_merged_ref", result->pr_merged_ref);
+    mg_json_string(&json, "event_type", event_type);
+    mg_json_i64(&json, "changed_count", (int64_t)result->changes.changed_count);
+    mg_json_i64(&json, "added_count", (int64_t)result->changes.added_count);
+    mg_json_i64(&json, "modified_count", (int64_t)result->changes.modified_count);
+    mg_json_i64(&json, "deleted_count", (int64_t)result->changes.deleted_count);
+    mg_json_i64(&json, "renamed_count", (int64_t)result->changes.renamed_count);
+    mg_json_i64(&json, "max_new_blob_size", (int64_t)result->changes.max_new_blob_size);
+    mg_json_i64(&json, "total_new_blob_size", (int64_t)result->changes.total_new_blob_size);
+    mg_json_i64(&json, "inspected_blob_bytes", (int64_t)result->changes.inspected_blob_bytes);
+    mg_json_boolean(&json, "has_binary", result->changes.has_binary);
+    maelys_git_pr_check_result_clear(result);
+    return mg_protocol_result_end(&json, error);
 }
 
 static char *execute_pr_check(maelys_git_policy_t *policy,
@@ -504,11 +466,7 @@ static char *execute_pr_check(maelys_git_policy_t *policy,
             git, repository_path, base, head, style, merge_message,
             source, &check, error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
-    json_t *payload = pr_payload(&check, 0);
-    maelys_git_pr_check_result_clear(&check);
-    char *encoded = payload ? mg_protocol_encode_result(message, "ok", payload, error) : NULL;
-    json_decref(payload);
-    return encoded;
+    return pr_result(message, &check, 0, error);
 }
 
 static char *execute_pr_merge(maelys_git_policy_t *policy,
@@ -585,11 +543,7 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
     if (result == MAELYS_GIT_ERR_DENIED)
         return failure(message, "denied", result, error->message, error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
-    json_t *payload = pr_payload(&merge, apply);
-    maelys_git_pr_check_result_clear(&merge);
-    char *encoded = payload ? mg_protocol_encode_result(message, "ok", payload, error) : NULL;
-    json_decref(payload);
-    return encoded;
+    return pr_result(message, &merge, apply, error);
 }
 
 maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
@@ -614,9 +568,11 @@ maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
             *out_result_json = failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL,
                                        "health payload must be empty", error);
         else {
-            json_t *payload = json_pack("{s:b,s:s}", "healthy", 1, "version", MAELYS_GIT_VERSION);
-            *out_result_json = payload ? mg_protocol_encode_result(message, "ok", payload, error) : NULL;
-            json_decref(payload);
+            mg_json_t json;
+            mg_protocol_result_begin(&json, message, "ok");
+            mg_json_boolean(&json, "healthy", 1);
+            mg_json_string(&json, "version", MAELYS_GIT_VERSION);
+            *out_result_json = mg_protocol_result_end(&json, error);
         }
     } else if (strcmp(message->command, "authorize") == 0) {
         *out_result_json = execute_authorize(policy, message, error);
@@ -639,6 +595,11 @@ maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
         *out_result_json = failure(message, "failed", MAELYS_GIT_ERR_INVALID_COMMAND,
                                    "unsupported command", error);
     }
+    /* A result that does not fit the protocol line is never written: the
+     * reader would refuse it and stop the stream. A short failure takes its
+     * place, correlated with the command, and the stream goes on. */
+    if (!*out_result_json && error && error->code == MAELYS_GIT_ERR_LIMIT)
+        *out_result_json = failure(message, "failed", MAELYS_GIT_ERR_LIMIT, error->message, error);
     if (!*out_result_json) {
         if (!error || error->code == MAELYS_GIT_OK)
             mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "could not encode executor result");

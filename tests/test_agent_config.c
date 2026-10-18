@@ -1,4 +1,5 @@
 #include "agent/agent_internal.h"
+#include "test_json.h"
 #include "test_support.h"
 
 #include <fcntl.h>
@@ -6,7 +7,7 @@
 typedef struct {
     char directory[4096];
     char config[4096];
-    json_t *base;
+    char *base; /* the configuration provision wrote */
 } fixture_t;
 
 static int write_bytes(const char *path, const void *bytes, size_t size, mode_t mode) {
@@ -32,9 +33,14 @@ static int fixture_init(fixture_t *fixture) {
     maelys_git_error_t error = {0};
     CHECK(maelys_git_agent_provision(fixture->config, "agent-1", "forge.example.test",
         ca, token, database, manifest, fixture->directory, "/usr/bin/true", &error) == MAELYS_GIT_OK);
-    json_error_t json_error;
-    fixture->base = json_load_file(fixture->config, JSON_REJECT_DUPLICATES, &json_error);
-    CHECK(fixture->base != NULL);
+    FILE *file = fopen(fixture->config, "rb");
+    CHECK(file != NULL);
+    fixture->base = calloc(1u, MG_CONFIG_MAX_BYTES + 1u);
+    size_t size = fixture->base ? fread(fixture->base, 1u, MG_CONFIG_MAX_BYTES, file) : 0u;
+    (void)fclose(file);
+    maelys_json_document_t *parsed = size > 0u ? tj_parse(fixture->base) : NULL;
+    tj_release(parsed);
+    CHECK(parsed != NULL);
     return 1;
 }
 
@@ -64,22 +70,31 @@ static int expect_bytes(const fixture_t *fixture, const void *bytes, size_t size
     return expect_path(fixture->config, expected);
 }
 
-static int expect_object(const fixture_t *fixture, json_t *object,
-                         maelys_git_result_t expected) {
-    char *bytes = json_dumps(object, JSON_COMPACT | JSON_ENSURE_ASCII);
+/* Writes `text`, compact and printable ASCII, and loads it. Frees `text`. */
+static int expect_object(const fixture_t *fixture, char *text, maelys_git_result_t expected) {
+    CHECK(text != NULL);
+    char *bytes = tj_rewrite(text, NULL, NULL, MAELYS_JSON_WRITER_ASCII);
+    free(text);
     CHECK(bytes != NULL);
     int ok = expect_bytes(fixture, bytes, strlen(bytes), expected);
     free(bytes);
     return ok;
 }
 
+/* The base configuration with `field` set to the string `value`. */
+static char *with_string(const fixture_t *fixture, const char *field, const char *value) {
+    char *quoted = tj_quote(value);
+    char *text = quoted ? tj_with(fixture->base, field, quoted) : NULL;
+    free(quoted);
+    return text;
+}
+
 static int test_valid_config(const fixture_t *fixture) {
-    CHECK(expect_object(fixture, fixture->base, MAELYS_GIT_OK));
-    json_t *root = json_deep_copy(fixture->base);
-    CHECK(root != NULL);
+    CHECK(expect_object(fixture, tj_with(fixture->base, NULL, NULL), MAELYS_GIT_OK));
     const char *unicode_path = "/tmp/\xc3\xa9\xf0\x9f\x98\x80";
-    CHECK(json_object_set_new(root, "database_path", json_string(unicode_path)) == 0);
-    CHECK(expect_object(fixture, root, MAELYS_GIT_OK));
+    char *root = with_string(fixture, "database_path", unicode_path);
+    CHECK(root != NULL);
+    CHECK(expect_object(fixture, tj_with(root, NULL, NULL), MAELYS_GIT_OK));
     maelys_git_agent_config_t *loaded = NULL;
     CHECK(mg_config_load(fixture->config, &loaded, NULL) == MAELYS_GIT_OK);
     /* The parsed document is already gone: all strings belong to config. */
@@ -87,11 +102,11 @@ static int test_valid_config(const fixture_t *fixture) {
     CHECK(!strcmp(loaded->agent_id, "agent-1"));
     CHECK(loaded->poll_timeout_ms == 30000u && loaded->request_timeout_ms == 30000u);
     mg_config_free(loaded);
-    char *utf8 = json_dumps(root, JSON_INDENT(2));
-    CHECK(utf8 != NULL);
+    char *utf8 = tj_rewrite(root, NULL, NULL, MAELYS_JSON_WRITER_INDENT);
+    CHECK(utf8 != NULL && strstr(utf8, "\xc3\xa9") != NULL);
     CHECK(expect_bytes(fixture, utf8, strlen(utf8), MAELYS_GIT_OK));
     free(utf8);
-    json_decref(root);
+    free(root);
     return 1;
 }
 
@@ -108,12 +123,9 @@ static int test_syntax_and_limits(const fixture_t *fixture) {
 
     const char *nested = "{\"version\":{}}";
     CHECK(expect_bytes(fixture, nested, strlen(nested), MAELYS_GIT_ERR_LIMIT));
-    json_t *extra = json_deep_copy(fixture->base);
-    CHECK(extra != NULL && json_object_set_new(extra, "extra", json_integer(0)) == 0);
-    CHECK(expect_object(fixture, extra, MAELYS_GIT_ERR_LIMIT));
-    json_decref(extra);
+    CHECK(expect_object(fixture, tj_with(fixture->base, "extra", "0"), MAELYS_GIT_ERR_LIMIT));
 
-    char *base = json_dumps(fixture->base, JSON_COMPACT);
+    char *base = tj_with(fixture->base, NULL, NULL);
     CHECK(base != NULL);
     size_t base_size = strlen(base);
     char *padded = malloc(MG_CONFIG_MAX_BYTES + 1u);
@@ -142,10 +154,7 @@ static int test_syntax_and_limits(const fixture_t *fixture) {
 
 static int expect_number(const fixture_t *fixture, const char *field,
                          const char *lexeme, maelys_git_result_t expected) {
-    json_t *root = json_deep_copy(fixture->base);
-    CHECK(root != NULL && json_object_set_new(root, field, json_string("NUMBER_MARKER")) == 0);
-    char *encoded = json_dumps(root, JSON_COMPACT);
-    json_decref(root);
+    char *encoded = with_string(fixture, field, "NUMBER_MARKER");
     CHECK(encoded != NULL);
     const char marker[] = "\"NUMBER_MARKER\"";
     char *found = strstr(encoded, marker);
@@ -189,51 +198,45 @@ static int test_numeric_contract(const fixture_t *fixture) {
 }
 
 static int test_schema_and_strings(const fixture_t *fixture) {
-    const char *field;
-    json_t *value;
-    json_object_foreach(fixture->base, field, value) {
-        json_t *missing = json_deep_copy(fixture->base);
-        CHECK(missing != NULL && json_object_del(missing, field) == 0);
-        CHECK(expect_object(fixture, missing, MAELYS_GIT_ERR_PROTOCOL));
+    maelys_json_document_t *base = tj_parse(fixture->base);
+    CHECK(base != NULL && tj_size(base, "") == 14u);
+    for (size_t i = 0u; i < 14u; ++i) {
+        maelys_json_view_t field;
+        maelys_json_value_t value;
+        CHECK(maelys_json_object_member_at(base, maelys_json_document_root(base), i, &field, &value) ==
+              MAELYS_JSON_OK);
+        char *missing = tj_with(fixture->base, field.data, NULL);
+        CHECK(missing != NULL);
+        CHECK(expect_object(fixture, tj_with(missing, NULL, NULL), MAELYS_GIT_ERR_PROTOCOL));
         /* Same member count, but one required field replaced by an unknown. */
-        CHECK(json_object_set_new(missing, "unknown", json_integer(0)) == 0);
-        CHECK(expect_object(fixture, missing, MAELYS_GIT_ERR_PROTOCOL));
-        json_decref(missing);
-        if (!json_is_string(value)) continue;
-        json_t *wrong = json_deep_copy(fixture->base);
-        CHECK(wrong != NULL && json_object_set_new(wrong, field, json_false()) == 0);
-        CHECK(expect_object(fixture, wrong, MAELYS_GIT_ERR_PROTOCOL));
-        CHECK(json_object_set_new(wrong, field, json_string("")) == 0);
-        CHECK(expect_object(fixture, wrong, MAELYS_GIT_ERR_PROTOCOL));
-        json_decref(wrong);
+        CHECK(expect_object(fixture, tj_with(missing, "unknown", "0"), MAELYS_GIT_ERR_PROTOCOL));
+        free(missing);
+        if (maelys_json_value_type(base, value) != MAELYS_JSON_TYPE_STRING) continue;
+        CHECK(expect_object(fixture, tj_with(fixture->base, field.data, "false"), MAELYS_GIT_ERR_PROTOCOL));
+        CHECK(expect_object(fixture, tj_with(fixture->base, field.data, "\"\""), MAELYS_GIT_ERR_PROTOCOL));
     }
+    tj_release(base);
     char identifier[MG_AGENT_ID_MAX + 1u];
     memset(identifier, 'a', sizeof(identifier));
     identifier[MG_AGENT_ID_MAX - 1u] = '\0';
-    json_t *root = json_deep_copy(fixture->base);
-    CHECK(root != NULL && json_object_set_new(root, "agent_id", json_string(identifier)) == 0);
-    CHECK(expect_object(fixture, root, MAELYS_GIT_OK));
+    CHECK(expect_object(fixture, with_string(fixture, "agent_id", identifier), MAELYS_GIT_OK));
     identifier[MG_AGENT_ID_MAX - 1u] = 'a';
     identifier[MG_AGENT_ID_MAX] = '\0';
-    CHECK(json_object_set_new(root, "agent_id", json_string(identifier)) == 0);
-    CHECK(expect_object(fixture, root, MAELYS_GIT_ERR_PROTOCOL));
-    json_decref(root);
+    CHECK(expect_object(fixture, with_string(fixture, "agent_id", identifier), MAELYS_GIT_ERR_PROTOCOL));
     static const struct { const char *field; const char *value; } bad[] = {
         {"agent_id", "agent/1"}, {"authority", "https://forge.example.test"},
         {"database_path", "relative"}, {"repository_root", "relative"},
         {"command_target", "//other-host/path"}, {"event_target", "/path#fragment"}
     };
     for (size_t i = 0u; i < sizeof(bad) / sizeof(bad[0]); ++i) {
-        root = json_deep_copy(fixture->base);
-        CHECK(root != NULL && json_object_set_new(root, bad[i].field, json_string(bad[i].value)) == 0);
-        CHECK(expect_object(fixture, root, MAELYS_GIT_ERR_PROTOCOL));
-        json_decref(root);
+        CHECK(expect_object(fixture, with_string(fixture, bad[i].field, bad[i].value),
+                            MAELYS_GIT_ERR_PROTOCOL));
     }
     return 1;
 }
 
 static int test_file_security(const fixture_t *fixture) {
-    CHECK(expect_object(fixture, fixture->base, MAELYS_GIT_OK));
+    CHECK(expect_object(fixture, tj_with(fixture->base, NULL, NULL), MAELYS_GIT_OK));
     CHECK(chmod(fixture->config, 0644) == 0);
     CHECK(expect_path(fixture->config, MAELYS_GIT_OK));
     CHECK(chmod(fixture->config, 0620) == 0);
@@ -277,7 +280,7 @@ int main(void) {
     passed += test_numeric_contract(&fixture);
     passed += test_schema_and_strings(&fixture);
     passed += test_file_security(&fixture);
-    json_decref(fixture.base);
+    free(fixture.base);
     if (!test_remove_tree(fixture.directory) || passed != 5) return 1;
     (void)printf("ok: %d configuration reader test groups passed\n", passed);
     return 0;

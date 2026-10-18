@@ -217,20 +217,22 @@ static maelys_git_result_t flush_one(cloud_clients_t *clients,
 }
 
 static char *executor_failure(const mg_agent_message_t *message, const char *description) {
-    json_t *payload = json_pack("{s:s,s:s}", "code", "executor_failed",
-                                "message", description ? description : "executor failed");
-    char *result = payload ? mg_protocol_encode_result(message, "failed", payload, NULL) : NULL;
-    json_decref(payload);
-    return result;
+    mg_json_t json;
+    mg_protocol_result_begin(&json, message, "failed");
+    mg_json_string(&json, "code", "executor_failed");
+    mg_json_string(&json, "message", description ? description : "executor failed");
+    return mg_protocol_result_end(&json, NULL);
 }
 
 static maelys_git_result_t process_command(const maelys_git_agent_config_t *config,
                                            maelys_git_agent_store_t *store,
-                                           json_t *command_json,
+                                           const mg_agent_poll_t *poll,
+                                           size_t index,
                                            maelys_git_error_t *error) {
-    /* Durable deduplication v1: preserve Jansson flags and bytes exactly. */
-    char *raw = json_dumps(command_json, JSON_COMPACT | JSON_ENSURE_ASCII | JSON_SORT_KEYS);
-    if (!raw) return MAELYS_GIT_ERR_IO;
+    /* Durable deduplication v2: the journal compares these bytes when the
+     * same message_id comes back. */
+    char *raw = mg_protocol_poll_command_form(poll, index, error);
+    if (!raw) return error && error->code != MAELYS_GIT_OK ? error->code : MAELYS_GIT_ERR_IO;
     mg_agent_message_t message;
     maelys_git_result_t result = mg_protocol_parse(raw, strlen(raw), &message, error);
     if (result != MAELYS_GIT_OK) { free(raw); return result; }
@@ -335,13 +337,13 @@ static maelys_git_result_t poll_commands(cloud_clients_t *clients,
     result = mg_protocol_poll_parse((const char *)capture.bytes, capture.length, &poll, error);
     if (result != MAELYS_GIT_OK) return result;
     for (size_t index = 0u; index < poll.command_count; ++index) {
-        json_t *command = json_array_get(poll.deduplication_commands, index);
-        result = process_command(config, store, command, error);
+        result = process_command(config, store, &poll, index, error);
         if (result != MAELYS_GIT_OK) {
             char event_id[1200];
             (void)snprintf(event_id, sizeof(event_id), "poll:%s:%zu",
                            poll.cursor.data, index);
-            char *raw = json_dumps(command, JSON_COMPACT | JSON_ENSURE_ASCII | JSON_SORT_KEYS);
+            maelys_git_error_t text_error = {0};
+            char *raw = mg_protocol_poll_command_text(&poll, index, &text_error);
             if (raw) {
                 maelys_git_error_t ignored = {0};
                 (void)mg_store_audit(store, event_id, "command_rejected", raw,

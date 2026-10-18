@@ -31,9 +31,8 @@ distribution, check the actual notices of the texts it installs.
 The built programs link, statically, the pinned sources recorded in
 `cmake/dependencies.cmake`: maelys-cli, maelys-json, maelys-datalog,
 maelys-http and maelys-system, all under MPL-2.0. maelys-datalog carries
-yyjson (MIT, copyright 2020 YaoYuan) in its `vendor/` tree. Jansson (MIT)
-and SQLite (public domain) are taken from the build host and never
-redistributed. No release artifact is published yet: the release mechanism
+yyjson (MIT, copyright 2020 YaoYuan) in its `vendor/` tree. SQLite
+(public domain) is taken from the build host and never redistributed. No release artifact is published yet: the release mechanism
 of this repository is not defined (see `RELEASING.md`).
 
 ## Documents engaged publicly

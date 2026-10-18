@@ -6,16 +6,22 @@
 static void write_protocol_error(FILE *output,
                                  maelys_git_result_t result,
                                  const char *message) {
-    json_t *root = json_pack("{s:s,s:s,s:s,s:s}",
-        "protocol", MAELYS_GIT_AGENT_PROTOCOL, "type", "error",
-        "code", maelys_git_result_name(result),
-        "message", message && *message ? message : "operation failed");
-    if (root) {
-        (void)json_dumpf(root, output, JSON_COMPACT | JSON_ENSURE_ASCII);
+    mg_json_t json;
+    mg_json_begin(&json, MG_JSON_PROTOCOL_LINE);
+    mg_json_object(&json, NULL);
+    mg_json_string(&json, "protocol", MAELYS_GIT_AGENT_PROTOCOL);
+    mg_json_string(&json, "type", "error");
+    mg_json_string(&json, "code", maelys_git_result_name(result));
+    mg_json_string(&json, "message", message && *message ? message : "operation failed");
+    mg_json_end_object(&json);
+    char *line = NULL;
+    size_t size = 0u;
+    if (mg_json_finish(&json, &line, &size) == MAELYS_JSON_OK) {
+        (void)fwrite(line, 1u, size, output);
         (void)fputc('\n', output);
         (void)fflush(output);
-        json_decref(root);
     }
+    free(line);
 }
 
 /* 1 = complete line, 0 = EOF, -1 = framing/I/O failure. Count bytes rather

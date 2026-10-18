@@ -53,11 +53,20 @@ static int command_provision(maelys_cli_context_t *context) {
         result = maelys_git_agent_provision(
             config, agent, authority, ca, token, database, manifest, root, executor, &error);
     if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
-    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:s,s:s,s:{s:b}}",
-        "mode", apply ? "apply" : "plan", "changed", apply,
-        "config", config, "agentId", agent, "authority", authority,
-        "database", database, "precondition", "configAbsent", 1);
-    return maelys_git_cli_succeed_json(context, data,
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_string(&data, "mode", apply ? "apply" : "plan");
+    mg_json_boolean(&data, "changed", apply);
+    mg_json_string(&data, "config", config);
+    mg_json_string(&data, "agentId", agent);
+    mg_json_string(&data, "authority", authority);
+    mg_json_string(&data, "database", database);
+    mg_json_object(&data, "precondition");
+    mg_json_boolean(&data, "configAbsent", 1);
+    mg_json_end_object(&data);
+    mg_json_end_object(&data);
+    return maelys_git_cli_succeed_document(context, &data,
         apply ? "Agent configuration created." :
                 "Plan only; add --apply to create the agent configuration.",
         MAELYS_CLI_EXIT_OK);
@@ -70,10 +79,14 @@ static int command_run(maelys_cli_context_t *context) {
     maelys_git_result_t result = maelys_git_agent_run_cloud(
         maelys_cli_option(context, "config"), once, &error);
     if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
-    json_t *data = json_pack("{s:b,s:s}", "completed", 1,
-                             "mode", once ? "once" : "continuous");
-    return maelys_git_cli_succeed_json(context, data, "Agent run completed.",
-                                       MAELYS_CLI_EXIT_OK);
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_boolean(&data, "completed", 1);
+    mg_json_string(&data, "mode", once ? "once" : "continuous");
+    mg_json_end_object(&data);
+    return maelys_git_cli_succeed_document(context, &data, "Agent run completed.",
+                                           MAELYS_CLI_EXIT_OK);
 }
 #endif
 

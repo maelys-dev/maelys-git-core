@@ -226,28 +226,6 @@ static int fail_with_result(maelys_cli_context_t *context, maelys_git_result_t c
 
 /* ---- validate / authorize / parse-ssh ----------------------------------------- */
 
-/* Adds the members of a policy failure detail that are known; an unknown
- * member is left out, never written empty. The agent's failure payload
- * (src/agent/executor.c) carries the same members. */
-static int add_failure_detail(json_t *object, const maelys_git_failure_detail_t *detail) {
-    if (detail->kind == MAELYS_GIT_FAILURE_NONE) return 1;
-    int ok = json_object_set_new(object, "kind",
-                                 json_string(maelys_git_failure_kind_name(detail->kind))) == 0;
-    if (ok && detail->diagnostic[0])
-        ok = json_object_set_new(object, "diagnostic", json_string(detail->diagnostic)) == 0;
-    if (ok && detail->budget[0])
-        ok = json_object_set_new(object, "budget", json_string(detail->budget)) == 0;
-    if (ok && detail->kind == MAELYS_GIT_FAILURE_CAPACITY)
-        ok = json_object_set_new(object, "requested", json_integer((json_int_t)detail->requested)) == 0 &&
-             json_object_set_new(object, "limit", json_integer((json_int_t)detail->limit)) == 0;
-    if (ok && detail->file[0])
-        ok = json_object_set_new(object, "file", json_string(detail->file)) == 0;
-    if (ok && detail->line > 0u)
-        ok = json_object_set_new(object, "line", json_integer((json_int_t)detail->line)) == 0 &&
-             json_object_set_new(object, "column", json_integer((json_int_t)detail->column)) == 0;
-    return ok;
-}
-
 static int command_validate(maelys_cli_context_t *context) {
     const char *manifest = maelys_cli_operand(context, 0u);
     maelys_git_error_t error = {0};
@@ -257,19 +235,24 @@ static int command_validate(maelys_cli_context_t *context) {
     if (result != MAELYS_GIT_OK && result != MAELYS_GIT_ERR_POLICY)
         return maelys_git_cli_fail_result(context, result, &error);
     int valid = result == MAELYS_GIT_OK;
-    json_t *diagnostics = json_array();
-    if (!valid && diagnostics) {
-        json_t *diagnostic = json_pack("{s:s,s:s,s:s}", "code", "POLICY_INVALID",
-                                       "path", manifest, "message", error.message);
-        if (diagnostic && !add_failure_detail(diagnostic, &error.detail)) {
-            json_decref(diagnostic);
-            diagnostic = NULL;
-        }
-        (void)json_array_append_new(diagnostics, diagnostic);
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_boolean(&data, "valid", valid);
+    mg_json_string(&data, "manifest", manifest);
+    mg_json_array(&data, "diagnostics");
+    if (!valid) {
+        /* The detail's members beside the diagnostic's own, as validate.json says. */
+        mg_json_object(&data, NULL);
+        mg_json_string(&data, "code", "POLICY_INVALID");
+        mg_json_string(&data, "path", manifest);
+        mg_json_string(&data, "message", error.message);
+        mg_json_failure_detail(&data, &error.detail);
+        mg_json_end_object(&data);
     }
-    json_t *data = json_pack("{s:b,s:s,s:o?}", "valid", valid,
-                             "manifest", manifest, "diagnostics", diagnostics);
-    return maelys_git_cli_succeed_json(context, data,
+    mg_json_end_array(&data);
+    mg_json_end_object(&data);
+    return maelys_git_cli_succeed_document(context, &data,
         valid ? "Policy manifest is valid." : "Policy manifest has violations.",
         valid ? MAELYS_CLI_EXIT_OK : MAELYS_CLI_EXIT_VIOLATIONS);
 }
@@ -316,23 +299,31 @@ static int command_authorize(maelys_cli_context_t *context) {
     char sha256[65];
     result = maelys_git_receipt_serialize(&receipt, &bytes, &size, sha256, &error);
     if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
-    /* The receipt object is read back from its canonical bytes; its digest is
-     * that of those bytes, computed before it enters the envelope. */
-    json_t *receipt_json = json_loadb(bytes, size, JSON_REJECT_DUPLICATES, NULL);
+    /* The receipt object is copied from its canonical bytes, read back; its
+     * digest is that of those bytes, computed before it enters the data. */
+    maelys_json_document_t *document = NULL;
+    const maelys_json_limits_t receipt_limits = {
+        .maximum_bytes = MAELYS_GIT_RECEIPT_MAX_BYTES, .maximum_depth = 4u, .maximum_tokens = 512u};
+    maelys_json_result_t parsed = maelys_json_document_parse(
+        bytes, size, MAELYS_JSON_PROFILE_RFC8259, &receipt_limits, &document, NULL);
     free(bytes);
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    if (parsed != MAELYS_JSON_OK) data.status = parsed;
+    mg_json_object(&data, NULL);
+    mg_json_boolean(&data, "allowed", decision.allowed);
+    mg_json_boolean(&data, "explicitDeny", decision.explicit_deny);
     /* SIZE_MAX marks "no policy matched"; the contract exposes it as null. */
-    json_t *matched = decision.matched_policy == SIZE_MAX ?
-        json_null() : json_integer((json_int_t)decision.matched_policy);
-    json_t *data = json_pack("{s:b,s:b,s:o?,s:s,s:o?,s:s}",
-        "allowed", decision.allowed, "explicitDeny", decision.explicit_deny,
-        "matchedPolicy", matched, "reason", decision.reason,
-        "receipt", receipt_json, "receiptSha256", sha256);
-    if (data && explain && receipt.explanation.has_text && text[0] &&
-        json_object_set_new(data, "explanationText", json_string(text)) != 0) {
-        json_decref(data);
-        data = NULL;
-    }
-    return maelys_git_cli_succeed_json(context, data,
+    if (decision.matched_policy == SIZE_MAX) mg_json_null(&data, "matchedPolicy");
+    else mg_json_i64(&data, "matchedPolicy", (int64_t)decision.matched_policy);
+    mg_json_string(&data, "reason", decision.reason);
+    if (document) mg_json_copy(&data, "receipt", document, maelys_json_document_root(document));
+    mg_json_string(&data, "receiptSha256", sha256);
+    if (explain && receipt.explanation.has_text && text[0])
+        mg_json_string(&data, "explanationText", text);
+    mg_json_end_object(&data);
+    maelys_json_document_release(document);
+    return maelys_git_cli_succeed_document(context, &data,
         decision.allowed ? "Authorization allowed." : "Authorization denied.",
         MAELYS_CLI_EXIT_OK);
 }
@@ -343,10 +334,14 @@ static int command_parse_ssh(maelys_cli_context_t *context) {
     maelys_git_result_t result = maelys_git_parse_ssh_command(
         maelys_cli_operand(context, 0u), &parsed, &error);
     if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
-    json_t *data = json_pack("{s:s,s:s}",
-        "service", parsed.service == MAELYS_GIT_SERVICE_UPLOAD_PACK ? "upload-pack" : "receive-pack",
-        "repository", parsed.repository);
-    return maelys_git_cli_succeed_json(context, data, NULL, MAELYS_CLI_EXIT_OK);
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_string(&data, "service",
+        parsed.service == MAELYS_GIT_SERVICE_UPLOAD_PACK ? "upload-pack" : "receive-pack");
+    mg_json_string(&data, "repository", parsed.repository);
+    mg_json_end_object(&data);
+    return maelys_git_cli_succeed_document(context, &data, NULL, MAELYS_CLI_EXIT_OK);
 }
 
 /* ---- repo ---------------------------------------------------------------------- */
@@ -379,11 +374,19 @@ static int command_repo_init(maelys_cli_context_t *context) {
         result = maelys_git_repository_init_bare(
             maelys_git_cli_git(context), canonical_root, repository, &error);
     if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
-    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:s,s:{s:b}}",
-        "mode", mode_name(apply), "changed", apply,
-        "root", canonical_root, "repository", repository,
-        "git", maelys_git_cli_git(context), "precondition", "targetAbsent", 1);
-    return maelys_git_cli_succeed_json(context, data,
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_string(&data, "mode", mode_name(apply));
+    mg_json_boolean(&data, "changed", apply);
+    mg_json_string(&data, "root", canonical_root);
+    mg_json_string(&data, "repository", repository);
+    mg_json_string(&data, "git", maelys_git_cli_git(context));
+    mg_json_object(&data, "precondition");
+    mg_json_boolean(&data, "targetAbsent", 1);
+    mg_json_end_object(&data);
+    mg_json_end_object(&data);
+    return maelys_git_cli_succeed_document(context, &data,
         apply ? "Bare repository created." : "Plan only; add --apply to create the repository.",
         MAELYS_CLI_EXIT_OK);
 }
@@ -399,22 +402,24 @@ static int command_repo_list(maelys_cli_context_t *context) {
     maelys_git_result_t result = maelys_git_repository_list(
         root_operand, maelys_cli_flag(context, "include-stored"), &repositories, &error);
     if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
-    json_t *items = json_array();
-    for (size_t i = 0u; items && i < repositories.count; ++i) {
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_string(&data, "root", root);
+    mg_json_i64(&data, "count", (int64_t)repositories.count);
+    mg_json_array(&data, "repositories");
+    for (size_t i = 0u; i < repositories.count; ++i) {
         const maelys_git_repository_entry_t *entry = &repositories.entries[i];
-        if (json_array_append_new(items, json_pack("{s:s,s:s,s:s}",
-                "name", entry->repository,
-                "state", maelys_git_repository_state_name(entry->state),
-                "storageId", entry->storage_id)) != 0) {
-            json_decref(items);
-            items = NULL;
-        }
+        mg_json_object(&data, NULL);
+        mg_json_string(&data, "name", entry->repository);
+        mg_json_string(&data, "state", maelys_git_repository_state_name(entry->state));
+        mg_json_string(&data, "storageId", entry->storage_id);
+        mg_json_end_object(&data);
     }
-    json_t *data = json_pack("{s:s,s:I,s:o?}", "root", root,
-                             "count", (json_int_t)repositories.count,
-                             "repositories", items);
+    mg_json_end_array(&data);
+    mg_json_end_object(&data);
     maelys_git_repository_list_clear(&repositories);
-    return maelys_git_cli_succeed_json(context, data, NULL, MAELYS_CLI_EXIT_OK);
+    return maelys_git_cli_succeed_document(context, &data, NULL, MAELYS_CLI_EXIT_OK);
 }
 
 static int command_repo_inspect(maelys_cli_context_t *context) {
@@ -424,13 +429,19 @@ static int command_repo_inspect(maelys_cli_context_t *context) {
         maelys_git_cli_git(context), maelys_cli_operand(context, 0u),
         maelys_cli_operand(context, 1u), &info, &error);
     if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
-    json_t *data = json_pack("{s:s,s:s,s:s,s:s,s:s,s:I,s:I,s:I}",
-        "repository", info.repository, "path", info.path, "identity", info.identity,
-        "headRef", info.head_ref, "headOid", info.head_oid,
-        "refCount", (json_int_t)info.ref_count,
-        "objectCount", (json_int_t)info.object_count,
-        "objectBytes", (json_int_t)info.object_bytes);
-    return maelys_git_cli_succeed_json(context, data, NULL, MAELYS_CLI_EXIT_OK);
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_string(&data, "repository", info.repository);
+    mg_json_string(&data, "path", info.path);
+    mg_json_string(&data, "identity", info.identity);
+    mg_json_string(&data, "headRef", info.head_ref);
+    mg_json_string(&data, "headOid", info.head_oid);
+    mg_json_i64(&data, "refCount", (int64_t)info.ref_count);
+    mg_json_i64(&data, "objectCount", (int64_t)info.object_count);
+    mg_json_i64(&data, "objectBytes", (int64_t)info.object_bytes);
+    mg_json_end_object(&data);
+    return maelys_git_cli_succeed_document(context, &data, NULL, MAELYS_CLI_EXIT_OK);
 }
 
 static int emit_repository_transition(maelys_cli_context_t *context,
@@ -440,23 +451,35 @@ static int emit_repository_transition(maelys_cli_context_t *context,
                                       const maelys_git_repository_transition_t *transition) {
     const char *source_state = maelys_git_repository_state_name(transition->source_state);
     const char *target_state = maelys_git_repository_state_name(transition->target_state);
-    json_t *data = json_pack(
-        "{s:s,s:b,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:{s:s,s:b},"
-        "s:{s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:s}}",
-        "mode", mode_name(apply), "changed", apply, "action", action,
-        "sourceRepository", transition->source_repository,
-        "targetRepository", transition->target_repository,
-        "sourceState", source_state, "targetState", target_state,
-        "storageId", transition->storage_id,
-        "sourcePath", transition->source_path, "targetPath", transition->target_path,
-        "precondition", "sourceIdentity", transition->source_identity, "targetAbsent", 1,
-        "event", "version", "1", "type", event_type,
-        "sourceRepository", transition->source_repository,
-        "targetRepository", transition->target_repository,
-        "storageId", transition->storage_id,
-        "sourceIdentity", transition->source_identity,
-        "sourceState", source_state, "targetState", target_state);
-    return maelys_git_cli_succeed_json(context, data, NULL, MAELYS_CLI_EXIT_OK);
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_string(&data, "mode", mode_name(apply));
+    mg_json_boolean(&data, "changed", apply);
+    mg_json_string(&data, "action", action);
+    mg_json_string(&data, "sourceRepository", transition->source_repository);
+    mg_json_string(&data, "targetRepository", transition->target_repository);
+    mg_json_string(&data, "sourceState", source_state);
+    mg_json_string(&data, "targetState", target_state);
+    mg_json_string(&data, "storageId", transition->storage_id);
+    mg_json_string(&data, "sourcePath", transition->source_path);
+    mg_json_string(&data, "targetPath", transition->target_path);
+    mg_json_object(&data, "precondition");
+    mg_json_string(&data, "sourceIdentity", transition->source_identity);
+    mg_json_boolean(&data, "targetAbsent", 1);
+    mg_json_end_object(&data);
+    mg_json_object(&data, "event");
+    mg_json_string(&data, "version", "1");
+    mg_json_string(&data, "type", event_type);
+    mg_json_string(&data, "sourceRepository", transition->source_repository);
+    mg_json_string(&data, "targetRepository", transition->target_repository);
+    mg_json_string(&data, "storageId", transition->storage_id);
+    mg_json_string(&data, "sourceIdentity", transition->source_identity);
+    mg_json_string(&data, "sourceState", source_state);
+    mg_json_string(&data, "targetState", target_state);
+    mg_json_end_object(&data);
+    mg_json_end_object(&data);
+    return maelys_git_cli_succeed_document(context, &data, NULL, MAELYS_CLI_EXIT_OK);
 }
 
 static int command_repo_rename(maelys_cli_context_t *context) {
@@ -538,25 +561,32 @@ static int command_repo_mirror(maelys_cli_context_t *context) {
     const char *event_type = apply && mirror.changed ? "repository_mirrored" :
                              apply ? "repository_mirror_unchanged" :
                              "repository_mirror_planned";
-    json_t *data = json_pack(
-        "{s:s,s:b,s:b,s:s,s:s,s:s,s:s,s:b,s:{s:s,s:s,s:s,s:s},s:{s:s,s:s,s:s,s:s,s:s}}",
-        "mode", mode_name(apply),
-        "changed", apply && mirror.changed,
-        "synchronizationRequired", mirror.changed,
-        "sourceRepository", mirror.source_repository,
-        "targetRepository", mirror.target_repository,
-        "sourcePath", mirror.source_path, "targetPath", mirror.target_path,
-        "targetExists", mirror.target_exists,
-        "precondition",
-            "sourceIdentity", mirror.source_identity,
-            "targetIdentity", mirror.target_identity,
-            "sourceFingerprint", mirror.source_fingerprint,
-            "targetFingerprint", mirror.target_fingerprint,
-        "event", "version", "1", "type", event_type,
-            "sourceRepository", mirror.source_repository,
-            "targetRepository", mirror.target_repository,
-            "sourceFingerprint", mirror.source_fingerprint);
-    return maelys_git_cli_succeed_json(context, data,
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_string(&data, "mode", mode_name(apply));
+    mg_json_boolean(&data, "changed", apply && mirror.changed);
+    mg_json_boolean(&data, "synchronizationRequired", mirror.changed);
+    mg_json_string(&data, "sourceRepository", mirror.source_repository);
+    mg_json_string(&data, "targetRepository", mirror.target_repository);
+    mg_json_string(&data, "sourcePath", mirror.source_path);
+    mg_json_string(&data, "targetPath", mirror.target_path);
+    mg_json_boolean(&data, "targetExists", mirror.target_exists);
+    mg_json_object(&data, "precondition");
+    mg_json_string(&data, "sourceIdentity", mirror.source_identity);
+    mg_json_string(&data, "targetIdentity", mirror.target_identity);
+    mg_json_string(&data, "sourceFingerprint", mirror.source_fingerprint);
+    mg_json_string(&data, "targetFingerprint", mirror.target_fingerprint);
+    mg_json_end_object(&data);
+    mg_json_object(&data, "event");
+    mg_json_string(&data, "version", "1");
+    mg_json_string(&data, "type", event_type);
+    mg_json_string(&data, "sourceRepository", mirror.source_repository);
+    mg_json_string(&data, "targetRepository", mirror.target_repository);
+    mg_json_string(&data, "sourceFingerprint", mirror.source_fingerprint);
+    mg_json_end_object(&data);
+    mg_json_end_object(&data);
+    return maelys_git_cli_succeed_document(context, &data,
         apply ? (mirror.changed ? "Repository mirror synchronized and verified." :
                                   "Repository mirror already synchronized.") :
                 "Mirror plan complete; apply with all returned preconditions.",
@@ -576,18 +606,17 @@ static int command_repo_diff(maelys_cli_context_t *context) {
     maelys_git_result_t result = maelys_git_repository_changed_paths(
         maelys_git_cli_git(context), path, old_oid, new_oid, &paths, &error);
     if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
-    json_t *items = json_array();
-    for (size_t i = 0u; items && i < paths.count; ++i) {
-        if (json_array_append_new(items, json_string(paths.items[i])) != 0) {
-            json_decref(items);
-            items = NULL;
-        }
-    }
-    json_t *data = json_pack("{s:s,s:o?,s:I}",
-        "repository", maelys_cli_operand(context, 1u), "paths", items,
-        "pathCount", (json_int_t)paths.count);
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_string(&data, "repository", maelys_cli_operand(context, 1u));
+    mg_json_array(&data, "paths");
+    for (size_t i = 0u; i < paths.count; ++i) mg_json_string(&data, NULL, paths.items[i]);
+    mg_json_end_array(&data);
+    mg_json_i64(&data, "pathCount", (int64_t)paths.count);
+    mg_json_end_object(&data);
     maelys_git_path_list_clear(&paths);
-    return maelys_git_cli_succeed_json(context, data, NULL, MAELYS_CLI_EXIT_OK);
+    return maelys_git_cli_succeed_document(context, &data, NULL, MAELYS_CLI_EXIT_OK);
 }
 
 static int command_repo_update_ref(maelys_cli_context_t *context) {
@@ -609,12 +638,20 @@ static int command_repo_update_ref(maelys_cli_context_t *context) {
         result = maelys_git_repository_update_ref(
             maelys_git_cli_git(context), path, ref, new_oid, old_oid, &error);
     if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
-    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:s,s:s,s:{s:s}}",
-        "mode", mode_name(apply), "changed", apply,
-        "repository", maelys_cli_operand(context, 1u), "ref", ref,
-        "newOid", new_oid, "git", maelys_git_cli_git(context),
-        "precondition", "currentOid", old_oid);
-    return maelys_git_cli_succeed_json(context, data,
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_string(&data, "mode", mode_name(apply));
+    mg_json_boolean(&data, "changed", apply);
+    mg_json_string(&data, "repository", maelys_cli_operand(context, 1u));
+    mg_json_string(&data, "ref", ref);
+    mg_json_string(&data, "newOid", new_oid);
+    mg_json_string(&data, "git", maelys_git_cli_git(context));
+    mg_json_object(&data, "precondition");
+    mg_json_string(&data, "currentOid", old_oid);
+    mg_json_end_object(&data);
+    mg_json_end_object(&data);
+    return maelys_git_cli_succeed_document(context, &data,
         apply ? "Reference updated." : "Plan only; add --apply to update the reference.",
         MAELYS_CLI_EXIT_OK);
 }
@@ -630,46 +667,51 @@ static int command_keys_compile(maelys_cli_context_t *context) {
         maelys_cli_operand(context, 2u), maelys_cli_operand(context, 3u),
         maelys_cli_operand(context, 4u), apply, &key_count, &error);
     if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
-    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:I}",
-        "mode", mode_name(apply), "changed", apply,
-        "keyDirectory", maelys_cli_operand(context, 0u),
-        "output", maelys_cli_operand(context, 1u),
-        "keyCount", (json_int_t)key_count);
-    return maelys_git_cli_succeed_json(context, data,
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_string(&data, "mode", mode_name(apply));
+    mg_json_boolean(&data, "changed", apply);
+    mg_json_string(&data, "keyDirectory", maelys_cli_operand(context, 0u));
+    mg_json_string(&data, "output", maelys_cli_operand(context, 1u));
+    mg_json_i64(&data, "keyCount", (int64_t)key_count);
+    mg_json_end_object(&data);
+    return maelys_git_cli_succeed_document(context, &data,
         apply ? "authorized_keys replaced atomically." :
                 "Plan only; add --apply to replace authorized_keys.",
         MAELYS_CLI_EXIT_OK);
 }
 
-/* The budget of a generated policy: the engine's counts, null when it refused
- * the policy, the bounds, the generator's worst cases of execution, and the
- * failure, in the shape of a validate diagnostic, or null. */
-static json_t *budget_json(const maelys_git_policy_budget_t *budget) {
-    json_t *failure = json_null();
-    if (budget->failure.kind != MAELYS_GIT_FAILURE_NONE) {
-        json_decref(failure);
-        failure = json_object();
-        if (failure && !add_failure_detail(failure, &budget->failure)) {
-            json_decref(failure);
-            failure = NULL;
-        }
+/* The budget of a generated policy, as member `budget`: the engine's counts,
+ * null when it refused the policy, the bounds, the generator's worst cases of
+ * execution, and the failure, in the shape of a validate diagnostic, or null. */
+static void budget_json(mg_json_t *data, const maelys_git_policy_budget_t *budget) {
+    mg_json_object(data, "budget");
+    mg_json_boolean(data, "compiled", budget->compiled);
+    if (budget->compiled) {
+        mg_json_i64(data, "rules", (int64_t)budget->rules);
+        mg_json_i64(data, "facts", (int64_t)budget->facts);
+        mg_json_i64(data, "predicates", (int64_t)budget->predicates);
+    } else {
+        mg_json_null(data, "rules");
+        mg_json_null(data, "facts");
+        mg_json_null(data, "predicates");
     }
-    if (!failure) return NULL;
-    json_t *counts[3] = {
-        budget->compiled ? json_integer((json_int_t)budget->rules) : json_null(),
-        budget->compiled ? json_integer((json_int_t)budget->facts) : json_null(),
-        budget->compiled ? json_integer((json_int_t)budget->predicates) : json_null(),
-    };
-    return json_pack("{s:b,s:o,s:I,s:o,s:I,s:o,s:I,s:I,s:I,s:I,s:I,s:o}",
-        "compiled", budget->compiled,
-        "rules", counts[0], "ruleLimit", (json_int_t)budget->rule_limit,
-        "facts", counts[1], "factLimit", (json_int_t)budget->fact_limit,
-        "predicates", counts[2], "predicateLimit", (json_int_t)budget->predicate_limit,
-        "derivedPerPredicate", (json_int_t)budget->derived_per_predicate,
-        "derivedPerPredicateLimit", (json_int_t)budget->derived_per_predicate_limit,
-        "derived", (json_int_t)budget->derived,
-        "derivedLimit", (json_int_t)budget->derived_limit,
-        "failure", failure);
+    mg_json_i64(data, "ruleLimit", (int64_t)budget->rule_limit);
+    mg_json_i64(data, "factLimit", (int64_t)budget->fact_limit);
+    mg_json_i64(data, "predicateLimit", (int64_t)budget->predicate_limit);
+    mg_json_i64(data, "derivedPerPredicate", (int64_t)budget->derived_per_predicate);
+    mg_json_i64(data, "derivedPerPredicateLimit", (int64_t)budget->derived_per_predicate_limit);
+    mg_json_i64(data, "derived", (int64_t)budget->derived);
+    mg_json_i64(data, "derivedLimit", (int64_t)budget->derived_limit);
+    if (budget->failure.kind == MAELYS_GIT_FAILURE_NONE) {
+        mg_json_null(data, "failure");
+    } else {
+        mg_json_object(data, "failure");
+        mg_json_failure_detail(data, &budget->failure);
+        mg_json_end_object(data);
+    }
+    mg_json_end_object(data);
 }
 
 static int command_migrate_gitolite(maelys_cli_context_t *context) {
@@ -683,26 +725,26 @@ static int command_migrate_gitolite(maelys_cli_context_t *context) {
         maelys_git_gitolite_migration_result_clear(&migration);
         return maelys_git_cli_fail_result(context, result, &error);
     }
-    json_t *unsupported = json_array();
-    for (size_t i = 0u; unsupported && i < migration.unsupported_count; ++i) {
-        if (json_array_append_new(unsupported, json_string(migration.unsupported[i])) != 0) {
-            json_decref(unsupported);
-            unsupported = NULL;
-        }
-    }
-    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:I,s:I,s:I,s:I,s:o?,s:o?,s:b}",
-        "mode", mode_name(apply), "changed", apply,
-        "input", maelys_cli_operand(context, 0u),
-        "output", maelys_cli_operand(context, 1u),
-        "groupCount", (json_int_t)migration.group_count,
-        "repositoryCount", (json_int_t)migration.repository_count,
-        "ruleCount", (json_int_t)migration.rule_count,
-        "vrefCount", (json_int_t)migration.vref_count,
-        "unsupported", unsupported,
-        "budget", budget_json(&migration.budget),
-        "canApply", migration.unsupported_count == 0u);
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_string(&data, "mode", mode_name(apply));
+    mg_json_boolean(&data, "changed", apply);
+    mg_json_string(&data, "input", maelys_cli_operand(context, 0u));
+    mg_json_string(&data, "output", maelys_cli_operand(context, 1u));
+    mg_json_i64(&data, "groupCount", (int64_t)migration.group_count);
+    mg_json_i64(&data, "repositoryCount", (int64_t)migration.repository_count);
+    mg_json_i64(&data, "ruleCount", (int64_t)migration.rule_count);
+    mg_json_i64(&data, "vrefCount", (int64_t)migration.vref_count);
+    mg_json_array(&data, "unsupported");
+    for (size_t i = 0u; i < migration.unsupported_count; ++i)
+        mg_json_string(&data, NULL, migration.unsupported[i]);
+    mg_json_end_array(&data);
+    budget_json(&data, &migration.budget);
+    mg_json_boolean(&data, "canApply", migration.unsupported_count == 0u);
+    mg_json_end_object(&data);
     maelys_git_gitolite_migration_result_clear(&migration);
-    return maelys_git_cli_succeed_json(context, data,
+    return maelys_git_cli_succeed_document(context, &data,
         apply ? "Gitolite policy migration written atomically." :
                 "Migration plan complete; review unsupported entries before apply.",
         MAELYS_CLI_EXIT_OK);
@@ -726,46 +768,52 @@ static int emit_pr_result(maelys_cli_context_t *context,
                           maelys_git_pr_check_result_t *result) {
     size_t style = 0u;
     (void)maelys_cli_option_choice(context, "style", &style);
-    json_t *conflicts = json_array();
-    for (size_t i = 0u; conflicts && i < result->conflict_paths.count; ++i) {
-        if (json_array_append_new(conflicts, json_string(result->conflict_paths.items[i])) != 0) {
-            json_decref(conflicts);
-            conflicts = NULL;
-        }
-    }
     const char *event_type = !strcmp(mode, "apply") ? "pr_merged" :
                              !strcmp(mode, "plan") ? "pr_planned" : "pr_checked";
-    json_t *data = json_pack(
-        "{s:s,s:b,s:s,s:s,s:b,s:b,s:b,s:s,s:s,s:s,s:s,s:I,s:I,s:s,s:s,s:s,s:s,s:s,s:s,"
-        "s:s,s:s,s:o?,s:o?,s:{s:s,s:s,s:s,s:s,s:s,s:s,s:b,s:s,s:s,s:s}}",
-        "mode", mode, "changed", changed,
-        "repository", maelys_cli_operand(context, 1u), "style", merge_styles[style],
-        "mergeable", result->mergeable, "empty", result->empty,
-        "crossRepository", result->cross_repository,
-        "sourceRepository", result->source_repository,
-        "sourceRef", result->source_ref,
-        "sourceOid", result->source_oid,
-        "sourceIdentity", result->source_identity,
-        "sourceObjectCount", (json_int_t)result->source_object_count,
-        "sourceObjectBytes", (json_int_t)result->source_object_bytes,
-        "targetIdentity", result->target_identity,
-        "mergeBaseOid", result->merge_base_oid, "mergeTreeOid", result->merge_tree_oid,
-        "preparedOid", result->prepared_oid,
-        "policyFingerprint", result->policy_fingerprint,
-        "prId", result->pr_id, "prHeadRef", result->pr_head_ref,
-        "prMergedRef", result->pr_merged_ref,
-        "conflicts", conflicts,
-        "changeSummary", maelys_git_cli_change_summary_json(&result->changes),
-        "event", "version", "1", "type", event_type, "prId", result->pr_id,
-            "preparedOid", result->prepared_oid,
-            "policyFingerprint", result->policy_fingerprint,
-            "targetIdentity", result->target_identity,
-            "crossRepository", result->cross_repository,
-            "sourceRepository", result->source_repository,
-            "sourceRef", result->source_ref,
-            "sourceOid", result->source_oid);
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_string(&data, "mode", mode);
+    mg_json_boolean(&data, "changed", changed);
+    mg_json_string(&data, "repository", maelys_cli_operand(context, 1u));
+    mg_json_string(&data, "style", merge_styles[style]);
+    mg_json_boolean(&data, "mergeable", result->mergeable);
+    mg_json_boolean(&data, "empty", result->empty);
+    mg_json_boolean(&data, "crossRepository", result->cross_repository);
+    mg_json_string(&data, "sourceRepository", result->source_repository);
+    mg_json_string(&data, "sourceRef", result->source_ref);
+    mg_json_string(&data, "sourceOid", result->source_oid);
+    mg_json_string(&data, "sourceIdentity", result->source_identity);
+    mg_json_i64(&data, "sourceObjectCount", (int64_t)result->source_object_count);
+    mg_json_i64(&data, "sourceObjectBytes", (int64_t)result->source_object_bytes);
+    mg_json_string(&data, "targetIdentity", result->target_identity);
+    mg_json_string(&data, "mergeBaseOid", result->merge_base_oid);
+    mg_json_string(&data, "mergeTreeOid", result->merge_tree_oid);
+    mg_json_string(&data, "preparedOid", result->prepared_oid);
+    mg_json_string(&data, "policyFingerprint", result->policy_fingerprint);
+    mg_json_string(&data, "prId", result->pr_id);
+    mg_json_string(&data, "prHeadRef", result->pr_head_ref);
+    mg_json_string(&data, "prMergedRef", result->pr_merged_ref);
+    mg_json_array(&data, "conflicts");
+    for (size_t i = 0u; i < result->conflict_paths.count; ++i)
+        mg_json_string(&data, NULL, result->conflict_paths.items[i]);
+    mg_json_end_array(&data);
+    maelys_git_cli_change_summary(&data, "changeSummary", &result->changes);
+    mg_json_object(&data, "event");
+    mg_json_string(&data, "version", "1");
+    mg_json_string(&data, "type", event_type);
+    mg_json_string(&data, "prId", result->pr_id);
+    mg_json_string(&data, "preparedOid", result->prepared_oid);
+    mg_json_string(&data, "policyFingerprint", result->policy_fingerprint);
+    mg_json_string(&data, "targetIdentity", result->target_identity);
+    mg_json_boolean(&data, "crossRepository", result->cross_repository);
+    mg_json_string(&data, "sourceRepository", result->source_repository);
+    mg_json_string(&data, "sourceRef", result->source_ref);
+    mg_json_string(&data, "sourceOid", result->source_oid);
+    mg_json_end_object(&data);
+    mg_json_end_object(&data);
     maelys_git_pr_check_result_clear(result);
-    return maelys_git_cli_succeed_json(context, data, NULL, MAELYS_CLI_EXIT_OK);
+    return maelys_git_cli_succeed_document(context, &data, NULL, MAELYS_CLI_EXIT_OK);
 }
 
 /* Builds the optional fork source from --source-repository and friends. The

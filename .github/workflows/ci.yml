@@ -34,7 +34,7 @@ jobs:
           PY
       - name: Install macOS libraries
         if: runner.os == 'macOS'
-        run: brew install cmake pkg-config jansson sqlite mbedtls openssl
+        run: brew install cmake pkg-config sqlite mbedtls openssl
       - name: Build Linux toolchain
         if: runner.os == 'Linux'
         run: docker build -t maelys-git-core-ci -f maelys-git-core/tests/Dockerfile.linux maelys-git-core/tests

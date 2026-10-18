@@ -2,9 +2,9 @@
 #define MAELYS_GIT_AGENT_INTERNAL_H
 
 #include "internal.h"
+#include "common/json_write.h"
 #include "maelys_git_agent.h"
 
-#include <jansson.h>
 #include <maelys/json.h>
 #include <sqlite3.h>
 #include <stdint.h>
@@ -51,8 +51,7 @@ typedef struct {
     maelys_json_document_t *document;
     maelys_json_view_t cursor; /* Borrowed from document. */
     size_t command_count;
-    /* Trusted compatibility tree, used only to produce deduplication v1. */
-    json_t *deduplication_commands;
+    maelys_json_value_t commands; /* The array of commands, in document. */
 } mg_agent_poll_t;
 
 struct maelys_git_agent_config {
@@ -104,19 +103,32 @@ maelys_git_result_t mg_protocol_poll_parse(const char *bytes, size_t length,
                                            mg_agent_poll_t *out,
                                            maelys_git_error_t *error);
 void mg_protocol_poll_clear(mg_agent_poll_t *poll);
+/* The deduplication form of a received command, v2: the command as the
+ * poll gave it, written again by maelys-json, printable ASCII, compact, its
+ * keys sorted by UTF-16 code units. It is what the journal compares when a
+ * message_id comes back. NULL on failure, with the error set. */
+char *mg_protocol_poll_command_form(const mg_agent_poll_t *poll, size_t index,
+                                    maelys_git_error_t *error);
+/* The same command in the same form, without the line limit: what an audit
+ * of a rejected command records, whatever its size. */
+char *mg_protocol_poll_command_text(const mg_agent_poll_t *poll, size_t index,
+                                    maelys_git_error_t *error);
+/* The v2 form of one command given as JSON in any form, a v1 form included:
+ * parsed with the protocol's limits, then written as above. */
+char *mg_protocol_deduplication_form(const char *bytes, size_t length,
+                                     maelys_git_error_t *error);
 maelys_git_result_t mg_protocol_validate_result(const char *bytes, size_t length,
                                                 const mg_agent_message_t *command,
                                                 int *out_succeeded,
                                                 maelys_git_error_t *error);
-char *mg_protocol_encode_result(const mg_agent_message_t *command,
-                                const char *status,
-                                json_t *payload,
-                                maelys_git_error_t *error);
-char *mg_protocol_encode_event(const char *agent_id,
-                               const char *message_id,
-                               const char *event_type,
-                               json_t *payload,
-                               maelys_git_error_t *error);
+/* A result line of `command`: begin writes the envelope and opens the
+ * payload, whose members the caller writes; end closes and serializes it, as
+ * one line of at most 65 536 bytes of JSON, the separator excluded. End
+ * returns NULL on failure, with MAELYS_GIT_ERR_LIMIT when the result would
+ * not fit the line, MAELYS_GIT_ERR_IO otherwise. */
+void mg_protocol_result_begin(mg_json_t *json, const mg_agent_message_t *command,
+                              const char *status);
+char *mg_protocol_result_end(mg_json_t *json, maelys_git_error_t *error);
 
 maelys_git_result_t mg_config_load(const char *path,
                                    maelys_git_agent_config_t **out,
