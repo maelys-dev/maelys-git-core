@@ -1,21 +1,54 @@
-#include <jansson.h>
 #include "agent/agent_internal.h"
+#include "test_json.h"
 #include "test_support.h"
 
-static json_t *command_object(const char *id, json_t *payload) {
-    return json_pack("{s:s,s:s,s:s,s:s,s:s,s:I,s:I,s:O}",
-        "protocol", MAELYS_GIT_AGENT_PROTOCOL, "message_id", id,
-        "agent_id", "agent-1", "type", "command", "command", "health",
-        "issued_at_ms", (json_int_t)1, "expires_at_ms", (json_int_t)2, "payload", payload);
+#include <stdarg.h>
+
+/* A growing text, for JSON documents built by hand. */
+typedef struct {
+    char *data;
+    size_t length, capacity;
+} text_t;
+
+static int append(text_t *text, const char *format, ...) MG_PRINTF(2, 3);
+
+static int append(text_t *text, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    va_list copy;
+    va_copy(copy, args);
+    int needed = vsnprintf(NULL, 0u, format, copy);
+    va_end(copy);
+    if (needed < 0) { va_end(args); return 0; }
+    if (text->length + (size_t)needed + 1u > text->capacity) {
+        size_t next = text->capacity ? text->capacity : 256u;
+        while (next < text->length + (size_t)needed + 1u) next *= 2u;
+        char *grown = realloc(text->data, next);
+        if (!grown) { va_end(args); return 0; }
+        text->data = grown;
+        text->capacity = next;
+    }
+    (void)vsnprintf(text->data + text->length, text->capacity - text->length, format, args);
+    va_end(args);
+    text->length += (size_t)needed;
+    return 1;
 }
 
-static int parse_object(json_t *root, mg_agent_message_t *message,
-                         maelys_git_result_t expected) {
-    char *bytes = json_dumps(root, JSON_COMPACT | JSON_ENSURE_ASCII);
+/* A health command `id` with `payload`, as JSON text the caller frees. */
+static char *command_object(const char *id, const char *payload) {
+    text_t text = {0};
+    return append(&text, "{\"protocol\":\"" MAELYS_GIT_AGENT_PROTOCOL "\",\"message_id\":\"%s\","
+                         "\"agent_id\":\"agent-1\",\"type\":\"command\",\"command\":\"health\","
+                         "\"issued_at_ms\":1,\"expires_at_ms\":2,\"payload\":%s}", id, payload)
+        ? text.data : NULL;
+}
+
+/* Parses `bytes` and frees it, overwritten first: the document owns its
+ * bytes and decoded views after the parse. */
+static int parse_object(char *bytes, mg_agent_message_t *message, maelys_git_result_t expected) {
     CHECK(bytes != NULL);
     maelys_git_error_t error = {0};
     maelys_git_result_t result = mg_protocol_parse(bytes, strlen(bytes), message, &error);
-    /* Prove the document owns its bytes and decoded views after parse. */
     memset(bytes, '!', strlen(bytes));
     free(bytes);
     CHECK(result == expected);
@@ -27,85 +60,37 @@ static int parse_object(json_t *root, mg_agent_message_t *message,
     return 1;
 }
 
-static int same_value(const maelys_json_document_t *document,
-                       maelys_json_value_t value, json_t *reference) {
-    switch (maelys_json_value_type(document, value)) {
-    case MAELYS_JSON_TYPE_OBJECT: {
-        size_t size;
-        CHECK(json_is_object(reference));
-        CHECK(maelys_json_object_size(document, value, &size) == MAELYS_JSON_OK);
-        CHECK(size == json_object_size(reference));
-        for (size_t i = 0u; i < size; ++i) {
-            maelys_json_view_t key;
-            maelys_json_value_t child;
-            CHECK(maelys_json_object_member_at(document, value, i, &key, &child) == MAELYS_JSON_OK);
-            CHECK(same_value(document, child, json_object_get(reference, key.data)));
-        }
-        return 1;
-    }
-    case MAELYS_JSON_TYPE_ARRAY: {
-        size_t size;
-        CHECK(json_is_array(reference));
-        CHECK(maelys_json_array_size(document, value, &size) == MAELYS_JSON_OK);
-        CHECK(size == json_array_size(reference));
-        for (size_t i = 0u; i < size; ++i) {
-            maelys_json_value_t child;
-            CHECK(maelys_json_array_get(document, value, i, &child) == MAELYS_JSON_OK);
-            CHECK(same_value(document, child, json_array_get(reference, i)));
-        }
-        return 1;
-    }
-    case MAELYS_JSON_TYPE_STRING: {
-        maelys_json_view_t view;
-        CHECK(json_is_string(reference));
-        CHECK(maelys_json_value_string(document, value, &view) == MAELYS_JSON_OK);
-        CHECK(view.size == json_string_length(reference));
-        CHECK(memcmp(view.data, json_string_value(reference), view.size) == 0);
-        return 1;
-    }
-    case MAELYS_JSON_TYPE_NUMBER: {
-        int64_t number;
-        CHECK(json_is_integer(reference));
-        CHECK(maelys_json_value_i64(document, value, &number) == MAELYS_JSON_OK);
-        CHECK(number == (int64_t)json_integer_value(reference));
-        return 1;
-    }
-    case MAELYS_JSON_TYPE_BOOLEAN: {
-        int boolean;
-        CHECK(json_is_boolean(reference));
-        CHECK(maelys_json_value_boolean(document, value, &boolean) == MAELYS_JSON_OK);
-        CHECK(boolean == json_is_true(reference));
-        return 1;
-    }
-    case MAELYS_JSON_TYPE_NULL: return json_is_null(reference);
-    default: return 0;
-    }
+/* The parsed `value` is the JSON `reference`, structurally. */
+static int same_value(const maelys_json_document_t *document, maelys_json_value_t value,
+                      const char *reference) {
+    maelys_json_document_t *expected = tj_parse(reference);
+    int same = expected && tj_value_equal(document, value, expected, maelys_json_document_root(expected));
+    tj_release(expected);
+    return same;
 }
 
 static int test_owned_documents(void) {
-    json_error_t json_error;
-    json_t *payload = json_loads(
+    static const char payload[] =
         "{\"text\":\"caf\\u00e9 \\ud800\\udc00\",\"values\":[-9223372036854775808,"
-        "9223372036854775807,0,true,false,null,{},[]]}", JSON_REJECT_DUPLICATES, &json_error);
-    CHECK(payload != NULL);
-    json_t *first = command_object("first", payload);
-    CHECK(first != NULL);
-    json_t *second = json_deep_copy(first);
-    CHECK(second != NULL);
-    CHECK(json_object_set_new(json_object_get(second, "payload"), "text", json_string("second")) == 0);
-    CHECK(json_object_set_new(second, "message_id", json_string("second")) == 0);
+        "9223372036854775807,0,true,false,null,{},[]]}";
+    static const char second_payload[] =
+        "{\"text\":\"second\",\"values\":[-9223372036854775808,"
+        "9223372036854775807,0,true,false,null,{},[]]}";
+    char *first = command_object("first", payload), *second = command_object("second", second_payload);
+    CHECK(first != NULL && second != NULL);
+    char *first_reference = strdup(first), *second_reference = strdup(second);
+    CHECK(first_reference && second_reference);
     mg_agent_message_t a, b;
     CHECK(parse_object(first, &a, MAELYS_GIT_OK));
     CHECK(parse_object(second, &b, MAELYS_GIT_OK));
     CHECK(a.document != b.document);
-    CHECK(same_value(a.document, maelys_json_document_root(a.document), first));
+    CHECK(same_value(a.document, maelys_json_document_root(a.document), first_reference));
     mg_protocol_message_clear(&a);
     CHECK(a.document == NULL && a.payload == MAELYS_JSON_VALUE_NONE);
     mg_protocol_message_clear(&a);
-    CHECK(same_value(b.document, maelys_json_document_root(b.document), second));
-    json_decref(first);
-    json_decref(second);
-    json_decref(payload);
+    CHECK(same_value(b.document, maelys_json_document_root(b.document), second_reference));
+    free(first_reference);
+    free(second_reference);
     maelys_json_view_t view;
     CHECK(maelys_json_object_get_string(b.document, b.payload, "text", &view) == MAELYS_JSON_OK);
     CHECK(!strcmp(view.data, "second"));
@@ -117,42 +102,45 @@ static int test_owned_documents(void) {
     return 1;
 }
 
+/* `depth` - 2 arrays nested around 0: with its payload object and its
+ * command object, a value `depth` containers deep. */
+static char *nested_zero(size_t depth) {
+    text_t text = {0};
+    int ok = 1;
+    for (size_t i = 2u; ok && i < depth; ++i) ok = append(&text, "[");
+    ok = ok && append(&text, "0");
+    for (size_t i = 2u; ok && i < depth; ++i) ok = append(&text, "]");
+    return ok ? text.data : NULL;
+}
+
 static int test_structure_budgets(void) {
-    json_t *payload = json_object(), *values = json_array();
-    CHECK(payload != NULL && values != NULL);
-    for (size_t i = 0u; i < 9000u; ++i)
-        CHECK(json_array_append_new(values, json_integer(0)) == 0);
-    CHECK(json_object_set_new(payload, "values", values) == 0);
-    json_t *root = command_object("many-values", payload);
+    text_t payload = {0};
+    CHECK(append(&payload, "{\"values\":["));
+    for (size_t i = 0u; i < 9000u; ++i) CHECK(append(&payload, i ? ",0" : "0"));
+    CHECK(append(&payload, "]}"));
     mg_agent_message_t message;
-    CHECK(root != NULL && parse_object(root, &message, MAELYS_GIT_OK));
-    CHECK(same_value(message.document, message.payload, payload));
+    CHECK(parse_object(command_object("many-values", payload.data), &message, MAELYS_GIT_OK));
+    CHECK(same_value(message.document, message.payload, payload.data));
     mg_protocol_message_clear(&message);
-    json_decref(root);
-    json_decref(payload);
+    free(payload.data);
 
     for (size_t depth = MG_PROTOCOL_MAX_DEPTH; depth <= MG_PROTOCOL_MAX_DEPTH + 1u; ++depth) {
-        values = json_integer(0);
-        for (size_t i = 2u; i < depth; ++i) {
-            json_t *array = json_array();
-            CHECK(array != NULL && json_array_append_new(array, values) == 0);
-            values = array;
-        }
-        payload = json_pack("{s:o}", "nested", values);
-        root = command_object("depth", payload);
-        CHECK(payload != NULL && root != NULL);
-        CHECK(parse_object(root, &message,
+        char *values = nested_zero(depth);
+        text_t nested = {0};
+        CHECK(values != NULL && append(&nested, "{\"nested\":%s}", values));
+        CHECK(parse_object(command_object("depth", nested.data), &message,
             depth == MG_PROTOCOL_MAX_DEPTH ? MAELYS_GIT_OK : MAELYS_GIT_ERR_LIMIT));
         mg_protocol_message_clear(&message);
-        json_decref(root);
-        json_decref(payload);
+        free(values);
+        free(nested.data);
     }
     return 1;
 }
 
 /* The deduplication forms of one command, as the journal stores them. v1 is
- * what Jansson wrote: keys by UTF-8 bytes, escapes in upper case. v2 is what
- * maelys-json writes: keys by UTF-16 code units, escapes in lower case. */
+ * what the build of 1016d1b wrote: keys by UTF-8 bytes, escapes in upper
+ * case. v2 is what maelys-json writes: keys by UTF-16 code units, escapes in
+ * lower case. */
 static const char k_v1[] =
     "{\"agent_id\":\"agent-1\",\"command\":\"health\",\"expires_at_ms\":2,\"issued_at_ms\":1,"
     "\"message_id\":\"durable-unicode\",\"payload\":{\"text\":\"caf\\u00E9\",\"\\uE000\":1,"
@@ -254,45 +242,45 @@ static int test_poll_reader(void) {
     bytes[strlen(empty)] = '\0';
     CHECK(mg_protocol_poll_parse(bytes, strlen(empty) + 1u, &poll, NULL) == MAELYS_GIT_ERR_PROTOCOL);
     free(bytes);
-    json_t *commands = json_array();
-    for (size_t i = 0u; i < 32u; ++i) {
-        json_t *values = json_array();
-        for (size_t j = 0u; j < 300u; ++j) CHECK(json_array_append_new(values, json_integer(0)) == 0);
-        CHECK(json_array_append_new(commands, json_pack("{s:o}", "values", values)) == 0);
-    }
-    json_t *root = json_pack("{s:s,s:o}", "cursor", "caf\xc3\xa9", "commands", commands);
-    bytes = json_dumps(root, JSON_COMPACT);
-    CHECK(bytes != NULL && strlen(bytes) < MAELYS_GIT_MAX_PROTOCOL_LINE);
+    /* 32 commands of 300 values: 9 600 values in one poll. */
+    text_t command = {0}, commands = {0};
+    CHECK(append(&command, "{\"values\":["));
+    for (size_t j = 0u; j < 300u; ++j) CHECK(append(&command, j ? ",0" : "0"));
+    CHECK(append(&command, "]}"));
+    CHECK(append(&commands, "["));
+    for (size_t i = 0u; i < 32u; ++i) CHECK(append(&commands, "%s%s", i ? "," : "", command.data));
+    text_t root = {0};
+    CHECK(append(&root, "{\"cursor\":\"caf\xc3\xa9\",\"commands\":%s]}", commands.data));
+    CHECK(root.length < MAELYS_GIT_MAX_PROTOCOL_LINE);
+    bytes = strdup(root.data);
+    CHECK(bytes != NULL);
     CHECK(mg_protocol_poll_parse(bytes, strlen(bytes), &poll, NULL) == MAELYS_GIT_OK);
     memset(bytes, '!', strlen(bytes)); free(bytes);
     CHECK(poll.command_count == 32u && !strcmp(poll.cursor.data, "caf\xc3\xa9"));
+    CHECK(append(&commands, "]"));
     maelys_json_value_t parsed_commands;
     CHECK(maelys_json_object_get(poll.document, maelys_json_document_root(poll.document),
                                  "commands", &parsed_commands) == MAELYS_JSON_OK);
-    CHECK(same_value(poll.document, parsed_commands, commands));
+    CHECK(same_value(poll.document, parsed_commands, commands.data));
     for (size_t i = 0u; i < 32u; ++i) {
         char *form = mg_protocol_poll_command_form(&poll, i, NULL);
-        char *expected = json_dumps(json_array_get(commands, i), JSON_COMPACT | JSON_SORT_KEYS);
-        CHECK(form != NULL && expected != NULL && strcmp(form, expected) == 0);
+        CHECK(form != NULL && strcmp(form, command.data) == 0);
         free(form);
-        free(expected);
     }
     mg_protocol_poll_clear(&poll);
-    CHECK(json_array_append_new(commands, json_object()) == 0);
-    bytes = json_dumps(root, JSON_COMPACT);
-    CHECK(mg_protocol_poll_parse(bytes, strlen(bytes), &poll, NULL) == MAELYS_GIT_ERR_PROTOCOL);
-    free(bytes); json_decref(root);
+    /* A 33rd command is one too many. */
+    root.length = 0u;
+    commands.data[commands.length - 1u] = '\0';
+    CHECK(append(&root, "{\"cursor\":\"caf\xc3\xa9\",\"commands\":%s,{}]}", commands.data));
+    CHECK(mg_protocol_poll_parse(root.data, root.length, &poll, NULL) == MAELYS_GIT_ERR_PROTOCOL);
+    free(command.data); free(commands.data); free(root.data);
     for (size_t depth = MG_POLL_MAX_DEPTH; depth <= MG_POLL_MAX_DEPTH + 1u; ++depth) {
-        json_t *nested = json_integer(0);
-        for (size_t j = 2u; j < depth; ++j) {
-            json_t *array = json_array();
-            CHECK(json_array_append_new(array, nested) == 0); nested = array;
-        }
-        root = json_pack("{s:s,s:[o]}", "cursor", "", "commands", nested);
-        bytes = json_dumps(root, JSON_COMPACT);
-        CHECK(mg_protocol_poll_parse(bytes, strlen(bytes), &poll, NULL) ==
+        char *nested = nested_zero(depth);
+        text_t deep = {0};
+        CHECK(nested != NULL && append(&deep, "{\"cursor\":\"\",\"commands\":[%s]}", nested));
+        CHECK(mg_protocol_poll_parse(deep.data, deep.length, &poll, NULL) ==
               (depth == MG_POLL_MAX_DEPTH ? MAELYS_GIT_OK : MAELYS_GIT_ERR_LIMIT));
-        free(bytes); json_decref(root); mg_protocol_poll_clear(&poll);
+        free(nested); free(deep.data); mg_protocol_poll_clear(&poll);
     }
     return 1;
 }
@@ -316,26 +304,23 @@ static int test_result_envelope(void) {
               (i < 3u ? MAELYS_GIT_OK : MAELYS_GIT_ERR_PROTOCOL));
         CHECK(succeeded == (i == 0u)); free(encoded);
     }
-    char *encoded = empty_result(&command, "ok");
-    json_t *root = json_loads(encoded, 0u, NULL);
-    CHECK(root != NULL); free(encoded);
+    char *root = empty_result(&command, "ok");
+    CHECK(root != NULL);
     const char *fields[] = {"protocol", "message_id", "agent_id", "type", "command", "status", "payload"};
     for (size_t i = 0u; i < sizeof(fields) / sizeof(fields[0]); ++i) {
         for (size_t variant = 0u; variant < 3u; ++variant) {
-            json_t *wrong = json_deep_copy(root);
-            if (variant == 0u) CHECK(json_object_del(wrong, fields[i]) == 0);
-            else CHECK(json_object_set_new(wrong, fields[i],
-                variant == 1u ? json_string("wrong") : json_null()) == 0);
-            encoded = json_dumps(wrong, JSON_COMPACT);
+            /* Removed, a wrong string, or null. */
+            char *encoded = tj_with(root, fields[i], variant == 0u ? NULL : variant == 1u ? "\"wrong\"" : "null");
+            CHECK(encoded != NULL);
             succeeded = 1;
             CHECK(mg_protocol_validate_result(encoded, strlen(encoded), &command, &succeeded, NULL) == MAELYS_GIT_ERR_PROTOCOL);
-            CHECK(succeeded == 0); free(encoded); json_decref(wrong);
+            CHECK(succeeded == 0); free(encoded);
         }
     }
-    CHECK(json_object_set_new(root, "extra", json_true()) == 0);
-    encoded = json_dumps(root, JSON_COMPACT);
+    char *encoded = tj_with(root, "extra", "true");
+    CHECK(encoded != NULL);
     CHECK(mg_protocol_validate_result(encoded, strlen(encoded), &command, &succeeded, NULL) == MAELYS_GIT_ERR_PROTOCOL);
-    free(encoded); json_decref(root);
+    free(encoded); free(root);
     return 1;
 }
 

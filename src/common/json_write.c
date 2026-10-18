@@ -7,10 +7,6 @@
 #define MG_JSON_UNBOUNDED_BYTES (SIZE_MAX / 2u - 1u)
 #define MG_JSON_UNBOUNDED_NODES (SIZE_MAX / 256u)
 
-/* The deepest output schema nests four containers; 32 leaves room and is
- * the protocol's depth. */
-#define MG_JSON_DATA_DEPTH 32u
-
 /* The agent protocol: 65 536 bytes of JSON on one line, the separator
  * excluded, nested 32 deep, of at most 32 768 values (a JSON text of T
  * values needs at least 2T - 1 bytes). */

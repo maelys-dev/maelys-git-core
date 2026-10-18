@@ -1,6 +1,6 @@
-#include <jansson.h>
 #include "agent/agent_internal.h"
 #include "maelys_git_receipt.h"
+#include "test_json.h"
 #include "test_support.h"
 
 #include <maelys/cli/digest.h>
@@ -13,53 +13,63 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-static char *valid_command(const char *id) {
-    json_t *payload = json_object();
-    json_t *root = json_pack("{s:s,s:s,s:s,s:s,s:s,s:I,s:I,s:o}",
-        "protocol", MAELYS_GIT_AGENT_PROTOCOL, "message_id", id,
-        "agent_id", "agent-1", "type", "command", "command", "health",
-        "issued_at_ms", (json_int_t)mg_now_ms(),
-        "expires_at_ms", (json_int_t)(mg_now_ms() + 60000), "payload", payload);
-    char *encoded = json_dumps(root, JSON_COMPACT | JSON_SORT_KEYS);
-    json_decref(root);
+/* A command of agent-1, issued now, with `payload` (JSON text); `principal`
+ * and `repository` are left out when NULL. The caller frees the result. */
+static char *command_text(const char *id, const char *command, const char *principal,
+                          const char *repository, const char *payload) {
+    maelys_json_document_t *document = tj_parse(payload);
+    mg_json_t json;
+    mg_json_begin(&json, MG_JSON_DATA);
+    mg_json_object(&json, NULL);
+    mg_json_string(&json, "protocol", MAELYS_GIT_AGENT_PROTOCOL);
+    mg_json_string(&json, "message_id", id);
+    mg_json_string(&json, "agent_id", "agent-1");
+    mg_json_string(&json, "type", "command");
+    mg_json_string(&json, "command", command);
+    if (principal) mg_json_string(&json, "principal", principal);
+    if (repository) mg_json_string(&json, "repository", repository);
+    mg_json_i64(&json, "issued_at_ms", (int64_t)mg_now_ms());
+    mg_json_i64(&json, "expires_at_ms", (int64_t)(mg_now_ms() + 60000));
+    if (document) mg_json_copy(&json, "payload", document, maelys_json_document_root(document));
+    else mg_json_string(&json, "payload", NULL);
+    mg_json_end_object(&json);
+    char *encoded = NULL;
+    (void)mg_json_finish(&json, &encoded, NULL);
+    tj_release(document);
     return encoded;
+}
+
+static char *valid_command(const char *id) {
+    return command_text(id, "health", NULL, NULL, "{}");
 }
 
 /* An authorize command of `principal` on r.git with the given payload. */
-static char *authorize_command(const char *id, const char *principal, json_t *payload) {
-    json_t *root = json_pack("{s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:I,s:I,s:o}",
-        "protocol", MAELYS_GIT_AGENT_PROTOCOL, "message_id", id,
-        "agent_id", "agent-1", "type", "command", "command", "authorize",
-        "principal", principal, "repository", "r.git",
-        "issued_at_ms", (json_int_t)mg_now_ms(),
-        "expires_at_ms", (json_int_t)(mg_now_ms() + 60000), "payload", payload);
-    char *encoded = json_dumps(root, JSON_COMPACT | JSON_SORT_KEYS);
-    json_decref(root);
-    return encoded;
+static char *authorize_command(const char *id, const char *principal, const char *payload) {
+    return command_text(id, "authorize", principal, "r.git", payload);
 }
 
-/* Runs one command and returns its result payload, after checking that the
- * result is a valid protocol result for that command. */
-static json_t *execute(maelys_git_policy_t *policy, const char *raw, const char *status,
-                       maelys_git_error_t *error) {
+/* Runs one command and returns its result, after checking that it is a
+ * valid failed protocol result for that command, with `status`. */
+static maelys_json_document_t *execute(maelys_git_policy_t *policy, const char *raw, const char *status,
+                                       maelys_git_error_t *error) {
     mg_agent_message_t message;
     if (!raw || mg_protocol_parse(raw, strlen(raw), &message, error) != MAELYS_GIT_OK) return NULL;
     char *encoded = NULL;
-    json_t *payload = NULL;
+    maelys_json_document_t *result = NULL;
     int succeeded = 1;
     if (mg_executor_execute(policy, "/usr/bin/git", "/tmp", &message, MAELYS_GIT_EXPLAIN_ON_DENIAL,
                             &encoded, error) == MAELYS_GIT_OK &&
         mg_protocol_validate_result(encoded, strlen(encoded), &message, &succeeded, error) ==
             MAELYS_GIT_OK && !succeeded) {
-        json_error_t json_error;
-        json_t *root = json_loads(encoded, 0, &json_error);
-        if (root && !strcmp(json_string_value(json_object_get(root, "status")), status))
-            payload = json_incref(json_object_get(root, "payload"));
-        json_decref(root);
+        result = tj_parse(encoded);
+        if (!tj_string_is(result, "status", status)) {
+            tj_release(result);
+            result = NULL;
+        }
     }
     free(encoded);
     mg_protocol_message_clear(&message);
-    return payload;
+    return result;
 }
 
 /* A policy failure carries its detail in the failure payload, beside the code
@@ -70,46 +80,36 @@ static int test_policy_failure_detail(void) {
     maelys_git_error_t error = {0};
     CHECK(maelys_git_policy_open(FIXTURE_DIR "/derived-overflow/manifest.json", &policy, &error) ==
           MAELYS_GIT_OK);
-    char *raw = authorize_command("m-detail", "u0", json_pack("{s:s}", "operation", "read"));
-    json_t *payload = execute(policy, raw, "failed", &error);
+    char *raw = authorize_command("m-detail", "u0", "{\"operation\":\"read\"}");
+    maelys_json_document_t *result = execute(policy, raw, "failed", &error);
     free(raw);
-    CHECK(payload != NULL);
-    CHECK(!strcmp(json_string_value(json_object_get(payload, "code")), "policy_error"));
-    CHECK(!strncmp(json_string_value(json_object_get(payload, "message")), "policy solve failed: ", 21u));
-    json_t *detail = json_object_get(payload, "detail");
-    CHECK(json_is_object(detail));
-    CHECK(!strcmp(json_string_value(json_object_get(detail, "kind")), "capacity"));
-    CHECK(!strcmp(json_string_value(json_object_get(detail, "budget")), "MAX_FACTS_PER_PRED"));
-    CHECK(!strcmp(json_string_value(json_object_get(detail, "diagnostic")), "solve_idb_overflow"));
-    json_int_t limit = json_integer_value(json_object_get(detail, "limit"));
-    CHECK(limit > 0 && json_integer_value(json_object_get(detail, "requested")) == limit + 1);
-    CHECK(json_object_get(detail, "line") == NULL);
-    json_decref(payload);
+    CHECK(result != NULL);
+    CHECK(tj_string_is(result, "payload.code", "policy_error"));
+    CHECK(!strncmp(tj_string(result, "payload.message"), "policy solve failed: ", 21u));
+    CHECK(tj_type(result, "payload.detail") == MAELYS_JSON_TYPE_OBJECT);
+    CHECK(tj_string_is(result, "payload.detail.kind", "capacity"));
+    CHECK(tj_string_is(result, "payload.detail.budget", "MAX_FACTS_PER_PRED"));
+    CHECK(tj_string_is(result, "payload.detail.diagnostic", "solve_idb_overflow"));
+    int64_t limit = tj_i64(result, "payload.detail.limit", 0);
+    CHECK(limit > 0 && tj_i64(result, "payload.detail.requested", 0) == limit + 1);
+    CHECK(!tj_has(result, "payload.detail.line"));
+    tj_release(result);
     CHECK(error.detail.kind == MAELYS_GIT_FAILURE_CAPACITY);
 
-    raw = authorize_command("m-protocol", "u0", json_pack("{s:s,s:b}", "operation", "read",
-                                                        "surprise", 1));
-    payload = execute(policy, raw, "failed", &error);
+    raw = authorize_command("m-protocol", "u0", "{\"operation\":\"read\",\"surprise\":true}");
+    result = execute(policy, raw, "failed", &error);
     free(raw);
-    CHECK(payload != NULL);
-    CHECK(!strcmp(json_string_value(json_object_get(payload, "code")), "protocol_error"));
-    CHECK(json_object_get(payload, "detail") == NULL);
-    json_decref(payload);
+    CHECK(result != NULL);
+    CHECK(tj_string_is(result, "payload.code", "protocol_error"));
+    CHECK(!tj_has(result, "payload.detail"));
+    tj_release(result);
     maelys_git_policy_close(policy);
     return 1;
 }
 
 /* A command on example.git for `principal`, with the given payload. */
-static char *command_for(const char *id, const char *command, const char *principal, json_t *payload) {
-    json_t *root = json_pack("{s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:I,s:I,s:o}",
-        "protocol", MAELYS_GIT_AGENT_PROTOCOL, "message_id", id,
-        "agent_id", "agent-1", "type", "command", "command", command,
-        "principal", principal, "repository", "example.git",
-        "issued_at_ms", (json_int_t)mg_now_ms(),
-        "expires_at_ms", (json_int_t)(mg_now_ms() + 60000), "payload", payload);
-    char *encoded = json_dumps(root, JSON_COMPACT | JSON_SORT_KEYS);
-    json_decref(root);
-    return encoded;
+static char *command_for(const char *id, const char *command, const char *principal, const char *payload) {
+    return command_text(id, command, principal, "example.git", payload);
 }
 
 /* Executes a command and returns the result line, valid for that command. */
@@ -131,13 +131,6 @@ static char *result_of(maelys_git_policy_t *policy, const char *raw, maelys_git_
     return encoded;
 }
 
-static json_t *payload_of(const char *encoded) {
-    json_t *root = encoded ? json_loads(encoded, 0, NULL) : NULL;
-    json_t *payload = json_incref(json_object_get(root, "payload"));
-    json_decref(root);
-    return payload;
-}
-
 /* Test 12: a decision result names the deciding policy and carries its
  * receipt; explain: true adds the text; explain must be a boolean. */
 static int test_authorize_receipt(void) {
@@ -145,40 +138,39 @@ static int test_authorize_receipt(void) {
     maelys_git_error_t error = {0};
     CHECK(maelys_git_policy_open(TEST_MANIFEST_FILE, &policy, &error) == MAELYS_GIT_OK);
     mg_agent_message_t message;
-    char *raw = command_for("a-1", "authorize", "mallory", json_pack("{s:s,s:s}", "operation", "push",
-                                                                    "ref", "refs/heads/main"));
+    char *raw = command_for("a-1", "authorize", "mallory",
+                            "{\"operation\":\"push\",\"ref\":\"refs/heads/main\"}");
     char *encoded = result_of(policy, raw, MAELYS_GIT_EXPLAIN_ON_DENIAL, &message);
     mg_protocol_message_clear(&message);
     free(raw);
-    json_t *payload = payload_of(encoded);
+    maelys_json_document_t *result = tj_parse(encoded);
     free(encoded);
-    CHECK(payload != NULL);
-    CHECK(json_integer_value(json_object_get(payload, "matched_policy")) == 0);
-    CHECK(json_is_object(json_object_get(payload, "receipt")));
-    CHECK(strlen(json_string_value(json_object_get(payload, "receipt_sha256"))) == 64u);
-    CHECK(json_object_get(payload, "explanation_text") == NULL);
-    json_decref(payload);
+    CHECK(tj_has(result, "payload"));
+    CHECK(tj_i64(result, "payload.matched_policy", -1) == 0);
+    CHECK(tj_type(result, "payload.receipt") == MAELYS_JSON_TYPE_OBJECT);
+    CHECK(tj_string(result, "payload.receipt_sha256") && strlen(tj_string(result, "payload.receipt_sha256")) == 64u);
+    CHECK(!tj_has(result, "payload.explanation_text"));
+    tj_release(result);
 
-    raw = command_for("a-2", "authorize", "mallory", json_pack("{s:s,s:s,s:b}", "operation", "push",
-                                                              "ref", "refs/heads/main", "explain", 1));
+    raw = command_for("a-2", "authorize", "mallory",
+                      "{\"operation\":\"push\",\"ref\":\"refs/heads/main\",\"explain\":true}");
     encoded = result_of(policy, raw, MAELYS_GIT_EXPLAIN_NEVER, &message);
     mg_protocol_message_clear(&message);
     free(raw);
-    payload = payload_of(encoded);
+    result = tj_parse(encoded);
     free(encoded);
-    CHECK(payload && !strncmp(json_string_value(json_object_get(payload, "explanation_text")),
-                              "MAELYS-DATALOG-v2\n", 18u));
-    json_decref(payload);
+    const char *text = tj_string(result, "payload.explanation_text");
+    CHECK(text && !strncmp(text, "MAELYS-DATALOG-v2\n", 18u));
+    tj_release(result);
 
-    raw = command_for("a-3", "authorize", "mallory", json_pack("{s:s,s:s}", "operation", "push",
-                                                              "explain", "yes"));
+    raw = command_for("a-3", "authorize", "mallory", "{\"operation\":\"push\",\"explain\":\"yes\"}");
     encoded = result_of(policy, raw, MAELYS_GIT_EXPLAIN_NEVER, &message);
     mg_protocol_message_clear(&message);
     free(raw);
-    payload = payload_of(encoded);
+    result = tj_parse(encoded);
     free(encoded);
-    CHECK(payload && !strcmp(json_string_value(json_object_get(payload, "code")), "protocol_error"));
-    json_decref(payload);
+    CHECK(tj_string_is(result, "payload.code", "protocol_error"));
+    tj_release(result);
     maelys_git_policy_close(policy);
     return 1;
 }
@@ -239,13 +231,12 @@ static int test_denial_audit(void) {
     maelys_git_error_t error = {0};
     CHECK(maelys_git_policy_open(TEST_MANIFEST_FILE, &policy, &error) == MAELYS_GIT_OK);
     mg_agent_message_t message;
-    char *raw = command_for("deny-1", "create_repository", "nobody", json_object());
+    char *raw = command_for("deny-1", "create_repository", "nobody", "{}");
     char *encoded = result_of(policy, raw, MAELYS_GIT_EXPLAIN_ON_DENIAL, &message);
     CHECK(encoded != NULL);
-    json_t *executor = json_loads(encoded, 0, NULL);
-    json_t *payload = json_object_get(executor, "payload");
-    CHECK(!strcmp(json_string_value(json_object_get(executor, "status")), "denied"));
-    const char *text = json_string_value(json_object_get(payload, "explanation_text"));
+    maelys_json_document_t *executor = tj_parse(encoded);
+    CHECK(tj_string_is(executor, "status", "denied"));
+    const char *text = tj_string(executor, "payload.explanation_text");
     CHECK(text && !strncmp(text, "MAELYS-DATALOG-v2\n", 18u));
 
     mg_receipt_events_t events;
@@ -253,17 +244,16 @@ static int test_denial_audit(void) {
     CHECK(events.receipt && events.text && events.published && !strcmp(events.text, text));
     char receipt_sha256[65];
     CHECK(maelys_git_receipt_verify(events.receipt, strlen(events.receipt), receipt_sha256, &error) == MAELYS_GIT_OK);
-    CHECK(!strcmp(receipt_sha256, json_string_value(json_object_get(payload, "receipt_sha256"))));
+    CHECK(tj_string_is(executor, "payload.receipt_sha256", receipt_sha256));
     /* What the agent publishes is the executor's value without the text. */
-    json_t *published = json_loads(events.published, 0, NULL);
-    json_t *expected = json_deep_copy(executor);
-    CHECK(json_object_del(json_object_get(expected, "payload"), "explanation_text") == 0);
-    CHECK(published && json_equal(published, expected));
+    char *payload = tj_extract(encoded, "payload");
+    char *without_text = tj_with(payload, "explanation_text", NULL);
+    char *expected = tj_with(encoded, "payload", without_text);
+    CHECK(expected && tj_text_equal(events.published, expected));
+    free(payload); free(without_text); free(expected);
     int succeeded = 1;
     CHECK(mg_protocol_validate_result(events.published, strlen(events.published), &message, &succeeded,
                                       &error) == MAELYS_GIT_OK && !succeeded);
-    json_decref(published);
-    json_decref(expected);
 
     char directory[] = "/tmp/maelys_git_audit_XXXXXX";
     CHECK(mkdtemp(directory) != NULL);
@@ -307,27 +297,24 @@ static int test_denial_audit(void) {
      * verification of the rewritten bytes, not by the digest comparison. */
     char *fraction = replaced(encoded, "\"version\":1}", "\"version\":1.0}");
     CHECK(fraction != NULL);
-    json_t *forged = json_loads(fraction, 0, NULL);
-    json_t *forged_receipt = json_object_get(json_object_get(forged, "payload"), "receipt");
-    json_t *one = json_real(1.0);
-    CHECK(forged_receipt && json_object_set_new(forged_receipt, "version", one) == 0);
-    char *receipt_bytes = json_dumps(forged_receipt, JSON_COMPACT | JSON_SORT_KEYS);
-    char *lexeme = replaced(receipt_bytes, "\"version\":1.0", "\"version\":1.0");
-    CHECK(lexeme != NULL);
-    maelys_cli_sha256_hex(lexeme, strlen(lexeme), digest);
-    CHECK(json_object_set_new(json_object_get(forged, "payload"), "receipt_sha256", json_string(digest)) == 0);
-    char *forged_line = json_dumps(forged, JSON_COMPACT | JSON_SORT_KEYS);
+    /* The writer copies the lexeme 1.0 as it was read. */
+    char *receipt_bytes = tj_extract(fraction, "payload.receipt");
+    CHECK(receipt_bytes && strstr(receipt_bytes, "\"version\":1.0}") != NULL);
+    maelys_cli_sha256_hex(receipt_bytes, strlen(receipt_bytes), digest);
+    char *quoted = tj_quote(digest);
+    char *forged_payload = tj_extract(fraction, "payload");
+    char *resigned = tj_with(forged_payload, "receipt_sha256", quoted);
+    char *forged_line = tj_with(fraction, "payload", resigned);
     CHECK(refused_result(&message, forged_line, "canonical"));
-    free(forged_line); free(lexeme); free(receipt_bytes); free(fraction);
-    json_decref(forged);
-    json_decref(executor);
+    free(forged_line); free(resigned); free(forged_payload); free(quoted); free(receipt_bytes); free(fraction);
+    tj_release(executor);
     free(encoded);
     free(raw);
     mg_protocol_message_clear(&message);
 
     /* authorize with explain keeps its text in the published result. */
-    raw = command_for("keep-1", "authorize", "mallory", json_pack("{s:s,s:s,s:b}", "operation", "push",
-                                                                 "ref", "refs/heads/main", "explain", 1));
+    raw = command_for("keep-1", "authorize", "mallory",
+                      "{\"operation\":\"push\",\"ref\":\"refs/heads/main\",\"explain\":true}");
     encoded = result_of(policy, raw, MAELYS_GIT_EXPLAIN_ON_DENIAL, &message);
     CHECK(mg_receipt_events_prepare(&message, encoded, &events, &error) == MAELYS_GIT_OK);
     CHECK(events.receipt && events.text && events.published == NULL);
@@ -346,7 +333,7 @@ static int test_stdio_denial(void) {
     maelys_git_policy_t *policy = NULL;
     maelys_git_error_t error = {0};
     CHECK(maelys_git_policy_open(TEST_MANIFEST_FILE, &policy, &error) == MAELYS_GIT_OK);
-    char *raw = command_for("stdio-1", "create_repository", "nobody", json_object());
+    char *raw = command_for("stdio-1", "create_repository", "nobody", "{}");
     CHECK(raw != NULL);
     size_t length = strlen(raw);
     char *line = malloc(length + 2u);
@@ -364,15 +351,16 @@ static int test_stdio_denial(void) {
     (void)fclose(input);
     (void)fclose(output);
     free(line);
-    json_t *result = json_loads(output_text, JSON_DISABLE_EOF_CHECK, NULL);
+    /* One line: the result and its separator. */
+    CHECK(output_text && output_size > 0u && output_text[output_size - 1u] == '\n' &&
+          memchr(output_text, '\n', output_size) == output_text + output_size - 1u);
+    maelys_json_document_t *result = tj_parse(output_text);
     free(output_text);
-    json_t *payload = json_object_get(result, "payload");
-    CHECK(!strcmp(json_string_value(json_object_get(result, "status")), "denied"));
-    CHECK(json_object_get(payload, "explanation_text") == NULL);
-    json_t *explanation = json_object_get(json_object_get(payload, "receipt"), "explanation");
-    CHECK(!strcmp(json_string_value(json_object_get(explanation, "kind")), "none"));
-    CHECK(!strcmp(json_string_value(json_object_get(explanation, "status")), "not_requested"));
-    json_decref(result);
+    CHECK(tj_string_is(result, "status", "denied"));
+    CHECK(!tj_has(result, "payload.explanation_text"));
+    CHECK(tj_string_is(result, "payload.receipt.explanation.kind", "none"));
+    CHECK(tj_string_is(result, "payload.receipt.explanation.status", "not_requested"));
+    tj_release(result);
     CHECK(test_remove_tree(root));
     maelys_git_policy_close(policy);
     return 1;
@@ -388,12 +376,10 @@ static int test_protocol_strictness(void) {
     mg_protocol_message_clear(&message);
     const char *duplicate = "{\"protocol\":\"maelys-git-agent/1\",\"protocol\":\"maelys-git-agent/1\"}";
     CHECK(mg_protocol_parse(duplicate, strlen(duplicate), &message, &error) == MAELYS_GIT_ERR_PROTOCOL);
-    json_error_t json_error;
-    json_t *root = json_loads(raw, 0, &json_error);
-    CHECK(root != NULL && json_object_set_new(root, "surprise", json_true()) == 0);
-    char *unknown = json_dumps(root, JSON_COMPACT);
+    char *unknown = tj_with(raw, "surprise", "true");
+    CHECK(unknown != NULL);
     CHECK(mg_protocol_parse(unknown, strlen(unknown), &message, &error) == MAELYS_GIT_ERR_PROTOCOL);
-    free(unknown); json_decref(root); free(raw);
+    free(unknown); free(raw);
     return 1;
 }
 
@@ -456,17 +442,15 @@ static int test_durable_store(void) {
     free(stored);
     char *different = valid_command("other");
     CHECK(different != NULL);
-    json_error_t json_error;
-    json_t *different_root = json_loads(different, 0, &json_error);
-    CHECK(different_root != NULL);
-    CHECK(json_object_set_new(different_root, "message_id", json_string("durable-1")) == 0);
-    CHECK(json_object_set_new(different_root, "command", json_string("health_variant")) == 0);
-    char *reused = json_dumps(different_root, JSON_COMPACT | JSON_SORT_KEYS);
+    char *renamed = tj_with(different, "message_id", "\"durable-1\"");
+    char *reused = tj_with(renamed, "command", "\"health_variant\"");
+    free(renamed);
+    CHECK(reused != NULL);
     mg_agent_message_t reused_message;
     CHECK(mg_protocol_parse(reused, strlen(reused), &reused_message, &error) == MAELYS_GIT_OK);
     CHECK(mg_store_record_command(store, &reused_message, reused, &state, &stored, &error) == MAELYS_GIT_ERR_PROTOCOL);
     mg_protocol_message_clear(&reused_message);
-    json_decref(different_root); free(different); free(reused);
+    free(different); free(reused);
     mg_protocol_message_clear(&interrupted); free(interrupted_raw);
     mg_protocol_message_clear(&message); free(raw); mg_store_close(store);
     CHECK(test_remove_tree(directory));

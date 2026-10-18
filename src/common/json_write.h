@@ -18,6 +18,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* The depth of command line data. The deepest output schema nests four
+ * containers (test_cli measures every schema against it); 32 leaves room and
+ * is the protocol's depth. */
+#define MG_JSON_DATA_DEPTH 32u
+
 typedef enum {
     /* Data of a command line reply: printable ASCII, compact, no limit but
      * the library's ceilings and the memory available. */

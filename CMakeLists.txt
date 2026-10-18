@@ -422,7 +422,7 @@ if(MAELYS_GIT_BUILD_TESTS)
     add_executable(test-maelys-git-agent tests/test_agent.c)
     target_include_directories(test-maelys-git-agent PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(test-maelys-git-agent PRIVATE
-        maelys_git_agent_core PkgConfig::JANSSON SQLite::SQLite3 maelys_git_build_flags)
+        maelys_git_agent_core SQLite::SQLite3 maelys_git_build_flags)
     target_compile_definitions(test-maelys-git-agent PRIVATE
         TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}"
         FIXTURE_DIR="${MAELYS_GIT_POLICY_FIXTURES}")
@@ -431,14 +431,14 @@ if(MAELYS_GIT_BUILD_TESTS)
     add_executable(test-maelys-git-agent-config tests/test_agent_config.c)
     target_include_directories(test-maelys-git-agent-config PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(test-maelys-git-agent-config PRIVATE
-        maelys_git_agent_core PkgConfig::JANSSON maelys_git_build_flags)
+        maelys_git_agent_core maelys_git_build_flags)
     add_test(NAME maelys-git-agent-config COMMAND test-maelys-git-agent-config)
     set_tests_properties(maelys-git-agent-config PROPERTIES TIMEOUT 15)
 
     add_executable(test-maelys-git-agent-protocol tests/test_agent_protocol.c)
     target_include_directories(test-maelys-git-agent-protocol PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(test-maelys-git-agent-protocol PRIVATE
-        maelys_git_agent_core PkgConfig::JANSSON SQLite::SQLite3 maelys_git_build_flags)
+        maelys_git_agent_core SQLite::SQLite3 maelys_git_build_flags)
     add_test(NAME maelys-git-agent-protocol COMMAND test-maelys-git-agent-protocol)
 
     add_executable(test-maelys-git-store-migration tests/test_store_migration.c)
@@ -462,7 +462,7 @@ if(MAELYS_GIT_BUILD_TESTS)
     add_executable(json-corpus-emitter tests/json_corpus_emitter.c)
     target_include_directories(json-corpus-emitter PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(json-corpus-emitter PRIVATE
-        maelys_git_agent_core PkgConfig::JANSSON maelys_git_build_flags)
+        maelys_git_agent_core maelys_git_build_flags)
     add_test(NAME maelys-git-json-corpus
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_json_corpus.py
             $<TARGET_FILE:maelys-git> $<TARGET_FILE:maelys-git-agent>
@@ -472,10 +472,11 @@ if(MAELYS_GIT_BUILD_TESTS)
     set_tests_properties(maelys-git-agent-protocol maelys-git-protocol-reader PROPERTIES TIMEOUT 60)
 
     add_executable(test-maelys-git-cli tests/test_cli.c)
+    target_include_directories(test-maelys-git-cli PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_definitions(test-maelys-git-cli PRIVATE
         FIXTURE_DIR="${MAELYS_GIT_POLICY_FIXTURES}")
     target_link_libraries(test-maelys-git-cli PRIVATE
-        maelys_git_cli_agent PkgConfig::JANSSON maelys_git_build_flags)
+        maelys_git_cli_agent maelys_git_build_flags)
     add_test(NAME maelys-git-cli COMMAND test-maelys-git-cli)
 
     add_executable(test-maelys-git-process tests/test_process.c)
@@ -489,7 +490,7 @@ if(MAELYS_GIT_BUILD_TESTS)
         target_include_directories(test-maelys-git-supervisor PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/src")
         target_link_libraries(test-maelys-git-supervisor PRIVATE
-            maelys_git_agent_http PkgConfig::JANSSON SQLite::SQLite3 maelys_git_build_flags)
+            maelys_git_agent_http SQLite::SQLite3 maelys_git_build_flags)
         target_compile_definitions(test-maelys-git-supervisor PRIVATE
             MAELYS_GIT_ENABLE_CLOUD_AGENT=1)
         add_test(NAME maelys-git-supervisor-isolation COMMAND test-maelys-git-supervisor)
