@@ -1,0 +1,6 @@
+json_t *payload = json_object_get(root, "payload");
+json_error_t error;
+json_int_t limit = 0;
+int flags = JSON_COMPACT | JSON_SORT_KEYS;
+#include <jansson.h>
+Jansson >= 2.14.1 is required.

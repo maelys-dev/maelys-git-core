@@ -18,7 +18,7 @@ git -C "$test_root/work" branch -M main
 git -C "$test_root/work" push -q -u origin main
 git --git-dir "$test_root/source/project.git" symbolic-ref HEAD refs/heads/main
 
-json_string() {
+string_member() {
   printf '%s\n' "$1" | sed -n "s/.*\"$2\":\"\([^\"]*\)\".*/\1/p"
 }
 
@@ -28,10 +28,10 @@ plan=$(
 )
 printf '%s\n' "$plan" | grep -q '"synchronizationRequired":true'
 printf '%s\n' "$plan" | grep -q '"targetExists":false'
-source_identity=$(json_string "$plan" sourceIdentity)
-target_identity=$(json_string "$plan" targetIdentity)
-source_fingerprint=$(json_string "$plan" sourceFingerprint)
-target_fingerprint=$(json_string "$plan" targetFingerprint)
+source_identity=$(string_member "$plan" sourceIdentity)
+target_identity=$(string_member "$plan" targetIdentity)
+source_fingerprint=$(string_member "$plan" sourceFingerprint)
+target_fingerprint=$(string_member "$plan" targetFingerprint)
 test "$target_identity" = absent
 
 "$maelys_git_bin" repo mirror "$test_root/source" project.git \
@@ -54,10 +54,10 @@ prune_plan=$(
 printf '%s\n' "$prune_plan" | grep -q '"synchronizationRequired":true'
 "$maelys_git_bin" repo mirror "$test_root/source" project.git \
   "$test_root/target" \
-  --expected-source-identity "$(json_string "$prune_plan" sourceIdentity)" \
-  --expected-target-identity "$(json_string "$prune_plan" targetIdentity)" \
-  --expected-source-fingerprint "$(json_string "$prune_plan" sourceFingerprint)" \
-  --expected-target-fingerprint "$(json_string "$prune_plan" targetFingerprint)" \
+  --expected-source-identity "$(string_member "$prune_plan" sourceIdentity)" \
+  --expected-target-identity "$(string_member "$prune_plan" targetIdentity)" \
+  --expected-source-fingerprint "$(string_member "$prune_plan" sourceFingerprint)" \
+  --expected-target-fingerprint "$(string_member "$prune_plan" targetFingerprint)" \
   --apply --format json --compact | grep -q '"type":"repository_mirrored"'
 if git --git-dir "$test_root/target/project.git" show-ref --verify --quiet refs/heads/stale; then
   printf 'mirror failed to prune a target-only ref\n' >&2
@@ -69,10 +69,10 @@ unchanged=$(
     "$test_root/target" --format json --compact
 )
 printf '%s\n' "$unchanged" | grep -q '"synchronizationRequired":false'
-unchanged_source_identity=$(json_string "$unchanged" sourceIdentity)
-unchanged_target_identity=$(json_string "$unchanged" targetIdentity)
-unchanged_source_fingerprint=$(json_string "$unchanged" sourceFingerprint)
-unchanged_target_fingerprint=$(json_string "$unchanged" targetFingerprint)
+unchanged_source_identity=$(string_member "$unchanged" sourceIdentity)
+unchanged_target_identity=$(string_member "$unchanged" targetIdentity)
+unchanged_source_fingerprint=$(string_member "$unchanged" sourceFingerprint)
+unchanged_target_fingerprint=$(string_member "$unchanged" targetFingerprint)
 "$maelys_git_bin" repo mirror "$test_root/source" project.git \
   "$test_root/target" \
   --expected-source-identity "$unchanged_source_identity" \
@@ -88,10 +88,10 @@ stale=$(
   "$maelys_git_bin" repo mirror "$test_root/source" project.git \
     "$test_root/target" --format json --compact
 )
-stale_source_identity=$(json_string "$stale" sourceIdentity)
-stale_target_identity=$(json_string "$stale" targetIdentity)
-stale_source_fingerprint=$(json_string "$stale" sourceFingerprint)
-stale_target_fingerprint=$(json_string "$stale" targetFingerprint)
+stale_source_identity=$(string_member "$stale" sourceIdentity)
+stale_target_identity=$(string_member "$stale" targetIdentity)
+stale_source_fingerprint=$(string_member "$stale" sourceFingerprint)
+stale_target_fingerprint=$(string_member "$stale" targetFingerprint)
 printf 'third\n' >> "$test_root/work/README.md"
 git -C "$test_root/work" commit -q -am third
 git -C "$test_root/work" push -q
@@ -112,10 +112,10 @@ fresh=$(
 )
 "$maelys_git_bin" repo mirror "$test_root/source" project.git \
   "$test_root/target" \
-  --expected-source-identity "$(json_string "$fresh" sourceIdentity)" \
-  --expected-target-identity "$(json_string "$fresh" targetIdentity)" \
-  --expected-source-fingerprint "$(json_string "$fresh" sourceFingerprint)" \
-  --expected-target-fingerprint "$(json_string "$fresh" targetFingerprint)" \
+  --expected-source-identity "$(string_member "$fresh" sourceIdentity)" \
+  --expected-target-identity "$(string_member "$fresh" targetIdentity)" \
+  --expected-source-fingerprint "$(string_member "$fresh" sourceFingerprint)" \
+  --expected-target-fingerprint "$(string_member "$fresh" targetFingerprint)" \
   --apply --format json --compact >/dev/null
 test "$(git --git-dir "$test_root/source/project.git" rev-parse refs/heads/main)" = \
      "$(git --git-dir "$test_root/target/project.git" rev-parse refs/heads/main)"

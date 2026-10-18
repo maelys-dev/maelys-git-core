@@ -12,7 +12,7 @@ ENV = {key: value for key, value in os.environ.items()
        if not key.startswith(("GIT_", "MAELYS_"))}
 ENV.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null",
            MAELYS_CLI_FORMAT="json")
-JSON_FLAGS = ["--format", "json", "--compact", "--non-interactive"]
+MACHINE_FLAGS = ["--format", "json", "--compact", "--non-interactive"]
 MAX_BYTES = 65536
 I64_MAX = 9223372036854775807
 
@@ -57,7 +57,7 @@ with tempfile.TemporaryDirectory(prefix="maelys-protocol-reader-") as temporary:
 
     for binary, stream in [(AGENT, "stdio"), (EXECUTOR, "serve")]:
         for selected in ["--summary", stream]:
-            result = run(binary, "describe", selected, *JSON_FLAGS)
+            result = run(binary, "describe", selected, *MACHINE_FLAGS)
             assert result.returncode == 0, result.stderr
 
         def exchange(data, exit_code=0):

@@ -1,0 +1,5 @@
+status = maelys_json_writer_create(MAELYS_JSON_PROFILE_RFC8259, &limits, 0u, &writer);
+const maelys_json_profile_t profile = MAELYS_JSON_PROFILE_RFC8259;
+mg_json_failure_detail(&json, &error->detail);
+#include "common/json_write.h"
+maelys_json_value_t value = MAELYS_JSON_VALUE_NONE;

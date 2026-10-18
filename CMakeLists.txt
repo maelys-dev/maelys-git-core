@@ -515,6 +515,23 @@ if(MAELYS_GIT_BUILD_TESTS)
             ${MAELYS_GIT_TEST_MANIFEST}
             $<TARGET_FILE:maelys-git-executor>)
 
+    # One JSON library: no identifier of the former one in the tree or in a
+    # program or a static library, and explicit limits on every writer.
+    set(MAELYS_GIT_JSON_GUARD_FILES
+        $<TARGET_FILE:maelys-git> $<TARGET_FILE:maelys-git-agent>
+        $<TARGET_FILE:maelys-git-executor> $<TARGET_FILE:maelys-git-shell>
+        $<TARGET_FILE:maelys-git-hook>
+        $<TARGET_FILE:maelys_git_core> $<TARGET_FILE:maelys_git_receipt>
+        $<TARGET_FILE:maelys_git_json> $<TARGET_FILE:maelys_git_agent_core>
+        $<TARGET_FILE:maelys_git_cli> $<TARGET_FILE:maelys_git_cli_admin>
+        $<TARGET_FILE:maelys_git_cli_agent>)
+    if(MAELYS_GIT_ENABLE_CLOUD_AGENT)
+        list(APPEND MAELYS_GIT_JSON_GUARD_FILES $<TARGET_FILE:maelys_git_agent_http>)
+    endif()
+    add_test(NAME maelys-git-json-single-library
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_json_single_library.py
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_NM} ${MAELYS_GIT_JSON_GUARD_FILES})
+
     add_test(NAME maelys-git-hook-integration
         COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hook_cli.sh
             $<TARGET_FILE:maelys-git-hook> $<TARGET_FILE:maelys-git-shell>)
