@@ -434,6 +434,18 @@ if(MAELYS_GIT_BUILD_TESTS)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_protocol_reader.py
             $<TARGET_FILE:maelys-git-agent> $<TARGET_FILE:maelys-git-executor>
             ${MAELYS_GIT_TEST_MANIFEST})
+
+    # The JSON every program writes, against the corpus recorded with Jansson.
+    add_executable(json-corpus-emitter tests/json_corpus_emitter.c)
+    target_include_directories(json-corpus-emitter PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(json-corpus-emitter PRIVATE
+        maelys_git_agent_core PkgConfig::JANSSON maelys_git_build_flags)
+    add_test(NAME maelys-git-json-corpus
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_json_corpus.py
+            $<TARGET_FILE:maelys-git> $<TARGET_FILE:maelys-git-agent>
+            $<TARGET_FILE:maelys-git-executor> $<TARGET_FILE:json-corpus-emitter>
+            ${MAELYS_GIT_TEST_MANIFEST}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/json-corpus/corpus.json)
     set_tests_properties(maelys-git-agent-protocol maelys-git-protocol-reader PROPERTIES TIMEOUT 60)
 
     add_executable(test-maelys-git-cli tests/test_cli.c)
