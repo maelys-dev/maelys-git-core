@@ -158,6 +158,16 @@ target_link_libraries(maelys_git_receipt
     PUBLIC maelys_git_core maelys::json maelys::cli
     PRIVATE maelys_git_build_flags)
 
+# The writer of every other JSON document: data of the command line, lines of
+# the agent protocol, deduplication forms and generated configuration.
+add_library(maelys_git_json STATIC src/common/json_write.c)
+target_include_directories(maelys_git_json
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(maelys_git_json
+    PUBLIC maelys_git_core maelys::json
+    PRIVATE maelys_git_build_flags)
+
 add_library(maelys_git_agent_core STATIC
     src/protocol/protocol.c
     src/agent/config.c
@@ -169,7 +179,7 @@ target_include_directories(maelys_git_agent_core
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(maelys_git_agent_core
-    PUBLIC maelys_git_core maelys_git_receipt maelys::json
+    PUBLIC maelys_git_core maelys_git_receipt maelys_git_json maelys::json
     PRIVATE PkgConfig::JANSSON SQLite::SQLite3 maelys_git_build_flags)
 
 # ---- command-line interface -------------------------------------------------
@@ -219,7 +229,7 @@ add_library(maelys_git_cli_admin STATIC
 target_include_directories(maelys_git_cli_admin
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${MAELYS_GIT_GENERATED_DIR}")
 target_link_libraries(maelys_git_cli_admin
-    PUBLIC maelys_git_cli
+    PUBLIC maelys_git_cli maelys_git_json
     PRIVATE PkgConfig::JANSSON maelys_git_build_flags)
 
 # Agent and executor commands.

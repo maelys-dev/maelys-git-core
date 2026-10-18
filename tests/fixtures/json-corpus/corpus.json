@@ -45,7 +45,9 @@
  },
  {
   "label": "repo/diff",
-  "baseline": "{\"schemaVersion\":2,\"contract\":\"agent-cli/v2\",\"command\":\"repo.diff\",\"ok\":true,\"exitCode\":0,\"data\":{\"pathCount\":3,\"paths\":[\"base.txt\",\"caf\\u00E9.txt\",\"ctl\\u0001.txt\"],\"repository\":\"example.git\"}}\n"
+  "baseline": "{\"schemaVersion\":2,\"contract\":\"agent-cli/v2\",\"command\":\"repo.diff\",\"ok\":true,\"exitCode\":0,\"data\":{\"pathCount\":3,\"paths\":[\"base.txt\",\"caf\\u00E9.txt\",\"ctl\\u0001.txt\"],\"repository\":\"example.git\"}}\n",
+  "case": "case",
+  "v2": "{\"schemaVersion\":2,\"contract\":\"agent-cli/v2\",\"command\":\"repo.diff\",\"ok\":true,\"exitCode\":0,\"data\":{\"pathCount\":3,\"paths\":[\"base.txt\",\"caf\\u00e9.txt\",\"ctl\\u0001.txt\"],\"repository\":\"example.git\"}}\n"
  },
  {
   "label": "repo/update-ref-plan",
@@ -57,7 +59,9 @@
  },
  {
   "label": "migrate/gitolite-plan",
-  "baseline": "{\"schemaVersion\":2,\"contract\":\"agent-cli/v2\",\"command\":\"migrate.gitolite\",\"ok\":true,\"exitCode\":0,\"data\":{\"budget\":{\"compiled\":true,\"derived\":17,\"derivedLimit\":\"@LIMIT@\",\"derivedPerPredicate\":4,\"derivedPerPredicateLimit\":\"@LIMIT@\",\"factLimit\":\"@LIMIT@\",\"facts\":3,\"failure\":null,\"predicateLimit\":\"@LIMIT@\",\"predicates\":106,\"ruleLimit\":\"@LIMIT@\",\"rules\":67},\"canApply\":false,\"changed\":false,\"groupCount\":1,\"input\":\"@ROOT@/gitolite.conf\",\"mode\":\"plan\",\"output\":\"@ROOT@/migrated\",\"repositoryCount\":1,\"ruleCount\":1,\"unsupported\":[\"line 4: empty or unsafe rule subject:     RW refs/heads/(main|dev) = caf\\u00E9\",\"line 5: unsupported refex syntax:     RW refs/heads/x\\u0001 = alice\",\"line 6: unsupported negative ref or VREF:     - VREF/NAME/ = alice\",\"line 7: unsupported refex syntax:     RW refs/heads/\\\\u00AF = alice\"],\"vrefCount\":0}}\n"
+  "baseline": "{\"schemaVersion\":2,\"contract\":\"agent-cli/v2\",\"command\":\"migrate.gitolite\",\"ok\":true,\"exitCode\":0,\"data\":{\"budget\":{\"compiled\":true,\"derived\":17,\"derivedLimit\":\"@LIMIT@\",\"derivedPerPredicate\":4,\"derivedPerPredicateLimit\":\"@LIMIT@\",\"factLimit\":\"@LIMIT@\",\"facts\":3,\"failure\":null,\"predicateLimit\":\"@LIMIT@\",\"predicates\":106,\"ruleLimit\":\"@LIMIT@\",\"rules\":67},\"canApply\":false,\"changed\":false,\"groupCount\":1,\"input\":\"@ROOT@/gitolite.conf\",\"mode\":\"plan\",\"output\":\"@ROOT@/migrated\",\"repositoryCount\":1,\"ruleCount\":1,\"unsupported\":[\"line 4: empty or unsafe rule subject:     RW refs/heads/(main|dev) = caf\\u00E9\",\"line 5: unsupported refex syntax:     RW refs/heads/x\\u0001 = alice\",\"line 6: unsupported negative ref or VREF:     - VREF/NAME/ = alice\",\"line 7: unsupported refex syntax:     RW refs/heads/\\\\u00AF = alice\"],\"vrefCount\":0}}\n",
+  "case": "case",
+  "v2": "{\"schemaVersion\":2,\"contract\":\"agent-cli/v2\",\"command\":\"migrate.gitolite\",\"ok\":true,\"exitCode\":0,\"data\":{\"budget\":{\"compiled\":true,\"derived\":17,\"derivedLimit\":\"@LIMIT@\",\"derivedPerPredicate\":4,\"derivedPerPredicateLimit\":\"@LIMIT@\",\"factLimit\":\"@LIMIT@\",\"facts\":3,\"failure\":null,\"predicateLimit\":\"@LIMIT@\",\"predicates\":106,\"ruleLimit\":\"@LIMIT@\",\"rules\":67},\"canApply\":false,\"changed\":false,\"groupCount\":1,\"input\":\"@ROOT@/gitolite.conf\",\"mode\":\"plan\",\"output\":\"@ROOT@/migrated\",\"repositoryCount\":1,\"ruleCount\":1,\"unsupported\":[\"line 4: empty or unsafe rule subject:     RW refs/heads/(main|dev) = caf\\u00e9\",\"line 5: unsupported refex syntax:     RW refs/heads/x\\u0001 = alice\",\"line 6: unsupported negative ref or VREF:     - VREF/NAME/ = alice\",\"line 7: unsupported refex syntax:     RW refs/heads/\\\\u00AF = alice\"],\"vrefCount\":0}}\n"
  },
  {
   "label": "keys/compile-plan",
