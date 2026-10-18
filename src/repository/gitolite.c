@@ -325,22 +325,32 @@ static int append_ref_prefix_rules(text_buffer_t *policy, const char *right,
     return append_once(policy, line);
 }
 
+/* With prefix_facts, a prefix the request's facts can match is a fact and
+ * *facts counts it; without, every prefix is a rule. */
 static int append_ref_grant(text_buffer_t *policy,
                             const char *right,
                             const char *subject,
                             const char *repository,
                             refex_kind_t kind,
-                            const char *ref_name) {
+                            const char *ref_name,
+                            int prefix_facts,
+                            size_t *facts) {
     if (strcmp(right, "-") && strcmp(right, "RW") && strcmp(right, "RW+")) return 0;
-    if (kind == REFEX_EXACT || prefix_is_fact(ref_name))
+    if (kind == REFEX_EXACT)
         return append_ref_access(policy, subject, repository, ref_name, right);
+    if (prefix_facts && prefix_is_fact(ref_name)) {
+        ++*facts;
+        return append_ref_access(policy, subject, repository, ref_name, right);
+    }
     return append_ref_prefix_rules(policy, right, subject, repository, ref_name);
 }
 
 /* The fixed rules. Each one that reads a policy fact indexed by a subject or
  * a repository first binds them, and the ref or the path, from the request:
  * what a derived predicate holds then depends on the request, never on the
- * size of the configuration (see execution_budget). */
+ * size of the configuration (see judge_budget). The level of the owner of a
+ * CREATOR namespace is an access level like any grant's, read by the same
+ * allow rules. */
 static int append_authorization_rules(text_buffer_t *policy) {
     if (!append_text(policy,
         "\neffective_group_member(U, G) :- user(U), group_member(U, G).\n"
@@ -349,7 +359,7 @@ static int append_authorization_rules(text_buffer_t *policy) {
         "can_create_namespace(U, N) :- user(U), repository_owner_namespace(N, U), effective_group_member(U, G), group_namespace_creator(G, N).\n"
         "effective_access(U, P, L) :- user(U), repository(P), gitolite_access(U, P, L).\n"
         "effective_access(U, P, L) :- user(U), repository(P), effective_group_member(U, G), group_gitolite_access(G, P, L).\n"
-        "owner_level(N, L) :- user(U), repository_owner_namespace(N, U), owner_namespace_access(N, L).\n"
+        "effective_access(U, P, L) :- user(U), repository(P), repository_owner_namespace(N, U), owner_namespace_access(N, L).\n"
         "push_request(R, U, P, F) :- request(R), user(U), repository(P), operation(\"push\"), ref(F).\n"
         "effective_ref_grant_push(U, P, F) :- user(U), repository(P), ref(F), gitolite_ref_access(U, P, F, \"RW\").\n"
         "effective_ref_grant_push(U, P, F) :- user(U), repository(P), ref(F), gitolite_ref_access(U, P, F, \"RW+\").\n"
@@ -403,22 +413,7 @@ static int append_authorization_rules(text_buffer_t *policy) {
         return 0;
     if (!append_text(policy,
         "allow(R) :- request(R), user(U), operation(\"create\"), repository_owner_namespace(N, U), can_create_namespace(U, N).\n"
-        "allow(R) :- request(R), user(U), operation(\"read\"), repository_owner_namespace(N, U), owner_level(N, \"R\").\n"
-        "allow(R) :- request(R), user(U), operation(\"read\"), repository_owner_namespace(N, U), owner_level(N, \"RW\").\n"
-        "allow(R) :- request(R), user(U), operation(\"read\"), repository_owner_namespace(N, U), owner_level(N, \"RW+\").\n"
-        "allow(R) :- request(R), user(U), operation(\"write\"), repository_owner_namespace(N, U), owner_level(N, \"RW\").\n"
-        "allow(R) :- request(R), user(U), operation(\"write\"), repository_owner_namespace(N, U), owner_level(N, \"RW+\").\n"
-        "allow(R) :- request(R), user(U), operation(\"push\"), update_kind(\"create\"), repository_owner_namespace(N, U), owner_level(N, \"RW\").\n"
-        "allow(R) :- request(R), user(U), operation(\"push\"), update_kind(\"create\"), repository_owner_namespace(N, U), owner_level(N, \"RW+\").\n"
-        "allow(R) :- request(R), user(U), operation(\"push\"), update_kind(\"fast_forward\"), repository_owner_namespace(N, U), owner_level(N, \"RW\").\n"
-        "allow(R) :- request(R), user(U), operation(\"push\"), update_kind(\"fast_forward\"), repository_owner_namespace(N, U), owner_level(N, \"RW+\").\n"
-        "allow(R) :- request(R), user(U), operation(\"push\"), update_kind(\"force\"), repository_owner_namespace(N, U), owner_level(N, \"RW+\").\n"
-        "allow(R) :- request(R), user(U), operation(\"push\"), update_kind(\"delete\"), repository_owner_namespace(N, U), owner_level(N, \"RW+\").\n"
-        "allow(R) :- request(R), user(U), operation(\"push\"), changed_count(_), repository_owner_namespace(N, U), owner_level(N, \"RW\").\n"
-        "allow(R) :- request(R), user(U), operation(\"push\"), changed_count(_), repository_owner_namespace(N, U), owner_level(N, \"RW+\").\n"
-        "allow(R) :- request(R), user(U), operation(\"merge\"), repository_owner_namespace(N, U), owner_level(N, \"RW\").\n"
-        "allow(R) :- request(R), user(U), operation(\"merge\"), repository_owner_namespace(N, U), owner_level(N, \"RW+\").\n"
-        "allow(R) :- request(R), user(U), operation(\"update-ref\"), repository_owner_namespace(N, U), owner_level(N, \"RW+\").\n"))
+))
         return 0;
     return append_text(policy,
         "vref_count_exceeded(U, P) :- user(U), repository(P), changed_count(C), vref_deny_count(U, P, N), C > N.\n"
@@ -552,9 +547,11 @@ static int most_groups_of_a_user(const memberships_t *graph, size_t *out) {
 }
 
 static maelys_git_result_t parse_gitolite(FILE *input,
+                                          int prefix_facts,
                                           text_buffer_t *policy,
                                           memberships_t *graph,
                                           size_t *out_lines,
+                                          size_t *out_prefix_facts,
                                           maelys_git_gitolite_migration_result_t *migration,
                                           maelys_git_error_t *error) {
     char line[4096];
@@ -747,7 +744,8 @@ static maelys_git_result_t parse_gitolite(FILE *input,
                     is_ref_rule ?
                     (repositories[i].kind == REPOSITORY_EXACT &&
                      append_ref_grant(policy, ref_permission, subject,
-                                      repositories[i].value, ref_kind, ref_name)) :
+                                      repositories[i].value, ref_kind, ref_name,
+                                      prefix_facts, out_prefix_facts)) :
                     repositories[i].kind == REPOSITORY_EXACT ?
                         append_direct_grant(policy, right, subject, repositories[i].value) :
                         append_creator_namespace_grant(policy, right, subject,
@@ -794,13 +792,13 @@ static int build_manifest(const text_buffer_t *policy, text_buffer_t *manifest) 
 
 /* What one derived predicate holds for one request, beside the groups of its
  * user, under the fixed rules: effective_access holds at most the four
- * levels; owner_level three; every other derived predicate one fact, for the
- * request's subject, repository and ref. Together, beside the groups:
- * effective_access 4, owner_level 3, can_create_namespace, push_request,
- * the three ref grants, has_ref_write, has_push_access, the three VREF
- * excesses, allow and deny, one each. */
+ * levels, whether they come from a grant or from the owner's namespace;
+ * every other derived predicate one fact, for the request's subject,
+ * repository and ref. Together, beside the groups: effective_access 4,
+ * can_create_namespace, push_request, the three ref grants, has_ref_write,
+ * has_push_access, the three VREF excesses, allow and deny, one each. */
 #define MG_GITOLITE_DERIVED_PER_PREDICATE 4u
-#define MG_GITOLITE_DERIVED_BESIDE_GROUPS 19u
+#define MG_GITOLITE_DERIVED_BESIDE_GROUPS 16u
 
 static int add_budget_refusal(maelys_git_gitolite_migration_result_t *migration, size_t line_number,
                               const maelys_git_failure_detail_t *detail, const char *subject) {
@@ -869,6 +867,23 @@ static maelys_git_result_t judge_budget(const text_buffer_t *policy, const text_
         ? MAELYS_GIT_OK : MAELYS_GIT_ERR_IO;
 }
 
+/* One encoding of the configuration, its manifest and the plan's verdict. */
+static maelys_git_result_t generate(FILE *input, int prefix_facts, text_buffer_t *policy,
+                                    text_buffer_t *manifest, size_t *out_prefix_facts,
+                                    maelys_git_gitolite_migration_result_t *migration,
+                                    maelys_git_error_t *error) {
+    memberships_t graph = {0};
+    size_t lines = 0u;
+    *out_prefix_facts = 0u;
+    maelys_git_result_t result = parse_gitolite(input, prefix_facts, policy, &graph, &lines,
+                                                out_prefix_facts, migration, error);
+    if (result == MAELYS_GIT_OK && !build_manifest(policy, manifest)) result = MAELYS_GIT_ERR_IO;
+    if (result == MAELYS_GIT_OK)
+        result = judge_budget(policy, manifest, &graph, lines, migration, error);
+    memberships_clear(&graph);
+    return result;
+}
+
 maelys_git_result_t maelys_git_migrate_gitolite(
     const char *input_path,
     const char *output_directory,
@@ -892,14 +907,34 @@ maelys_git_result_t maelys_git_migrate_gitolite(
         return MAELYS_GIT_ERR_IO;
     }
     text_buffer_t policy = {0}, manifest = {0};
-    memberships_t graph = {0};
-    size_t lines = 0u;
-    maelys_git_result_t result = parse_gitolite(input, &policy, &graph, &lines, out_result, error);
+    size_t prefix_facts = 0u;
+    maelys_git_result_t result = generate(input, 1, &policy, &manifest, &prefix_facts,
+                                          out_result, error);
+    /* A prefix as a fact spends a fact and an atom where the rule form spends
+     * rules. When those budgets refuse a policy that has prefix facts, the
+     * rule form is tried, and kept if every budget then holds: what the rule
+     * form of 62778f0 admitted stays admitted. */
+    const maelys_git_failure_detail_t *refused = &out_result->budget.failure;
+    if (result == MAELYS_GIT_OK && prefix_facts > 0u &&
+        refused->kind == MAELYS_GIT_FAILURE_CAPACITY &&
+        (!strcmp(refused->budget, "MAX_RULE_FACTS") || !strcmp(refused->budget, "MAX_POLICY_ATOMS"))) {
+        text_buffer_t rule_policy = {0}, rule_manifest = {0};
+        maelys_git_gitolite_migration_result_t rule_form;
+        memset(&rule_form, 0, sizeof(rule_form));
+        rewind(input);
+        result = generate(input, 0, &rule_policy, &rule_manifest, &prefix_facts, &rule_form, error);
+        if (result == MAELYS_GIT_OK && rule_form.budget.failure.kind == MAELYS_GIT_FAILURE_NONE) {
+            maelys_git_gitolite_migration_result_clear(out_result);
+            free(policy.data); free(manifest.data);
+            *out_result = rule_form;
+            policy = rule_policy;
+            manifest = rule_manifest;
+        } else {
+            maelys_git_gitolite_migration_result_clear(&rule_form);
+            free(rule_policy.data); free(rule_manifest.data);
+        }
+    }
     fclose(input);
-    if (result == MAELYS_GIT_OK && !build_manifest(&policy, &manifest)) result = MAELYS_GIT_ERR_IO;
-    if (result == MAELYS_GIT_OK)
-        result = judge_budget(&policy, &manifest, &graph, lines, out_result, error);
-    memberships_clear(&graph);
     if (result != MAELYS_GIT_OK) {
         free(policy.data); free(manifest.data);
         maelys_git_gitolite_migration_result_clear(out_result);

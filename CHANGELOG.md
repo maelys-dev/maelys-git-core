@@ -14,10 +14,13 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   on the configuration. A group of more than 64 members, more than 64 exact
   ref grants or VREF names, which migrated but failed every request on the
   SMALL profile, now decide. One repository holds 128 `RW` lines instead of
-  42, and 120 namespace prefixes for distinct subjects instead of 14. A
-  bare-literal deny, and a prefix of more than 63 bytes or 16 `/`, stays a
-  `starts_with` rule. Decisions are unchanged, as a differential test against
-  the encoding of 62778f0 shows.
+  42, 120 namespace prefixes for distinct subjects instead of 14, and 61
+  bare-literal denies instead of 56. A bare-literal deny, and a prefix of
+  more than 63 bytes or 16 `/`, stays a `starts_with` rule; when the fact or
+  atom budget refuses the policy, every prefix takes that rule form, so a
+  configuration the rule form admitted stays admitted. A differential test
+  against the encoding of 62778f0 shows the same decisions wherever it
+  decided, and decisions where it failed for capacity.
 - `migrate gitolite` has the engine compile the generated policy at plan
   time, and computes the worst case of its execution: the groups of one user.
   The plan adds `budget`: the engine's rule, fact and predicate counts with

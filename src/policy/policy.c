@@ -144,7 +144,6 @@ static const maelys_datalog_predicate_t k_git_domain[] = {
     {"group_gitolite_ref_access", 4u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
     {"owner_namespace_access", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
     {"effective_access", 3u, MAELYS_DATALOG_PREDICATE_IDB},
-    {"owner_level", 2u, MAELYS_DATALOG_PREDICATE_IDB},
     {"ref_grant_push", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
     {"group_ref_grant_push", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
     {"ref_grant_force", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},

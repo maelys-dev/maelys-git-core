@@ -53,6 +53,12 @@ static const char *const k_refs_principals[] = {"u1", "u33", "u65", "zed", NULL}
 static const char *const k_refs_refs[] = {"-", "refs/heads/b1", "refs/heads/b2", "refs/heads/b65", NULL};
 static const char *const k_vref_principals[] = {"alice", "zed", NULL};
 static const char *const k_r70_principals[] = {"u1", "u70", "u71", NULL};
+static const char *const k_bare_principals[] = {"alice", "mallory", "zed", NULL};
+static const char *const k_bare_refs[] = {
+    "-", "refs/heads/lock1", "refs/heads/lock56", "refs/heads/lock1-x", "refs/heads/main", NULL};
+static const char *const k_fallback_principals[] = {"r1", "r120", "w1", "w10", "zed", NULL};
+static const char *const k_fallback_refs[] = {
+    "-", "refs/heads/team1/x", "refs/heads/team10/y/z", "refs/heads/team1", "refs/heads/main", NULL};
 
 static const grid_t k_grids[] = {
     {"mixed", k_mixed_principals, k_mixed_repositories, k_mixed_ref_repositories, k_mixed_refs},
@@ -61,6 +67,11 @@ static const grid_t k_grids[] = {
     {"refs-65", k_refs_principals, k_app, k_app, k_refs_refs},
     {"vref-65", k_vref_principals, k_app, k_app, k_main_refs},
     {"r70", k_r70_principals, k_app, k_app, k_main_refs},
+    /* Accepted by 62778f0 at its bounds: 56 bare-literal denies fill its
+     * rules; 120 facts and 10 prefixes fill the new facts, and take the
+     * rule form. */
+    {"bare-56", k_bare_principals, k_app, k_app, k_bare_refs},
+    {"fallback", k_fallback_principals, k_app, k_app, k_fallback_refs},
 };
 
 static void outcome_of(maelys_git_policy_t *policy, const maelys_git_policy_request_t *request,

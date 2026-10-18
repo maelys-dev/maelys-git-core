@@ -257,9 +257,11 @@ static int test_prefix_capacity(void) {
     return 1;
 }
 
-/* A bare-literal deny stays a rule: the rules left by the fixed part. */
+/* A bare-literal deny stays a rule: the rules left by the fixed part, at
+ * least the 56 that 62778f0 admitted beside its 72 fixed rules. */
 static int test_rule_capacity(void) {
     size_t count = g_minimal.rule_limit - (g_minimal.rules);
+    CHECK(count >= 56u);
     CHECK(at_bound("bare", "repo app\n    RW = alice\n", count, bare_deny_line, "MAX_RULES"));
     char name[64];
     (void)snprintf(name, sizeof(name), "bare-%zu", count);
@@ -395,6 +397,42 @@ static int test_rule_form_prefixes(void) {
     return 1;
 }
 
+static void read_line(char *out, size_t size, size_t i) {
+    (void)snprintf(out, size, "    R = r%zu\n", i);
+}
+
+/* Prefixes as facts spend facts and atoms the rule form did not: when those
+ * budgets refuse, the rule form is generated, and kept if it holds. 120 R
+ * lines and 10 prefixes, admitted by 62778f0, stay admitted. */
+static int test_rule_form_fallback(void) {
+    char *text = configuration("repo app\n", 120u, read_line);
+    CHECK(text != NULL);
+    size_t length = strlen(text);
+    char *full = realloc(text, length + 10u * 64u);
+    CHECK(full != NULL);
+    for (size_t i = 1u; i <= 10u; ++i)
+        length += (size_t)snprintf(full + length, 64u, "    RW refs/heads/team%zu/ = w%zu\n", i, i);
+    maelys_git_gitolite_migration_result_t migration;
+    maelys_git_error_t error;
+    CHECK(migrate("fallback", full, 1, &migration, &error) == MAELYS_GIT_OK);
+    free(full);
+    CHECK(migration.unsupported_count == 0u && migration.budget.compiled);
+    CHECK(migration.budget.facts == 120u && migration.budget.rules == g_minimal.rules + 20u);
+    maelys_git_gitolite_migration_result_clear(&migration);
+    char path[512], policy_text[65536];
+    (void)snprintf(path, sizeof(path), "%s/fallback/gitolite-migrated.dl", g_root);
+    CHECK(read_text(path, policy_text, sizeof(policy_text)));
+    CHECK(strstr(policy_text, "starts_with(F, \"refs/heads/team10/\")") != NULL);
+    CHECK(strstr(policy_text, "gitolite_ref_access(\"w") == NULL);
+    maelys_git_policy_t *policy = open_migrated("fallback");
+    CHECK(policy != NULL);
+    CHECK(decision_of(policy, "w10", "app.git", "push", "refs/heads/team10/x", "create") == 1);
+    CHECK(decision_of(policy, "w10", "app.git", "push", "refs/heads/team1/x", "create") == 0);
+    CHECK(decision_of(policy, "r120", "app.git", "read", NULL, NULL) == 1);
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
 /* A ref of N prefixes: refs/heads/ then "a/" repeated, then "x". */
 static void deep_ref(char *out, size_t prefixes) {
     (void)strcpy(out, "refs/heads/");
@@ -491,7 +529,7 @@ int main(void) {
     (void)snprintf(g_root, sizeof(g_root), "%s", root);
     int ok = test_minimal_budget() && test_rw_capacity() && test_prefix_capacity() &&
              test_rule_capacity() && test_large_group() && test_groups_of_a_user() &&
-             test_rule_form_prefixes() && test_ref_prefix_facts() &&
+             test_rule_form_prefixes() && test_rule_form_fallback() && test_ref_prefix_facts() &&
              test_requests_without_new_predicates() && test_rules_restricted();
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok) puts("Gitolite policy budget: compilation, execution and capacities: ok");

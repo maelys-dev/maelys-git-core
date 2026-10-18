@@ -95,12 +95,15 @@ fin et une sous-chaine libre suppose `.*`.
 Une attribution elementaire, sujet, depot ou espace de noms, ref ou prefixe,
 niveau, coute un fait de politique et aucune regle, sauf le refus d'un
 litteral nu et les prefixes hors des faits `ref_prefix`, qui coutent une
-regle. Le socle d'autorisation genere compte 83 regles sur 128 et ne lit les
+regle. Le socle d'autorisation genere compte 67 regles sur 128 et ne lit les
 faits de politique qu'apres avoir lie le sujet, le depot et la ref de la
 requete : ce qu'un predicat derive contient depend de la requete, jamais de
 la taille de la configuration. Mesure en SMALL et en LARGE : 128 lignes `RW`
 sur un depot (128 faits), 120 prefixes `RW+` de sujets distincts (borne des
-256 atomes de politique), 45 refus nus (borne des regles).
+256 atomes de politique), 61 refus nus (borne des regles). Un prefixe en fait
+coute un fait et un atome ; quand ces budgets refusent la politique, la
+migration la regenere avec ses prefixes en regles et la garde si elle tient :
+une configuration admise par la forme en regles reste admise.
 
 Le plan fait compiler la politique par le moteur et calcule le pire cas de
 son execution : le nombre de groupes d'un utilisateur, imbrications

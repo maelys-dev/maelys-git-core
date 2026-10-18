@@ -2605,3 +2605,307 @@ r70	u71 app.git push-path Makefile	allowed=0 explicit=0 matched=- reason=no allo
 r70	u71 app.git push-path file1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
 r70	u71 app.git push-path file65	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
 r70	u71 app.git push-path img.bin	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git read	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git write	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git push-summary	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git merge -	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git update-ref -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git push - create	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git push - fast_forward	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git push - force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git push - delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git merge refs/heads/lock1	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git update-ref refs/heads/lock1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git push refs/heads/lock1 create	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git push refs/heads/lock1 fast_forward	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git push refs/heads/lock1 force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git push refs/heads/lock1 delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git merge refs/heads/lock56	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git update-ref refs/heads/lock56	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git push refs/heads/lock56 create	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git push refs/heads/lock56 fast_forward	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git push refs/heads/lock56 force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git push refs/heads/lock56 delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git merge refs/heads/lock1-x	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git update-ref refs/heads/lock1-x	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git push refs/heads/lock1-x create	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git push refs/heads/lock1-x fast_forward	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git push refs/heads/lock1-x force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git push refs/heads/lock1-x delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git merge refs/heads/main	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git update-ref refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git push refs/heads/main create	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git push refs/heads/main fast_forward	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git push refs/heads/main force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git push refs/heads/main delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	alice app.git push-path Makefile	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git push-path file1	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git push-path file65	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	alice app.git push-path img.bin	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+bare-56	mallory app.git read	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git write	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push-summary	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git merge -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git update-ref -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push - create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push - fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push - force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push - delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git merge refs/heads/lock1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git update-ref refs/heads/lock1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push refs/heads/lock1 create	allowed=0 explicit=1 matched=0 reason=explicit deny from policy maelys-git.gitolite.authorization
+bare-56	mallory app.git push refs/heads/lock1 fast_forward	allowed=0 explicit=1 matched=0 reason=explicit deny from policy maelys-git.gitolite.authorization
+bare-56	mallory app.git push refs/heads/lock1 force	allowed=0 explicit=1 matched=0 reason=explicit deny from policy maelys-git.gitolite.authorization
+bare-56	mallory app.git push refs/heads/lock1 delete	allowed=0 explicit=1 matched=0 reason=explicit deny from policy maelys-git.gitolite.authorization
+bare-56	mallory app.git merge refs/heads/lock56	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git update-ref refs/heads/lock56	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push refs/heads/lock56 create	allowed=0 explicit=1 matched=0 reason=explicit deny from policy maelys-git.gitolite.authorization
+bare-56	mallory app.git push refs/heads/lock56 fast_forward	allowed=0 explicit=1 matched=0 reason=explicit deny from policy maelys-git.gitolite.authorization
+bare-56	mallory app.git push refs/heads/lock56 force	allowed=0 explicit=1 matched=0 reason=explicit deny from policy maelys-git.gitolite.authorization
+bare-56	mallory app.git push refs/heads/lock56 delete	allowed=0 explicit=1 matched=0 reason=explicit deny from policy maelys-git.gitolite.authorization
+bare-56	mallory app.git merge refs/heads/lock1-x	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git update-ref refs/heads/lock1-x	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push refs/heads/lock1-x create	allowed=0 explicit=1 matched=0 reason=explicit deny from policy maelys-git.gitolite.authorization
+bare-56	mallory app.git push refs/heads/lock1-x fast_forward	allowed=0 explicit=1 matched=0 reason=explicit deny from policy maelys-git.gitolite.authorization
+bare-56	mallory app.git push refs/heads/lock1-x force	allowed=0 explicit=1 matched=0 reason=explicit deny from policy maelys-git.gitolite.authorization
+bare-56	mallory app.git push refs/heads/lock1-x delete	allowed=0 explicit=1 matched=0 reason=explicit deny from policy maelys-git.gitolite.authorization
+bare-56	mallory app.git merge refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git update-ref refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push refs/heads/main create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push refs/heads/main fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push refs/heads/main force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push refs/heads/main delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push-path Makefile	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push-path file1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push-path file65	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	mallory app.git push-path img.bin	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git read	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git write	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push-summary	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git merge -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git update-ref -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push - create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push - fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push - force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push - delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git merge refs/heads/lock1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git update-ref refs/heads/lock1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/lock1 create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/lock1 fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/lock1 force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/lock1 delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git merge refs/heads/lock56	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git update-ref refs/heads/lock56	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/lock56 create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/lock56 fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/lock56 force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/lock56 delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git merge refs/heads/lock1-x	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git update-ref refs/heads/lock1-x	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/lock1-x create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/lock1-x fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/lock1-x force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/lock1-x delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git merge refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git update-ref refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/main create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/main fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/main force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push refs/heads/main delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push-path Makefile	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push-path file1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push-path file65	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+bare-56	zed app.git push-path img.bin	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git read	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+fallback	r1 app.git write	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push-summary	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git merge -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git update-ref -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push - create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push - fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push - force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push - delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git merge refs/heads/team1/x	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git update-ref refs/heads/team1/x	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/team1/x create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/team1/x fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/team1/x force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/team1/x delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git merge refs/heads/team10/y/z	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git update-ref refs/heads/team10/y/z	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/team10/y/z create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/team10/y/z fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/team10/y/z force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/team10/y/z delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git merge refs/heads/team1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git update-ref refs/heads/team1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/team1 create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/team1 fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/team1 force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/team1 delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git merge refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git update-ref refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/main create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/main fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/main force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push refs/heads/main delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push-path Makefile	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push-path file1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push-path file65	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r1 app.git push-path img.bin	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git read	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+fallback	r120 app.git write	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push-summary	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git merge -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git update-ref -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push - create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push - fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push - force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push - delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git merge refs/heads/team1/x	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git update-ref refs/heads/team1/x	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/team1/x create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/team1/x fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/team1/x force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/team1/x delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git merge refs/heads/team10/y/z	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git update-ref refs/heads/team10/y/z	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/team10/y/z create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/team10/y/z fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/team10/y/z force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/team10/y/z delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git merge refs/heads/team1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git update-ref refs/heads/team1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/team1 create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/team1 fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/team1 force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/team1 delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git merge refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git update-ref refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/main create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/main fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/main force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push refs/heads/main delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push-path Makefile	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push-path file1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push-path file65	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	r120 app.git push-path img.bin	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git read	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git write	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+fallback	w1 app.git create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push-summary	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+fallback	w1 app.git merge -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git update-ref -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push - create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push - fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push - force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push - delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git merge refs/heads/team1/x	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+fallback	w1 app.git update-ref refs/heads/team1/x	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push refs/heads/team1/x create	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+fallback	w1 app.git push refs/heads/team1/x fast_forward	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+fallback	w1 app.git push refs/heads/team1/x force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push refs/heads/team1/x delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git merge refs/heads/team10/y/z	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git update-ref refs/heads/team10/y/z	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push refs/heads/team10/y/z create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push refs/heads/team10/y/z fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push refs/heads/team10/y/z force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push refs/heads/team10/y/z delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git merge refs/heads/team1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git update-ref refs/heads/team1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push refs/heads/team1 create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push refs/heads/team1 fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push refs/heads/team1 force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push refs/heads/team1 delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git merge refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git update-ref refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push refs/heads/main create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push refs/heads/main fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push refs/heads/main force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push refs/heads/main delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push-path Makefile	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push-path file1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push-path file65	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w1 app.git push-path img.bin	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git read	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git write	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+fallback	w10 app.git create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push-summary	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+fallback	w10 app.git merge -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git update-ref -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push - create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push - fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push - force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push - delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git merge refs/heads/team1/x	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git update-ref refs/heads/team1/x	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push refs/heads/team1/x create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push refs/heads/team1/x fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push refs/heads/team1/x force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push refs/heads/team1/x delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git merge refs/heads/team10/y/z	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+fallback	w10 app.git update-ref refs/heads/team10/y/z	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push refs/heads/team10/y/z create	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+fallback	w10 app.git push refs/heads/team10/y/z fast_forward	allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization
+fallback	w10 app.git push refs/heads/team10/y/z force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push refs/heads/team10/y/z delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git merge refs/heads/team1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git update-ref refs/heads/team1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push refs/heads/team1 create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push refs/heads/team1 fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push refs/heads/team1 force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push refs/heads/team1 delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git merge refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git update-ref refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push refs/heads/main create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push refs/heads/main fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push refs/heads/main force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push refs/heads/main delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push-path Makefile	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push-path file1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push-path file65	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	w10 app.git push-path img.bin	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git read	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git write	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push-summary	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git merge -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git update-ref -	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push - create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push - fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push - force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push - delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git merge refs/heads/team1/x	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git update-ref refs/heads/team1/x	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/team1/x create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/team1/x fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/team1/x force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/team1/x delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git merge refs/heads/team10/y/z	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git update-ref refs/heads/team10/y/z	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/team10/y/z create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/team10/y/z fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/team10/y/z force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/team10/y/z delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git merge refs/heads/team1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git update-ref refs/heads/team1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/team1 create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/team1 fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/team1 force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/team1 delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git merge refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git update-ref refs/heads/main	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/main create	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/main fast_forward	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/main force	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push refs/heads/main delete	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push-path Makefile	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push-path file1	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push-path file65	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
+fallback	zed app.git push-path img.bin	allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default
