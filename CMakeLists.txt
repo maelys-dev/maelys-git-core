@@ -366,6 +366,13 @@ if(MAELYS_GIT_BUILD_TESTS)
         maelys_git_core maelys::cli maelys_git_build_flags)
     add_test(NAME maelys-git-gitolite-budget COMMAND test-maelys-git-gitolite-budget)
 
+    add_executable(test-maelys-git-gitolite-differential tests/test_gitolite_differential.c)
+    target_compile_definitions(test-maelys-git-gitolite-differential PRIVATE
+        DIFFERENTIAL_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gitolite-differential")
+    target_link_libraries(test-maelys-git-gitolite-differential PRIVATE
+        maelys_git_core maelys_git_build_flags)
+    add_test(NAME maelys-git-gitolite-differential COMMAND test-maelys-git-gitolite-differential)
+
     add_executable(test-maelys-git-receipt tests/test_receipt.c)
     target_include_directories(test-maelys-git-receipt PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_definitions(test-maelys-git-receipt PRIVATE
