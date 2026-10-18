@@ -5,6 +5,20 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- maelys-datalog is pinned to 0.25.0 (was 0.23.1), which includes 0.24.0.
+  - The engine identifies a named variable by its complete name within its
+    rule; it used to identify it by its first letter, so that `Ab` and `Ac`,
+    or `G1` and `G2`, were one variable. No policy of this repository, and no
+    policy Git Core generates, uses a variable of more than one letter: their
+    decisions and receipts do not change. **A deployed policy that uses
+    longer names can change its decisions**, with the same policy source
+    fingerprint; its program fingerprint can change. A rule of more than 26
+    distinct names is refused, and `validate` reports the capacity budget
+    `MAX_RULE_VARIABLES`.
+  - `validate` reports a policy that needs more than the engine's four
+    strata as a capacity failure with the budget `MAX_STRATA`, five strata
+    requested and four allowed. A negation cycle stays a semantic failure,
+    without a budget. The bound itself does not change.
 - Jansson is no longer a dependency: maelys-json, already pinned, writes
   every JSON document the programs produce, and the build, the CI and the
   Linux image no longer install Jansson. The bytes written are those of the
