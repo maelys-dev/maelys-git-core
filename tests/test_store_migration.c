@@ -37,26 +37,47 @@ static int sql(const char *path, const char *statement) {
     return ok;
 }
 
-/* Every command row and the deduplication marker, as one string. */
+/* The whole journal as one string: the schema, then every row of every table
+ * with every column, typed, text bytes below 0x20 written \xNN, so that a
+ * NUL or a timestamp that changes shows. */
 static char *snapshot(const char *path) {
+    static const char *const queries[] = {
+        "SELECT type,name,sql FROM sqlite_master ORDER BY name",
+        "SELECT * FROM metadata ORDER BY key",
+        "SELECT * FROM commands ORDER BY id",
+        "SELECT * FROM outbox ORDER BY id",
+        "SELECT * FROM audit ORDER BY sequence",
+        "SELECT * FROM sqlite_sequence ORDER BY name",
+    };
     sqlite3 *db = NULL;
-    sqlite3_stmt *rows = NULL;
-    size_t capacity = 65536u, used = 0u;
+    size_t capacity = 1u << 20, used = 0u;
     char *out = calloc(1u, capacity);
-    if (!out || sqlite3_open(path, &db) != SQLITE_OK ||
-        sqlite3_prepare_v2(db, "SELECT 'command',id,raw_json,state,coalesce(result_json,'-') FROM commands "
-                               "UNION ALL SELECT 'metadata',key,value,'','' FROM metadata "
-                               "ORDER BY 1,2", -1, &rows, NULL) != SQLITE_OK) {
-        sqlite3_close(db);
+    int ok = out && sqlite3_open(path, &db) == SQLITE_OK;
+    for (size_t q = 0u; ok && q < sizeof(queries) / sizeof(queries[0]); ++q) {
+        sqlite3_stmt *rows = NULL;
+        ok = sqlite3_prepare_v2(db, queries[q], -1, &rows, NULL) == SQLITE_OK;
+        used += (size_t)snprintf(out + used, capacity - used, "## %s\n", queries[q]);
+        while (ok && sqlite3_step(rows) == SQLITE_ROW) {
+            for (int c = 0; c < sqlite3_column_count(rows); ++c) {
+                int type = sqlite3_column_type(rows, c);
+                const unsigned char *bytes = sqlite3_column_blob(rows, c);
+                size_t size = (size_t)sqlite3_column_bytes(rows, c);
+                used += (size_t)snprintf(out + used, capacity - used, "%c:", "?iftbn"[type]);
+                for (size_t i = 0u; type != SQLITE_NULL && i < size && used + 8u < capacity; ++i)
+                    used += (size_t)snprintf(out + used, capacity - used,
+                                             bytes[i] >= 0x20u ? "%c" : "\\x%02x", bytes[i]);
+                ok = used + 8u < capacity;
+                if (ok) used += (size_t)snprintf(out + used, capacity - used, "|");
+            }
+            if (ok) used += (size_t)snprintf(out + used, capacity - used, "\n");
+        }
+        sqlite3_finalize(rows);
+    }
+    sqlite3_close(db);
+    if (!ok) {
         free(out);
         return NULL;
     }
-    while (sqlite3_step(rows) == SQLITE_ROW)
-        for (int column = 0; column < 5; ++column)
-            used += (size_t)snprintf(out + used, capacity - used, "%s%c",
-                                     (const char *)sqlite3_column_text(rows, column), column == 4 ? '\n' : '|');
-    sqlite3_finalize(rows);
-    sqlite3_close(db);
     return out;
 }
 
@@ -153,7 +174,8 @@ static int test_atomic_failure(void) {
     CHECK(sql(path, "INSERT INTO commands(id,raw_json,command,state,created_at_ms,updated_at_ms) "
                     "VALUES('s-zzz-invalid','{not json','authorize','pending',1,1)"));
     char *before = snapshot(path);
-    CHECK(before != NULL && strstr(before, "s-running|") && strstr(before, "|running|"));
+    CHECK(before != NULL && strstr(before, "t:s-running|") && strstr(before, "|t:running|"));
+    CHECK(strstr(before, "## SELECT * FROM outbox") && strstr(before, "## SELECT * FROM audit"));
     maelys_git_agent_store_t *store = NULL;
     maelys_git_error_t error = {0};
     CHECK(mg_store_open(path, &store, &error) == MAELYS_GIT_ERR_PROTOCOL && store == NULL);
@@ -166,21 +188,42 @@ static int test_atomic_failure(void) {
     return 1;
 }
 
-/* Test 6: an unknown deduplication form refuses the opening, unchanged. */
+/* Test 6: an unknown deduplication form refuses the opening, unchanged. The
+ * marker is compared on its exact bytes: a value that starts with v2, holds a
+ * NUL, or is not text is unknown too. */
 static int test_unknown_form(void) {
-    const char *path = copy_fixture("unknown.sqlite3");
-    CHECK(path != NULL);
-    CHECK(sql(path, "INSERT INTO metadata(key,value) VALUES('dedup_form','v3')"));
-    char *before = snapshot(path);
-    CHECK(before != NULL);
-    maelys_git_agent_store_t *store = NULL;
-    maelys_git_error_t error = {0};
-    CHECK(mg_store_open(path, &store, &error) == MAELYS_GIT_ERR_PROTOCOL && store == NULL);
-    CHECK(strstr(error.message, "unknown deduplication form: v3") != NULL);
-    char *after = snapshot(path);
-    CHECK(after != NULL && !strcmp(before, after));
-    free(before);
-    free(after);
+    static const struct {
+        const char *value, *shown;
+    } forms[] = {
+        {"'v3'", "v3"},
+        {"'v2'||char(0)||'v3'", "v2\\x00v3"},
+        {"'v2 '", "v2 "},
+        {"'v2x'", "v2x"},
+        {"''", ""},
+        {"CAST('v2' AS BLOB)", "v2"},
+    };
+    for (size_t i = 0u; i < sizeof(forms) / sizeof(forms[0]); ++i) {
+        char name[32], statement[256], expected[64];
+        (void)snprintf(name, sizeof(name), "unknown-%zu.sqlite3", i);
+        const char *path = copy_fixture(name);
+        CHECK(path != NULL);
+        (void)snprintf(statement, sizeof(statement),
+                       "INSERT INTO metadata(key,value) VALUES('dedup_form',%s)", forms[i].value);
+        CHECK(sql(path, statement));
+        char *before = snapshot(path);
+        CHECK(before != NULL && strstr(before, "|t:running|"));
+        maelys_git_agent_store_t *store = NULL;
+        maelys_git_error_t error = {0};
+        CHECK(mg_store_open(path, &store, &error) == MAELYS_GIT_ERR_PROTOCOL && store == NULL);
+        (void)snprintf(expected, sizeof(expected), "unknown deduplication form: %s", forms[i].shown);
+        if (!strstr(error.message, expected)) (void)fprintf(stderr, "%s: %s\n", forms[i].value, error.message);
+        CHECK(strstr(error.message, expected) != NULL);
+        /* Nothing converted, nothing recovered: the journal is as it was. */
+        char *after = snapshot(path);
+        CHECK(after != NULL && !strcmp(before, after));
+        free(before);
+        free(after);
+    }
     return 1;
 }
 

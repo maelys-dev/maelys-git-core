@@ -147,7 +147,9 @@ les deux ordres divergent (par exemple U+E000 et U+10000).
 Le journal enregistre sa forme dans `metadata('dedup_form')`. À l'ouverture,
 dans une seule transaction `BEGIN IMMEDIATE` :
 
-1. une forme inconnue fait refuser l'ouverture ;
+1. une forme inconnue fait refuser l'ouverture ; le marqueur est comparé
+   sur ses octets exacts, si bien qu'un `v2` suivi d'autres octets, NUL
+   compris, ou qui n'est pas du texte, est inconnu ;
 2. un journal sans marqueur est en v1 : chaque `raw_json` est relu et
    réécrit en v2 ; une ligne qui ne se convertit pas fait refuser l'ouverture
    en nommant sa commande ;

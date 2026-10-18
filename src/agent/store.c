@@ -70,23 +70,37 @@ static maelys_git_result_t open_journal(sqlite3 *db, maelys_git_error_t *error) 
     if (!execute(db, "BEGIN IMMEDIATE")) return database_error(db, error, "begin journal opening");
     maelys_git_result_t result = MAELYS_GIT_OK;
     sqlite3_stmt *statement = NULL;
-    char form[32] = "";
+    /* The marker is compared on its exact bytes, as SQLite holds them: a value
+     * that only starts with the current form, or holds a NUL, is unknown. */
+    int recorded = 0, current = 0;
+    char shown[64] = "";
     int commands = 0;
     if (sqlite3_prepare_v2(db, "SELECT value FROM metadata WHERE key='dedup_form'", -1, &statement, NULL) != SQLITE_OK) {
         result = database_error(db, error, "read deduplication form");
     } else {
-        if (sqlite3_step(statement) == SQLITE_ROW) {
-            const unsigned char *value = sqlite3_column_text(statement, 0);
-            (void)snprintf(form, sizeof(form), "%s", value ? (const char *)value : "?");
+        int step = sqlite3_step(statement);
+        if (step == SQLITE_ROW) {
+            recorded = 1;
+            int text = sqlite3_column_type(statement, 0) == SQLITE_TEXT;
+            const unsigned char *bytes = sqlite3_column_blob(statement, 0);
+            size_t size = (size_t)sqlite3_column_bytes(statement, 0);
+            current = text && size == sizeof(DEDUPLICATION_FORM) - 1u &&
+                      memcmp(bytes, DEDUPLICATION_FORM, size) == 0;
+            /* The unknown value, its unprintable bytes written \xNN, shortened. */
+            for (size_t i = 0u, used = 0u; !current && i < size && used + 5u < sizeof(shown); ++i)
+                used += (size_t)snprintf(shown + used, sizeof(shown) - used,
+                                         bytes[i] >= 0x20u && bytes[i] < 0x7fu ? "%c" : "\\x%02x", bytes[i]);
+        } else if (step != SQLITE_DONE) {
+            result = database_error(db, error, "read deduplication form");
         }
         sqlite3_finalize(statement);
     }
-    if (result == MAELYS_GIT_OK && form[0] && strcmp(form, DEDUPLICATION_FORM) != 0) {
+    if (result == MAELYS_GIT_OK && recorded && !current) {
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
-                     "agent journal has an unknown deduplication form: %s", form);
+                     "agent journal has an unknown deduplication form: %s", shown);
         result = MAELYS_GIT_ERR_PROTOCOL;
     }
-    if (result == MAELYS_GIT_OK && !form[0]) {
+    if (result == MAELYS_GIT_OK && !recorded) {
         if (sqlite3_prepare_v2(db, "SELECT count(*) FROM commands", -1, &statement, NULL) != SQLITE_OK ||
             sqlite3_step(statement) != SQLITE_ROW)
             result = database_error(db, error, "count journal commands");
