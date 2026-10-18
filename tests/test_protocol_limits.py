@@ -20,12 +20,17 @@ LINE = 65536
 ENV = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
 ENV.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null",
            GIT_AUTHOR_NAME="Limits", GIT_AUTHOR_EMAIL="limits@example.invalid",
-           GIT_COMMITTER_NAME="Limits", GIT_COMMITTER_EMAIL="limits@example.invalid")
+           GIT_COMMITTER_NAME="Limits", GIT_COMMITTER_EMAIL="limits@example.invalid",
+           # No automatic maintenance: run in the background after the commit
+           # of a thousand files, it repacks the repository the clone reads.
+           GIT_CONFIG_COUNT="2", GIT_CONFIG_KEY_0="gc.auto", GIT_CONFIG_VALUE_0="0",
+           GIT_CONFIG_KEY_1="maintenance.auto", GIT_CONFIG_VALUE_1="false")
 
 
 def git(*args):
-    return subprocess.run(["git", *map(str, args)], check=True, capture_output=True,
-                          env=ENV, timeout=120).stdout.decode().strip()
+    result = subprocess.run(["git", *map(str, args)], capture_output=True, env=ENV, timeout=120)
+    assert result.returncode == 0, (args, result.returncode, result.stderr.decode())
+    return result.stdout.decode().strip()
 
 
 def command(identifier, name, principal, payload):
