@@ -366,6 +366,77 @@ static int test_stdio_denial(void) {
     return 1;
 }
 
+/* Runs `command` in a shell with Git's configuration isolated; its first
+ * output line, without the newline, goes to `out` when it is given. */
+static int git_shell(const char *command, char *out, size_t size) {
+    char line[4096];
+    (void)snprintf(line, sizeof(line), "GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null %s", command);
+    FILE *pipe = popen(line, "r");
+    if (!pipe) return 0;
+    if (out && size) {
+        out[0] = '\0';
+        if (fgets(out, (int)size, pipe)) out[strcspn(out, "\n")] = '\0';
+    }
+    return pclose(pipe) == 0;
+}
+
+/* Test 11, through the executor and the reader: a diff whose path list
+ * exceeds the line is answered by a failure correlated with its command,
+ * which the result reader accepts, on one line within the limit. */
+static int test_diff_beyond_line(void) {
+    char root[] = "/tmp/maelys_git_diff_line_XXXXXX";
+    CHECK(mkdtemp(root) != NULL);
+    char command[1024], base[64], head[64];
+    (void)snprintf(command, sizeof(command), "git init -q --bare %s/example.git", root);
+    CHECK(git_shell(command, NULL, 0u));
+    (void)snprintf(command, sizeof(command), "git --git-dir=%s/example.git fast-import --quiet", root);
+    FILE *import = popen(command, "w");
+    CHECK(import != NULL);
+    (void)fprintf(import, "blob\nmark :1\ndata 2\nx\n\n"
+                          "commit refs/heads/main\ncommitter T <t@example.invalid> 1767225600 +0000\n"
+                          "data 4\nbase\nM 100644 :1 base.txt\n\n"
+                          "commit refs/heads/main\ncommitter T <t@example.invalid> 1767225601 +0000\n"
+                          "data 4\nmany\n");
+    for (int i = 0; i < 1000; ++i)
+        (void)fprintf(import, "M 100644 :1 %0120d/%04d.txt\n", 0, i);
+    (void)fputc('\n', import);
+    CHECK(pclose(import) == 0);
+    (void)snprintf(command, sizeof(command), "git --git-dir=%s/example.git rev-parse main~1", root);
+    CHECK(git_shell(command, base, sizeof(base)) && strlen(base) == 40u);
+    (void)snprintf(command, sizeof(command), "git --git-dir=%s/example.git rev-parse main", root);
+    CHECK(git_shell(command, head, sizeof(head)) && strlen(head) == 40u);
+
+    char payload[256];
+    (void)snprintf(payload, sizeof(payload), "{\"old_oid\":\"%s\",\"new_oid\":\"%s\"}", base, head);
+    char *raw = command_for("diff-big", "diff", "alice", payload);
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_error_t error = {0};
+    CHECK(raw && maelys_git_policy_open(TEST_MANIFEST_FILE, &policy, &error) == MAELYS_GIT_OK);
+    mg_agent_message_t message;
+    CHECK(mg_protocol_parse(raw, strlen(raw), &message, &error) == MAELYS_GIT_OK);
+    char *encoded = NULL;
+    CHECK(mg_executor_execute(policy, "/usr/bin/git", root, &message, MAELYS_GIT_EXPLAIN_ON_DENIAL,
+                              &encoded, &error) == MAELYS_GIT_OK);
+    /* Integrity: one line within the limit, accepted by the reader of results,
+     * which checks its correlation with the command. */
+    CHECK(encoded && strlen(encoded) <= MAELYS_GIT_MAX_PROTOCOL_LINE && !strchr(encoded, '\n'));
+    int succeeded = 1;
+    CHECK(mg_protocol_validate_result(encoded, strlen(encoded), &message, &succeeded, &error) == MAELYS_GIT_OK);
+    CHECK(succeeded == 0);
+    maelys_json_document_t *result = tj_parse(encoded);
+    CHECK(tj_string_is(result, "message_id", "diff-big") && tj_string_is(result, "agent_id", "agent-1") &&
+          tj_string_is(result, "command", "diff") && tj_string_is(result, "status", "failed"));
+    CHECK(tj_string_is(result, "payload.code", "limit_exceeded"));
+    CHECK(strstr(tj_string(result, "payload.message"), "65536-byte protocol line") != NULL);
+    tj_release(result);
+    free(encoded);
+    mg_protocol_message_clear(&message);
+    free(raw);
+    maelys_git_policy_close(policy);
+    CHECK(test_remove_tree(root));
+    return 1;
+}
+
 static int test_protocol_strictness(void) {
     char *raw = valid_command("m1");
     CHECK(raw != NULL);
@@ -502,7 +573,8 @@ int main(void) {
     passed += test_authorize_receipt();
     passed += test_denial_audit();
     passed += test_stdio_denial();
-    if (passed != 8) return 1;
+    passed += test_diff_beyond_line();
+    if (passed != 9) return 1;
     (void)printf("ok: %d agent test groups passed\n", passed);
     return 0;
 }
