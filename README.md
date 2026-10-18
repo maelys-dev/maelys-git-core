@@ -81,6 +81,7 @@ Every request injects these runtime facts when the associated value exists:
 
 ```text
 request/1 user/1 repository/1 operation/1 ref/1 path/1 old_path/1
+ref_prefix/1 ref_prefix_count/1
 repository_segment/2 repository_depth/1 repository_leaf/1
 repository_owner_namespace/2
 ssh_key/1 remote_address/1 ref_kind/1 update_kind/1 change_kind/1
@@ -90,6 +91,14 @@ changed_count/1 added_count/1
 modified_count/1 deleted_count/1 renamed_count/1 max_new_blob_size/1
 has_binary/1
 ```
+
+For a valid ref, `ref_prefix/1` holds each of its first sixteen prefixes
+that end with `/`, shortest first and never the ref itself, and
+`ref_prefix_count/1` the number of such prefixes, untruncated:
+`refs/heads/a/b` gives `refs/`, `refs/heads/`, `refs/heads/a/` and 3. A
+prefix is then matched as a fact, `ref_prefix("refs/heads/release/")`, with no
+filter rule. A policy that tests a deeper prefix never sees it and can close
+on the count, `deny(R) :- request(R), ref_prefix_count(N), N > 16.`
 
 The domain also declares policy facts for direct and group grants, admins,
 protected refs and protected paths. Policies derive `allow(Request)` and/or

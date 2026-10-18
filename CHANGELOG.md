@@ -5,6 +5,9 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- Every request with a valid ref carries `ref_prefix/1`, its first sixteen
+  prefixes ending with `/`, and `ref_prefix_count/1`, their untruncated count.
+  A receipt's `stats.edbFacts` grows by that many facts.
 - Authorization receipts. `maelys_git_policy_authorize_receipt` decides
   exactly as `maelys_git_policy_authorize` and fills a
   `maelys_git_receipt_t`: the decision (`allow`, `deny_explicit`,

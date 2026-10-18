@@ -40,6 +40,8 @@ struct maelys_git_policy {
     size_t path_limit;
     request_bound_t exceeded; /* the bound that refused the last request facts */
     char repository_copy[MAELYS_GIT_MAX_REPOSITORY];
+    /* The first '/'-terminated prefixes of the request's ref, one string each. */
+    char ref_prefixes[MG_REF_PREFIX_FACTS][MAELYS_GIT_MAX_REF];
     char fingerprint[MAELYS_DATALOG_PUBLIC_FINGERPRINT_BYTES];
     /* Allocated by the first explanation, kept until close: the storage of a
      * prepared explanation, and the document rendered from it. */
@@ -62,6 +64,8 @@ static const maelys_datalog_predicate_t k_git_domain[] = {
     {"repository_owner_namespace", 2u, MAELYS_DATALOG_PREDICATE_EDB},
     {"operation", 1u, MAELYS_DATALOG_PREDICATE_EDB},
     {"ref", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"ref_prefix", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"ref_prefix_count", 1u, MAELYS_DATALOG_PREDICATE_EDB},
     {"path", 1u, MAELYS_DATALOG_PREDICATE_EDB},
     {"old_path", 1u, MAELYS_DATALOG_PREDICATE_EDB},
     {"ref_kind", 1u, MAELYS_DATALOG_PREDICATE_EDB},
@@ -363,6 +367,12 @@ maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
         result = read_limit(MAELYS_DATALOG_LIMIT_MAX_EDB_FACTS, &policy->fact_capacity, error);
     if (result == MAELYS_GIT_OK)
         result = read_limit(MAELYS_DATALOG_LIMIT_MAX_FACTS_PER_PRED, &policy->path_limit, error);
+    if (result == MAELYS_GIT_OK && policy->path_limit < MG_REF_PREFIX_FACTS) {
+        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                     "the engine holds %zu facts per predicate, fewer than the %u ref prefixes",
+                     policy->path_limit, MG_REF_PREFIX_FACTS);
+        result = MAELYS_GIT_ERR_POLICY;
+    }
     if (result == MAELYS_GIT_OK) {
         policy->entries = calloc(count, sizeof(*policy->entries));
         policy->facts = calloc(policy->fact_capacity, sizeof(*policy->facts));
@@ -494,6 +504,27 @@ static int push_repository_structure(maelys_git_policy_t *policy, const char *re
     return ok;
 }
 
+/* ref_prefix/1 for each of the first MG_REF_PREFIX_FACTS prefixes of a valid
+ * ref that end with '/', shortest first, never the ref itself, and
+ * ref_prefix_count/1, the number of such prefixes, untruncated. A policy that
+ * tests a deeper prefix can close on that count. The prefixes are copied into
+ * the handle, which outlives the solve. */
+static int push_ref_structure(maelys_git_policy_t *policy, const char *ref) {
+    if (!ref || !maelys_git_ref_name_is_valid(ref)) return 1;
+    size_t count = 0u;
+    for (size_t i = 0u; ref[i]; ++i) {
+        if (ref[i] != '/') continue;
+        if (count < MG_REF_PREFIX_FACTS) {
+            char *prefix = policy->ref_prefixes[count];
+            memcpy(prefix, ref, i + 1u);
+            prefix[i + 1u] = '\0';
+            if (!push_symbol(policy, "ref_prefix", prefix)) return 0;
+        }
+        ++count;
+    }
+    return push_integer(policy, "ref_prefix_count", count);
+}
+
 /* The single builder of request facts. They borrow the request's strings and
  * stay valid, in the handle, until the next request. On failure the handle
  * says which bound refused them. */
@@ -508,6 +539,7 @@ static int build_request_facts(maelys_git_policy_t *policy,
              push_repository_structure(policy, request->repository) &&
              push_symbol(policy, "operation", request->operation) &&
              push_symbol(policy, "ref", request->ref_name) &&
+             push_ref_structure(policy, request->ref_name) &&
              push_symbol(policy, "ref_kind", request->ref_kind) &&
              push_symbol(policy, "update_kind", request->update_kind) &&
              push_symbol(policy, "change_kind", request->change_kind) &&
