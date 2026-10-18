@@ -2,6 +2,7 @@
 #define MAELYS_GIT_AGENT_INTERNAL_H
 
 #include "internal.h"
+#include "common/json_write.h"
 #include "maelys_git_agent.h"
 
 #include <jansson.h>
@@ -108,15 +109,14 @@ maelys_git_result_t mg_protocol_validate_result(const char *bytes, size_t length
                                                 const mg_agent_message_t *command,
                                                 int *out_succeeded,
                                                 maelys_git_error_t *error);
-char *mg_protocol_encode_result(const mg_agent_message_t *command,
-                                const char *status,
-                                json_t *payload,
-                                maelys_git_error_t *error);
-char *mg_protocol_encode_event(const char *agent_id,
-                               const char *message_id,
-                               const char *event_type,
-                               json_t *payload,
-                               maelys_git_error_t *error);
+/* A result line of `command`: begin writes the envelope and opens the
+ * payload, whose members the caller writes; end closes and serializes it, as
+ * one line of at most 65 536 bytes of JSON, the separator excluded. End
+ * returns NULL on failure, with MAELYS_GIT_ERR_LIMIT when the result would
+ * not fit the line, MAELYS_GIT_ERR_IO otherwise. */
+void mg_protocol_result_begin(mg_json_t *json, const mg_agent_message_t *command,
+                              const char *status);
+char *mg_protocol_result_end(mg_json_t *json, maelys_git_error_t *error);
 
 maelys_git_result_t mg_config_load(const char *path,
                                    maelys_git_agent_config_t **out,

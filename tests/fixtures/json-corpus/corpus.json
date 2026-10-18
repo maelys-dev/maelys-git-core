@@ -113,7 +113,9 @@
  },
  {
   "label": "executor/04",
-  "baseline": "{\"agent_id\":\"corpus-agent\",\"command\":\"diff\",\"message_id\":\"diff-1\",\"payload\":{\"paths\":[\"base.txt\",\"caf\\u00E9.txt\",\"ctl\\u0001.txt\"]},\"protocol\":\"maelys-git-agent/1\",\"status\":\"ok\",\"type\":\"result\"}"
+  "baseline": "{\"agent_id\":\"corpus-agent\",\"command\":\"diff\",\"message_id\":\"diff-1\",\"payload\":{\"paths\":[\"base.txt\",\"caf\\u00E9.txt\",\"ctl\\u0001.txt\"]},\"protocol\":\"maelys-git-agent/1\",\"status\":\"ok\",\"type\":\"result\"}",
+  "case": "case",
+  "v2": "{\"agent_id\":\"corpus-agent\",\"command\":\"diff\",\"message_id\":\"diff-1\",\"payload\":{\"paths\":[\"base.txt\",\"caf\\u00e9.txt\",\"ctl\\u0001.txt\"]},\"protocol\":\"maelys-git-agent/1\",\"status\":\"ok\",\"type\":\"result\"}"
  },
  {
   "label": "executor/05",
@@ -137,15 +139,21 @@
  },
  {
   "label": "executor/10",
-  "baseline": "{\"protocol\":\"maelys-git-agent/1\",\"type\":\"error\",\"code\":\"protocol_error\",\"message\":\"invalid JSON: line 1, column 1 (offset 0): invalid JSON syntax\"}"
+  "baseline": "{\"protocol\":\"maelys-git-agent/1\",\"type\":\"error\",\"code\":\"protocol_error\",\"message\":\"invalid JSON: line 1, column 1 (offset 0): invalid JSON syntax\"}",
+  "case": "sort",
+  "v2": "{\"code\":\"protocol_error\",\"message\":\"invalid JSON: line 1, column 1 (offset 0): invalid JSON syntax\",\"protocol\":\"maelys-git-agent/1\",\"type\":\"error\"}"
  },
  {
   "label": "emitter/decision/allowed",
-  "baseline": "{\"protocol\":\"maelys-git-agent/1\",\"type\":\"decision\",\"message_id\":\"corpus-1\",\"allowed\":true,\"explicit_deny\":false,\"reason\":\"allowed by policy corpus\"}"
+  "baseline": "{\"protocol\":\"maelys-git-agent/1\",\"type\":\"decision\",\"message_id\":\"corpus-1\",\"allowed\":true,\"explicit_deny\":false,\"reason\":\"allowed by policy corpus\"}",
+  "case": "sort",
+  "v2": "{\"allowed\":true,\"explicit_deny\":false,\"message_id\":\"corpus-1\",\"protocol\":\"maelys-git-agent/1\",\"reason\":\"allowed by policy corpus\",\"type\":\"decision\"}"
  },
  {
   "label": "emitter/decision/denied",
-  "baseline": "{\"protocol\":\"maelys-git-agent/1\",\"type\":\"decision\",\"message_id\":\"corpus-2\",\"allowed\":false,\"explicit_deny\":true,\"reason\":\"caf\\u00E9 \\u0001 denied\"}"
+  "baseline": "{\"protocol\":\"maelys-git-agent/1\",\"type\":\"decision\",\"message_id\":\"corpus-2\",\"allowed\":false,\"explicit_deny\":true,\"reason\":\"caf\\u00E9 \\u0001 denied\"}",
+  "case": "sort",
+  "v2": "{\"allowed\":false,\"explicit_deny\":true,\"message_id\":\"corpus-2\",\"protocol\":\"maelys-git-agent/1\",\"reason\":\"caf\\u00e9 \\u0001 denied\",\"type\":\"decision\"}"
  },
  {
   "label": "emitter/dedup/unicode",

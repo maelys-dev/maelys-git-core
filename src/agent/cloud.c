@@ -217,11 +217,11 @@ static maelys_git_result_t flush_one(cloud_clients_t *clients,
 }
 
 static char *executor_failure(const mg_agent_message_t *message, const char *description) {
-    json_t *payload = json_pack("{s:s,s:s}", "code", "executor_failed",
-                                "message", description ? description : "executor failed");
-    char *result = payload ? mg_protocol_encode_result(message, "failed", payload, NULL) : NULL;
-    json_decref(payload);
-    return result;
+    mg_json_t json;
+    mg_protocol_result_begin(&json, message, "failed");
+    mg_json_string(&json, "code", "executor_failed");
+    mg_json_string(&json, "message", description ? description : "executor failed");
+    return mg_protocol_result_end(&json, NULL);
 }
 
 static maelys_git_result_t process_command(const maelys_git_agent_config_t *config,

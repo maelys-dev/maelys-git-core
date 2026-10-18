@@ -290,22 +290,28 @@ static int test_poll_reader(void) {
     return 1;
 }
 
+/* A result of `command` with an empty payload. */
+static char *empty_result(const mg_agent_message_t *command, const char *status) {
+    mg_json_t json;
+    mg_protocol_result_begin(&json, command, status);
+    return mg_protocol_result_end(&json, NULL);
+}
+
 static int test_result_envelope(void) {
     mg_agent_message_t command = {.message_id = "result-1", .agent_id = "agent-1", .command = "health"};
-    json_t *payload = json_object();
     const char *statuses[] = {"ok", "denied", "failed", "pending", "", "OK"};
     int succeeded;
     for (size_t i = 0u; i < sizeof(statuses) / sizeof(statuses[0]); ++i) {
-        char *encoded = mg_protocol_encode_result(&command, statuses[i], payload, NULL);
+        char *encoded = empty_result(&command, statuses[i]);
         CHECK(encoded != NULL);
         succeeded = 1;
         CHECK(mg_protocol_validate_result(encoded, strlen(encoded), &command, &succeeded, NULL) ==
               (i < 3u ? MAELYS_GIT_OK : MAELYS_GIT_ERR_PROTOCOL));
         CHECK(succeeded == (i == 0u)); free(encoded);
     }
-    char *encoded = mg_protocol_encode_result(&command, "ok", payload, NULL);
+    char *encoded = empty_result(&command, "ok");
     json_t *root = json_loads(encoded, 0u, NULL);
-    CHECK(root != NULL); free(encoded); json_decref(payload);
+    CHECK(root != NULL); free(encoded);
     const char *fields[] = {"protocol", "message_id", "agent_id", "type", "command", "status", "payload"};
     for (size_t i = 0u; i < sizeof(fields) / sizeof(fields[0]); ++i) {
         for (size_t variant = 0u; variant < 3u; ++variant) {
@@ -326,13 +332,48 @@ static int test_result_envelope(void) {
     return 1;
 }
 
+/* A result with one string member of `filler` bytes. */
+static char *filled_result(const mg_agent_message_t *command, size_t filler, maelys_git_error_t *error) {
+    char *text = malloc(filler + 1u);
+    if (!text) return NULL;
+    memset(text, 'x', filler);
+    text[filler] = '\0';
+    mg_json_t json;
+    mg_protocol_result_begin(&json, command, "ok");
+    mg_json_string(&json, "filler", text);
+    free(text);
+    return mg_protocol_result_end(&json, error);
+}
+
+/* A result line holds 65 536 bytes of JSON, the separator excluded: one of
+ * exactly that size is written and read back; one byte more is never
+ * written, and says why. */
+static int test_result_line_limit(void) {
+    mg_agent_message_t command = {.message_id = "line-1", .agent_id = "agent-1", .command = "diff"};
+    maelys_git_error_t error = {0};
+    char *probe = filled_result(&command, 0u, &error);
+    CHECK(probe != NULL);
+    size_t envelope = strlen(probe);
+    free(probe);
+    char *line = filled_result(&command, MAELYS_GIT_MAX_PROTOCOL_LINE - envelope, &error);
+    CHECK(line != NULL && strlen(line) == MAELYS_GIT_MAX_PROTOCOL_LINE);
+    int succeeded = 0;
+    CHECK(mg_protocol_validate_result(line, strlen(line), &command, &succeeded, &error) == MAELYS_GIT_OK);
+    CHECK(succeeded == 1);
+    free(line);
+    line = filled_result(&command, MAELYS_GIT_MAX_PROTOCOL_LINE - envelope + 1u, &error);
+    CHECK(line == NULL && error.code == MAELYS_GIT_ERR_LIMIT);
+    return 1;
+}
+
 int main(void) {
     int passed = test_owned_documents();
     passed += test_structure_budgets();
     passed += test_deduplication_v1();
     passed += test_poll_reader();
     passed += test_result_envelope();
-    if (passed != 5) return 1;
+    passed += test_result_line_limit();
+    if (passed != 6) return 1;
     (void)printf("ok: %d protocol ownership and compatibility groups passed\n", passed);
     return 0;
 }

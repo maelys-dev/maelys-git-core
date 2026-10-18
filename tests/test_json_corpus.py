@@ -190,6 +190,13 @@ def cases(root):
     return out
 
 
+# The only outputs whose member order may change: the two lines that were
+# written unsorted (the protocol error line, the decision line of the public
+# maelys_git_protocol_write_decision), and deduplication forms, whose keys
+# come from received payloads and sort by UTF-16 code units.
+SORT_ADMITTED = re.compile(r"^(executor/10|emitter/decision/.*|emitter/dedup/.*)$")
+
+
 # ---- the comparator --------------------------------------------------------
 
 TOKEN = re.compile(r'\s*(?:(?P<string>"(?:[^"\\]|\\.)*")|(?P<punct>[{}\[\]:,])|'
@@ -348,6 +355,8 @@ def main():
         expected = case.get("v2")
         assert expected is not None, f"{label}: differs and has no v2 form\n{case['baseline']}\n{text}"
         assert text == expected, f"{label}: differs from its v2 form\n{expected}\n{text}"
+        assert case["case"] != "sort" or SORT_ADMITTED.match(label), \
+            f"{label}: member order may not change for this output"
         recheck = verdict(case["baseline"], expected)
         assert recheck == case["case"], f"{label}: v2 form is not of case {case['case']}"
         counts[case["case"]] += 1

@@ -445,6 +445,11 @@ if(MAELYS_GIT_BUILD_TESTS)
             $<TARGET_FILE:maelys-git-agent> $<TARGET_FILE:maelys-git-executor>
             ${MAELYS_GIT_TEST_MANIFEST})
 
+    # Results that do not fit a protocol line, through the executor's stream.
+    add_test(NAME maelys-git-protocol-limits
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_protocol_limits.py
+            $<TARGET_FILE:maelys-git-executor> ${MAELYS_GIT_TEST_MANIFEST})
+
     # The JSON every program writes, against the corpus recorded with Jansson.
     add_executable(json-corpus-emitter tests/json_corpus_emitter.c)
     target_include_directories(json-corpus-emitter PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

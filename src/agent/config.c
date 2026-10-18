@@ -297,25 +297,42 @@ maelys_git_result_t maelys_git_agent_provision(
         manifest_path, repository_root, executor_path, error);
     if (validation != MAELYS_GIT_OK) return validation;
 
-    json_t *root = json_pack("{s:i,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:s,s:I,s:I}",
-        "version", 1, "agent_id", agent_id, "authority", authority,
-        "ca_file", ca_file, "token_file", token_file, "database_path", database_path,
-        "manifest_path", manifest_path, "repository_root", repository_root,
-        "git_executable", "/usr/bin/git", "executor_path", executor_path,
-        "command_target", "/v1/agent/commands", "event_target", "/v1/agent/events",
-        "poll_timeout_ms", (json_int_t)30000, "request_timeout_ms", (json_int_t)30000);
-    if (!root) return MAELYS_GIT_ERR_IO;
+    /* The flat object mg_config_load reads back: 14 members, indented. */
+    mg_json_t json;
+    mg_json_begin(&json, MG_JSON_CONFIGURATION);
+    mg_json_object(&json, NULL);
+    mg_json_i64(&json, "version", 1);
+    mg_json_string(&json, "agent_id", agent_id);
+    mg_json_string(&json, "authority", authority);
+    mg_json_string(&json, "ca_file", ca_file);
+    mg_json_string(&json, "token_file", token_file);
+    mg_json_string(&json, "database_path", database_path);
+    mg_json_string(&json, "manifest_path", manifest_path);
+    mg_json_string(&json, "repository_root", repository_root);
+    mg_json_string(&json, "git_executable", "/usr/bin/git");
+    mg_json_string(&json, "executor_path", executor_path);
+    mg_json_string(&json, "command_target", "/v1/agent/commands");
+    mg_json_string(&json, "event_target", "/v1/agent/events");
+    mg_json_i64(&json, "poll_timeout_ms", 30000);
+    mg_json_i64(&json, "request_timeout_ms", 30000);
+    mg_json_end_object(&json);
+    char *text = NULL;
+    size_t size = 0u;
+    if (mg_json_finish(&json, &text, &size) != MAELYS_JSON_OK) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "cannot encode config");
+        return MAELYS_GIT_ERR_IO;
+    }
     int fd = open(config_path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0) {
-        json_decref(root);
+        free(text);
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "cannot create config: %s", strerror(errno));
         return MAELYS_GIT_ERR_IO;
     }
     FILE *stream = fdopen(fd, "w");
-    int failed = !stream || json_dumpf(root, stream, JSON_INDENT(2) | JSON_SORT_KEYS) != 0 ||
+    int failed = !stream || fwrite(text, 1u, size, stream) != size ||
                  fputc('\n', stream) == EOF || fflush(stream) != 0 || fsync(fd) != 0;
     if (stream) (void)fclose(stream); else (void)close(fd);
-    json_decref(root);
+    free(text);
     if (failed) {
         (void)unlink(config_path);
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "cannot write config");
