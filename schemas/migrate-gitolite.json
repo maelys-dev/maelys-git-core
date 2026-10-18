@@ -11,6 +11,7 @@
     "ruleCount",
     "vrefCount",
     "unsupported",
+    "budget",
     "canApply"
   ],
   "properties": {
@@ -49,6 +50,132 @@
       "type": "array",
       "items": {
         "type": "string"
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "compiled",
+        "rules",
+        "ruleLimit",
+        "facts",
+        "factLimit",
+        "predicates",
+        "predicateLimit",
+        "derivedPerPredicate",
+        "derivedPerPredicateLimit",
+        "derived",
+        "derivedLimit",
+        "failure"
+      ],
+      "properties": {
+        "compiled": {
+          "type": "boolean"
+        },
+        "rules": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "ruleLimit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "facts": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "factLimit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "predicates": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "predicateLimit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "derivedPerPredicate": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "derivedPerPredicateLimit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "derived": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "derivedLimit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "failure": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "capacity",
+                    "syntax",
+                    "semantics",
+                    "manifest",
+                    "value",
+                    "engine"
+                  ]
+                },
+                "diagnostic": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "budget": {
+                  "type": "string",
+                  "pattern": "^[A-Z][A-Z0-9_]*$"
+                },
+                "requested": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "column": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          ]
+        }
       }
     },
     "canApply": {

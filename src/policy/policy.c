@@ -42,6 +42,10 @@ struct maelys_git_policy {
     char repository_copy[MAELYS_GIT_MAX_REPOSITORY];
     /* The first '/'-terminated prefixes of the request's ref, one string each. */
     char ref_prefixes[MG_REF_PREFIX_FACTS][MAELYS_GIT_MAX_REF];
+    /* The largest compiled program of the set, as the engine counts it. */
+    size_t compiled_rules;
+    size_t compiled_facts;
+    size_t compiled_predicates;
     char fingerprint[MAELYS_DATALOG_PUBLIC_FINGERPRINT_BYTES];
     /* Allocated by the first explanation, kept until close: the storage of a
      * prepared explanation, and the document rendered from it. */
@@ -134,6 +138,13 @@ static const maelys_datalog_predicate_t k_git_domain[] = {
     {"group_vref_deny_new_count", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
     {"vref_deny_max_new_binary", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
     {"group_vref_deny_max_new_binary", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"gitolite_access", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_gitolite_access", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"gitolite_ref_access", 4u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_gitolite_ref_access", 4u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"owner_namespace_access", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"effective_access", 3u, MAELYS_DATALOG_PREDICATE_IDB},
+    {"owner_level", 2u, MAELYS_DATALOG_PREDICATE_IDB},
     {"ref_grant_push", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
     {"group_ref_grant_push", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
     {"ref_grant_force", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
@@ -288,11 +299,6 @@ size_t mg_policy_explanation_storage_bytes(const maelys_git_policy_t *policy) {
     return policy ? policy->explanation_storage_bytes : 0u;
 }
 
-maelys_git_result_t mg_policy_rule_limit(size_t *out_limit, maelys_git_error_t *error) {
-    if (!out_limit) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
-    return read_limit(MAELYS_DATALOG_LIMIT_MAX_RULES, out_limit, error);
-}
-
 /* Creates the session of one policy and records its identity. */
 static maelys_git_result_t prepare_entry(const maelys_datalog_policy_t *loaded, size_t index,
                                          policy_entry_t *entry, maelys_git_error_t *error) {
@@ -314,29 +320,35 @@ static maelys_git_result_t prepare_entry(const maelys_datalog_policy_t *loaded, 
     return MAELYS_GIT_OK;
 }
 
-maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
-                                            maelys_git_policy_t **out_policy,
-                                            maelys_git_error_t *error) {
-    maelys_git_error_clear(error);
-    if (!manifest_path || !out_policy) {
-        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0, "manifest path and output are required");
-        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
-    }
-    *out_policy = NULL;
+static maelys_git_result_t register_domain(maelys_git_error_t *error) {
     if (pthread_once(&s_domain_once, register_git_domain) != 0 ||
         s_domain_status != MAELYS_DATALOG_STATUS_OK) {
         mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "cannot register the maelys_git domain: %s",
                      maelys_datalog_status_name(s_domain_status));
         return MAELYS_GIT_ERR_POLICY;
     }
-    /* The engine reads the manifest and its sources, checks their digests and
-     * is the only reader of the policy language. */
-    maelys_datalog_diagnostic_t diagnostic = MAELYS_DATALOG_DIAGNOSTIC_INIT;
-    maelys_datalog_policy_t *loaded = NULL;
-    maelys_datalog_status_t status = maelys_datalog_policy_load_manifest(
-        manifest_path, MAELYS_DATALOG_PUBLIC_ALLOW_UNDECLARED_POLICY_ATOMS, &loaded, &diagnostic);
-    if (status != MAELYS_DATALOG_STATUS_OK) return load_failure(error, status, &diagnostic);
+    return MAELYS_GIT_OK;
+}
 
+/* The largest value of one statistic over the compiled programs of the set. */
+static maelys_git_result_t largest_stat(const maelys_datalog_policy_t *loaded, size_t count,
+                                        maelys_datalog_policy_stat_t statistic, size_t *out,
+                                        maelys_git_error_t *error) {
+    *out = 0u;
+    for (size_t i = 0u; i < count; ++i) {
+        size_t value = 0u;
+        maelys_datalog_status_t status = maelys_datalog_policy_stat_get(loaded, i, statistic, &value);
+        if (status != MAELYS_DATALOG_STATUS_OK) return engine_failure(error, "policy statistics", status);
+        if (value > *out) *out = value;
+    }
+    return MAELYS_GIT_OK;
+}
+
+/* Builds the handle of a loaded set and releases the set, whatever happens. */
+static maelys_git_result_t open_loaded(maelys_datalog_policy_t *loaded,
+                                       maelys_git_policy_t **out_policy,
+                                       maelys_git_error_t *error) {
+    maelys_datalog_status_t status;
     maelys_git_result_t result = MAELYS_GIT_OK;
     maelys_git_policy_t *policy = calloc(1u, sizeof(*policy));
     if (!policy) {
@@ -373,6 +385,15 @@ maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
                      policy->path_limit, MG_REF_PREFIX_FACTS);
         result = MAELYS_GIT_ERR_POLICY;
     }
+    if (result == MAELYS_GIT_OK)
+        result = largest_stat(loaded, count, MAELYS_DATALOG_POLICY_RULE_COUNT,
+                              &policy->compiled_rules, error);
+    if (result == MAELYS_GIT_OK)
+        result = largest_stat(loaded, count, MAELYS_DATALOG_POLICY_FACT_COUNT,
+                              &policy->compiled_facts, error);
+    if (result == MAELYS_GIT_OK)
+        result = largest_stat(loaded, count, MAELYS_DATALOG_POLICY_PREDICATE_COUNT,
+                              &policy->compiled_predicates, error);
     if (result == MAELYS_GIT_OK) {
         policy->entries = calloc(count, sizeof(*policy->entries));
         policy->facts = calloc(policy->fact_capacity, sizeof(*policy->facts));
@@ -393,6 +414,76 @@ maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
     }
     *out_policy = policy;
     return MAELYS_GIT_OK;
+}
+
+maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
+                                            maelys_git_policy_t **out_policy,
+                                            maelys_git_error_t *error) {
+    maelys_git_error_clear(error);
+    if (!manifest_path || !out_policy) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0, "manifest path and output are required");
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    *out_policy = NULL;
+    maelys_git_result_t result = register_domain(error);
+    if (result != MAELYS_GIT_OK) return result;
+    /* The engine reads the manifest and its sources, checks their digests and
+     * is the only reader of the policy language. */
+    maelys_datalog_diagnostic_t diagnostic = MAELYS_DATALOG_DIAGNOSTIC_INIT;
+    maelys_datalog_policy_t *loaded = NULL;
+    maelys_datalog_status_t status = maelys_datalog_policy_load_manifest(
+        manifest_path, MAELYS_DATALOG_PUBLIC_ALLOW_UNDECLARED_POLICY_ATOMS, &loaded, &diagnostic);
+    if (status != MAELYS_DATALOG_STATUS_OK) return load_failure(error, status, &diagnostic);
+    return open_loaded(loaded, out_policy, error);
+}
+
+maelys_git_result_t mg_policy_open_buffer(const char *manifest, size_t manifest_length,
+                                          const char *policy_id, const char *source,
+                                          size_t source_length, maelys_git_policy_t **out_policy,
+                                          maelys_git_error_t *error) {
+    maelys_git_error_clear(error);
+    if (!manifest || !policy_id || !source || !out_policy) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0, "manifest, policy and output are required");
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    *out_policy = NULL;
+    maelys_git_result_t result = register_domain(error);
+    if (result != MAELYS_GIT_OK) return result;
+    /* The loader contract of a manifest on disk, without its files. */
+    const maelys_datalog_policy_bundle_entry_t bundle = {
+        .policy_id = policy_id, .src = source, .src_len = source_length};
+    maelys_datalog_diagnostic_t diagnostic = MAELYS_DATALOG_DIAGNOSTIC_INIT;
+    maelys_datalog_policy_t *loaded = NULL;
+    maelys_datalog_status_t status = maelys_datalog_policy_load_manifest_buffer(
+        manifest, manifest_length, &bundle, 1u, MAELYS_DATALOG_PUBLIC_ALLOW_UNDECLARED_POLICY_ATOMS,
+        &loaded, &diagnostic);
+    if (status != MAELYS_DATALOG_STATUS_OK) return load_failure(error, status, &diagnostic);
+    return open_loaded(loaded, out_policy, error);
+}
+
+maelys_git_result_t mg_policy_budget(const maelys_git_policy_t *policy,
+                                     maelys_git_policy_budget_t *out_budget,
+                                     maelys_git_error_t *error) {
+    if (!out_budget) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    maelys_git_policy_budget_t budget = {0};
+    if (policy) {
+        budget.compiled = 1;
+        budget.rules = policy->compiled_rules;
+        budget.facts = policy->compiled_facts;
+        budget.predicates = policy->compiled_predicates;
+    }
+    maelys_git_result_t result = read_limit(MAELYS_DATALOG_LIMIT_MAX_RULES, &budget.rule_limit, error);
+    if (result == MAELYS_GIT_OK)
+        result = read_limit(MAELYS_DATALOG_LIMIT_MAX_RULE_FACTS, &budget.fact_limit, error);
+    if (result == MAELYS_GIT_OK)
+        result = read_limit(MAELYS_DATALOG_LIMIT_MAX_PREDICATES, &budget.predicate_limit, error);
+    if (result == MAELYS_GIT_OK)
+        result = read_limit(MAELYS_DATALOG_LIMIT_MAX_FACTS_PER_PRED,
+                            &budget.derived_per_predicate_limit, error);
+    if (result == MAELYS_GIT_OK)
+        result = read_limit(MAELYS_DATALOG_LIMIT_MAX_IDB_FACTS, &budget.derived_limit, error);
+    if (result == MAELYS_GIT_OK) *out_budget = budget;
+    return result;
 }
 
 maelys_git_result_t maelys_git_policy_fingerprint(

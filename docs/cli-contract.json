@@ -2333,6 +2333,132 @@
           "outputSchema": {
             "additionalProperties": false,
             "properties": {
+              "budget": {
+                "additionalProperties": false,
+                "properties": {
+                  "compiled": {
+                    "type": "boolean"
+                  },
+                  "derived": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "derivedLimit": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "derivedPerPredicate": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "derivedPerPredicateLimit": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "factLimit": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "facts": {
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "failure": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "budget": {
+                            "pattern": "^[A-Z][A-Z0-9_]*$",
+                            "type": "string"
+                          },
+                          "column": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "diagnostic": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "file": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "kind": {
+                            "enum": [
+                              "capacity",
+                              "syntax",
+                              "semantics",
+                              "manifest",
+                              "value",
+                              "engine"
+                            ]
+                          },
+                          "limit": {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "line": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "requested": {
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "predicateLimit": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "predicates": {
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "ruleLimit": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "rules": {
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "compiled",
+                  "rules",
+                  "ruleLimit",
+                  "facts",
+                  "factLimit",
+                  "predicates",
+                  "predicateLimit",
+                  "derivedPerPredicate",
+                  "derivedPerPredicateLimit",
+                  "derived",
+                  "derivedLimit",
+                  "failure"
+                ],
+                "type": "object"
+              },
               "canApply": {
                 "type": "boolean"
               },
@@ -2384,6 +2510,7 @@
               "ruleCount",
               "vrefCount",
               "unsupported",
+              "budget",
               "canApply"
             ],
             "type": "object"

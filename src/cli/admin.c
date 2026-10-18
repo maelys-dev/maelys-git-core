@@ -641,6 +641,37 @@ static int command_keys_compile(maelys_cli_context_t *context) {
         MAELYS_CLI_EXIT_OK);
 }
 
+/* The budget of a generated policy: the engine's counts, null when it refused
+ * the policy, the bounds, the generator's worst cases of execution, and the
+ * failure, in the shape of a validate diagnostic, or null. */
+static json_t *budget_json(const maelys_git_policy_budget_t *budget) {
+    json_t *failure = json_null();
+    if (budget->failure.kind != MAELYS_GIT_FAILURE_NONE) {
+        json_decref(failure);
+        failure = json_object();
+        if (failure && !add_failure_detail(failure, &budget->failure)) {
+            json_decref(failure);
+            failure = NULL;
+        }
+    }
+    if (!failure) return NULL;
+    json_t *counts[3] = {
+        budget->compiled ? json_integer((json_int_t)budget->rules) : json_null(),
+        budget->compiled ? json_integer((json_int_t)budget->facts) : json_null(),
+        budget->compiled ? json_integer((json_int_t)budget->predicates) : json_null(),
+    };
+    return json_pack("{s:b,s:o,s:I,s:o,s:I,s:o,s:I,s:I,s:I,s:I,s:I,s:o}",
+        "compiled", budget->compiled,
+        "rules", counts[0], "ruleLimit", (json_int_t)budget->rule_limit,
+        "facts", counts[1], "factLimit", (json_int_t)budget->fact_limit,
+        "predicates", counts[2], "predicateLimit", (json_int_t)budget->predicate_limit,
+        "derivedPerPredicate", (json_int_t)budget->derived_per_predicate,
+        "derivedPerPredicateLimit", (json_int_t)budget->derived_per_predicate_limit,
+        "derived", (json_int_t)budget->derived,
+        "derivedLimit", (json_int_t)budget->derived_limit,
+        "failure", failure);
+}
+
 static int command_migrate_gitolite(maelys_cli_context_t *context) {
     int apply = maelys_cli_flag(context, "apply");
     maelys_git_error_t error = {0};
@@ -659,7 +690,7 @@ static int command_migrate_gitolite(maelys_cli_context_t *context) {
             unsupported = NULL;
         }
     }
-    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:I,s:I,s:I,s:I,s:o?,s:b}",
+    json_t *data = json_pack("{s:s,s:b,s:s,s:s,s:I,s:I,s:I,s:I,s:o?,s:o?,s:b}",
         "mode", mode_name(apply), "changed", apply,
         "input", maelys_cli_operand(context, 0u),
         "output", maelys_cli_operand(context, 1u),
@@ -668,6 +699,7 @@ static int command_migrate_gitolite(maelys_cli_context_t *context) {
         "ruleCount", (json_int_t)migration.rule_count,
         "vrefCount", (json_int_t)migration.vref_count,
         "unsupported", unsupported,
+        "budget", budget_json(&migration.budget),
         "canApply", migration.unsupported_count == 0u);
     maelys_git_gitolite_migration_result_clear(&migration);
     return maelys_git_cli_succeed_json(context, data,

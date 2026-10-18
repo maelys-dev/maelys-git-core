@@ -101,7 +101,9 @@ filter rule. A policy that tests a deeper prefix never sees it and can close
 on the count, `deny(R) :- request(R), ref_prefix_count(N), N > 16.`
 
 The domain also declares policy facts for direct and group grants, admins,
-protected refs and protected paths. Policies derive `allow(Request)` and/or
+protected refs and protected paths, and those the Gitolite migration writes:
+`gitolite_access/3`, `gitolite_ref_access/4`, their `group_` forms and
+`owner_namespace_access/2`. Policies derive `allow(Request)` and/or
 `deny(Request)`. An explicit deny wins across the complete policy set. With no
 matching allow, the decision is denied by default. Evaluation errors also deny
 the operation.

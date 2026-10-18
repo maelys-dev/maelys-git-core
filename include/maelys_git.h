@@ -710,6 +710,27 @@ maelys_git_result_t maelys_git_compile_authorized_keys(
     size_t *out_key_count,
     maelys_git_error_t *error);
 
+/* What a generated policy costs, against the bounds of the linked engine.
+ * Compilation is the engine's verdict on the policy: its rules, facts and
+ * predicates, 0 when it refused. Execution is the generator's own worst case
+ * for one request, by construction: the most facts one derived predicate can
+ * hold, and all derived facts together. `failure` says which bound does not
+ * hold; its kind is NONE when the budget holds. */
+typedef struct {
+    int compiled;
+    size_t rules;
+    size_t rule_limit;
+    size_t facts;
+    size_t fact_limit;
+    size_t predicates;
+    size_t predicate_limit;
+    size_t derived_per_predicate;
+    size_t derived_per_predicate_limit;
+    size_t derived;
+    size_t derived_limit;
+    maelys_git_failure_detail_t failure;
+} maelys_git_policy_budget_t;
+
 typedef struct {
     size_t group_count;
     size_t repository_count;
@@ -717,6 +738,7 @@ typedef struct {
     size_t vref_count;
     char **unsupported;
     size_t unsupported_count;
+    maelys_git_policy_budget_t budget;
 } maelys_git_gitolite_migration_result_t;
 
 void maelys_git_gitolite_migration_result_clear(

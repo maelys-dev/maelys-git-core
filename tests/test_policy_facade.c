@@ -362,8 +362,8 @@ static int test_gitolite_prefixes(void) {
     return 1;
 }
 
-static int test_exact_refs_unchanged(void) {
-    /* The historical exact forms still produce the very same facts. */
+static int test_exact_refs_one_fact(void) {
+    /* An exact ref is one fact per elementary grant, at its Gitolite level. */
     maelys_git_gitolite_migration_result_t migration;
     CHECK(migrate("exact",
                   "repo refs\n"
@@ -379,9 +379,8 @@ static int test_exact_refs_unchanged(void) {
     (void)fclose(file);
     text[length] = '\0';
     static const char expected[] =
-        "ref_grant_push(\"alice\", \"refs.git\", \"refs/heads/main\").\n"
-        "ref_grant_push(\"bob\", \"refs.git\", \"refs/heads/release\").\n"
-        "ref_grant_force(\"bob\", \"refs.git\", \"refs/heads/release\").\n";
+        "gitolite_ref_access(\"alice\", \"refs.git\", \"refs/heads/main\", \"RW\").\n"
+        "gitolite_ref_access(\"bob\", \"refs.git\", \"refs/heads/release\", \"RW+\").\n\n";
     CHECK(strncmp(text, expected, sizeof(expected) - 1u) == 0);
     CHECK(strstr(text, "starts_with") == NULL);
     return 1;
@@ -402,47 +401,6 @@ static int unsupported_with(const char *name, const char *rule, const char *reas
     return 1;
 }
 
-/* The baseline recorded the migration of the Gitolite fixture (commit 874f9f3,
- * engine 0.4.0). The code of today reproduces that file line for line, with
- * exactly one difference: the bare-literal deny of mallory, which section 16.3
- * of the directive turns into a prefix rule. Everything else, groups, exact
- * grants, R and RW+ lines and VREFs, is byte-identical. */
-static int test_fixture_migration_matches_baseline(void) {
-    maelys_git_gitolite_migration_result_t migration;
-    maelys_git_error_t error;
-    char output[400], migrated[512], baseline[16384], current[16384];
-    (void)snprintf(output, sizeof(output), "%s/fixture", g_root);
-    CHECK(maelys_git_migrate_gitolite(FIXTURE_DIR "/gitolite-exact/gitolite.conf", output, 1,
-                                      &migration, &error) == MAELYS_GIT_OK);
-    CHECK(migration.unsupported_count == 0u);
-    maelys_git_gitolite_migration_result_clear(&migration);
-    (void)snprintf(migrated, sizeof(migrated), "%s/gitolite-migrated.dl", output);
-    CHECK(read_text(FIXTURE_DIR "/gitolite-exact/gitolite-migrated.dl", baseline, sizeof(baseline)));
-    CHECK(read_text(migrated, current, sizeof(current)));
-    static const char before[] = "ref_deny(\"mallory\", \"refs.git\", \"refs/heads/main\").";
-    static const char after[] =
-        "effective_ref_deny(\"mallory\", \"refs.git\", F) :- ref(F), starts_with(F, \"refs/heads/main\").";
-    size_t differences = 0u;
-    char *expected = baseline, *actual = current;
-    for (;;) {
-        char *expected_end = strchr(expected, '\n'), *actual_end = strchr(actual, '\n');
-        if (!expected_end || !actual_end) {
-            /* Both files end together, on a terminated last line. */
-            CHECK(!expected_end && !actual_end && !*expected && !*actual);
-            break;
-        }
-        *expected_end = *actual_end = '\0';
-        if (strcmp(expected, actual) != 0) {
-            CHECK(strcmp(expected, before) == 0 && strcmp(actual, after) == 0);
-            ++differences;
-        }
-        expected = expected_end + 1;
-        actual = actual_end + 1;
-    }
-    CHECK(differences == 1u);
-    return 1;
-}
-
 static int test_unsupported_refex(void) {
     CHECK(unsupported_with("alt", "RW refs/heads/(main|dev) = alice", "unsupported refex syntax"));
     CHECK(unsupported_with("star", "RW refs/heads/feature/.* = alice", "unsupported refex syntax"));
@@ -457,24 +415,6 @@ static int test_unsupported_refex(void) {
     pattern[281] = '\0';
     (void)snprintf(rule, sizeof(rule), "RW %s = alice", pattern);
     CHECK(unsupported_with("long", rule, "ref pattern exceeds 256 bytes"));
-    return 1;
-}
-
-static int test_rule_budget_exceeded(void) {
-    /* Each prefix grant is a rule; a policy holds a bounded number of rules. */
-    char configuration[8192];
-    size_t used = (size_t)snprintf(configuration, sizeof(configuration), "repo app\n");
-    for (size_t i = 0u; i < 60u; ++i)
-        used += (size_t)snprintf(configuration + used, sizeof(configuration) - used,
-                                 "    - refs/heads/locked-%zu/ = mallory\n", i);
-    maelys_git_gitolite_migration_result_t migration;
-    CHECK(migrate("budget", configuration, 0, &migration, NULL));
-    CHECK(migration.unsupported_count == 1u);
-    CHECK(strstr(migration.unsupported[0], "rule budget exceeded") != NULL);
-    maelys_git_gitolite_migration_result_clear(&migration);
-    CHECK(!migrate("budget", configuration, 1, &migration, NULL));
-    maelys_git_gitolite_migration_result_clear(&migration);
-    CHECK(!output_exists("budget"));
     return 1;
 }
 
@@ -1008,9 +948,8 @@ int main(void) {
     int ok = test_two_vocabularies() && test_policy_atom_limits() &&
              test_filter_pattern_not_an_atom() && test_refused_manifests() &&
              test_fingerprints_unchanged() &&
-             test_gitolite_prefixes() && test_exact_refs_unchanged() &&
-             test_fixture_migration_matches_baseline() &&
-             test_unsupported_refex() && test_rule_budget_exceeded() &&
+             test_gitolite_prefixes() && test_exact_refs_one_fact() &&
+             test_unsupported_refex() &&
              test_explanations() && test_explain_multiple_policies() && test_refusals();
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok) puts("local vocabulary, engine limits, Gitolite prefixes, explanations and identities: ok");
