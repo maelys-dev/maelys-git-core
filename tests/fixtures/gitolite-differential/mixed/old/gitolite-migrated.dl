@@ -1,0 +1,139 @@
+group_member("alice", "juniors").
+group_in_group("juniors", "developers").
+group_member("bob", "developers").
+group_member("carol", "leads").
+group_in_group("developers", "everyone").
+group_in_group("leads", "everyone").
+group_member("alice", "creators").
+group_member("dave", "creators").
+grant_read("guest", "app.git").
+grant_read("guest", "tools.git").
+group_grant_read("developers", "app.git").
+group_grant_write("developers", "app.git").
+group_grant_push("developers", "app.git").
+group_grant_read("developers", "tools.git").
+group_grant_write("developers", "tools.git").
+group_grant_push("developers", "tools.git").
+grant_read("admin", "app.git").
+grant_write("admin", "app.git").
+grant_push("admin", "app.git").
+grant_force("admin", "app.git").
+grant_read("admin", "tools.git").
+grant_write("admin", "tools.git").
+grant_push("admin", "tools.git").
+grant_force("admin", "tools.git").
+grant_create("carol", "app.git").
+grant_create("carol", "tools.git").
+grant_read("guest", "refs.git").
+ref_grant_push("alice", "refs.git", "refs/heads/main").
+ref_grant_push("bob", "refs.git", "refs/heads/release").
+ref_grant_force("bob", "refs.git", "refs/heads/release").
+effective_ref_grant_push("alice", "refs.git", F) :- ref(F), starts_with(F, "refs/heads/release/").
+has_ref_write("alice", "refs.git") :- user("alice"), repository("refs.git").
+has_push_access("alice", "refs.git") :- user("alice"), repository("refs.git").
+effective_ref_grant_push(U, "refs.git", F) :- effective_group_member(U, "leads"), ref(F), starts_with(F, "refs/tags/release/").
+effective_ref_grant_force(U, "refs.git", F) :- effective_group_member(U, "leads"), ref(F), starts_with(F, "refs/tags/release/").
+has_ref_write(U, "refs.git") :- effective_group_member(U, "leads").
+has_push_access(U, "refs.git") :- effective_group_member(U, "leads").
+effective_ref_grant_push(U, "refs.git", F) :- effective_group_member(U, "everyone"), ref(F), starts_with(F, "refs/heads/topic/").
+has_ref_write(U, "refs.git") :- effective_group_member(U, "everyone").
+has_push_access(U, "refs.git") :- effective_group_member(U, "everyone").
+ref_grant_push("bob", "refs.git", "refs/heads/stable").
+effective_ref_deny("mallory", "refs.git", F) :- ref(F), starts_with(F, "refs/heads/main").
+ref_grant_push("mallory", "refs.git", "refs/heads/main").
+effective_ref_deny("alice", "refs.git", F) :- ref(F), starts_with(F, "refs/heads/release/frozen/").
+effective_ref_grant_push("carol", "refs.git", F) :- ref(F), starts_with(F, "refs/heads/release/frozen/").
+effective_ref_grant_force("carol", "refs.git", F) :- ref(F), starts_with(F, "refs/heads/release/frozen/").
+has_ref_write("carol", "refs.git") :- user("carol"), repository("refs.git").
+has_push_access("carol", "refs.git") :- user("carol"), repository("refs.git").
+effective_ref_grant_push("dave", "refs.git", F) :- ref(F), starts_with(F, "refs/heads/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/").
+has_ref_write("dave", "refs.git") :- user("dave"), repository("refs.git").
+has_push_access("dave", "refs.git") :- user("dave"), repository("refs.git").
+effective_ref_grant_push("erin", "refs.git", F) :- ref(F), starts_with(F, "refs/heads/llllllllllllllllllllllllllllllllllllllllllllllllllllllllllll/").
+has_ref_write("erin", "refs.git") :- user("erin"), repository("refs.git").
+has_push_access("erin", "refs.git") :- user("erin"), repository("refs.git").
+group_vref_deny_name("juniors", "refs.git", "Makefile").
+group_vref_deny_count("juniors", "refs.git", 5).
+vref_deny_new_count("bob", "refs.git", 2).
+group_vref_deny_max_new_binary("juniors", "refs.git", 1024).
+group_namespace_creator("creators", "users").
+owner_namespace_grant_read("users").
+owner_namespace_grant_write("users").
+owner_namespace_grant_push("users").
+owner_namespace_grant_force("users").
+namespace_creator("erin", "shared").
+owner_namespace_grant_read("shared").
+
+effective_group_member(U, G) :- group_member(U, G).
+effective_group_member(U, G) :- group_member(U, C), group_in_group(C, G).
+effective_group_member(U, G) :- effective_group_member(U, C), group_in_group(C, G).
+can_create_namespace(U, N) :- namespace_creator(U, N).
+can_create_namespace(U, N) :- effective_group_member(U, G), group_namespace_creator(G, N).
+push_request(R, U, P, F) :- request(R), user(U), repository(P), operation("push"), ref(F).
+effective_ref_grant_push(U, P, F) :- ref_grant_push(U, P, F).
+effective_ref_grant_push(U, P, F) :- effective_group_member(U, G), group_ref_grant_push(G, P, F).
+effective_ref_grant_force(U, P, F) :- ref_grant_force(U, P, F).
+effective_ref_grant_force(U, P, F) :- effective_group_member(U, G), group_ref_grant_force(G, P, F).
+effective_ref_deny(U, P, F) :- ref_deny(U, P, F).
+effective_ref_deny(U, P, F) :- effective_group_member(U, G), group_ref_deny(G, P, F).
+has_ref_write(U, P) :- effective_ref_grant_push(U, P, _).
+has_push_access(U, P) :- grant_push(U, P).
+has_push_access(U, P) :- grant_force(U, P).
+has_push_access(U, P) :- effective_group_member(U, G), group_grant_push(G, P).
+has_push_access(U, P) :- effective_group_member(U, G), group_grant_force(G, P).
+has_push_access(U, P) :- effective_ref_grant_push(U, P, _).
+has_push_access(U, P) :- effective_ref_grant_force(U, P, _).
+
+allow(R) :- request(R), user(U), repository(P), operation("read"), grant_read(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("write"), grant_write(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("create"), grant_push(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("fast_forward"), grant_push(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("force"), grant_force(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("delete"), grant_force(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("merge"), grant_push(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("update-ref"), grant_force(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("create"), grant_create(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("read"), effective_group_member(U, G), group_grant_read(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("write"), effective_group_member(U, G), group_grant_write(G, P).
+allow(R) :- push_request(R, U, P, F), update_kind("create"), effective_ref_grant_push(U, P, F).
+allow(R) :- push_request(R, U, P, F), update_kind("fast_forward"), effective_ref_grant_push(U, P, F).
+allow(R) :- push_request(R, U, P, F), update_kind("force"), effective_ref_grant_force(U, P, F).
+allow(R) :- push_request(R, U, P, F), update_kind("delete"), effective_ref_grant_force(U, P, F).
+deny(R) :- push_request(R, U, P, F), effective_ref_deny(U, P, F).
+allow(R) :- request(R), user(U), repository(P), operation("write"), has_ref_write(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), changed_count(_), has_push_access(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("merge"), ref(F), effective_ref_grant_push(U, P, F).
+allow(R) :- request(R), user(U), repository(P), operation("update-ref"), ref(F), effective_ref_grant_force(U, P, F).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("create"), effective_group_member(U, G), group_grant_push(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("fast_forward"), effective_group_member(U, G), group_grant_push(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("force"), effective_group_member(U, G), group_grant_force(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("delete"), effective_group_member(U, G), group_grant_force(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("merge"), effective_group_member(U, G), group_grant_push(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("update-ref"), effective_group_member(U, G), group_grant_force(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("create"), effective_group_member(U, G), group_grant_create(G, P).
+allow(R) :- request(R), user(U), operation("create"), repository_owner_namespace(N, U), can_create_namespace(U, N).
+allow(R) :- request(R), user(U), operation("read"), repository_owner_namespace(N, U), owner_namespace_grant_read(N).
+allow(R) :- request(R), user(U), operation("write"), repository_owner_namespace(N, U), owner_namespace_grant_write(N).
+allow(R) :- request(R), user(U), operation("push"), update_kind("create"), repository_owner_namespace(N, U), owner_namespace_grant_push(N).
+allow(R) :- request(R), user(U), operation("push"), update_kind("fast_forward"), repository_owner_namespace(N, U), owner_namespace_grant_push(N).
+allow(R) :- request(R), user(U), operation("push"), update_kind("force"), repository_owner_namespace(N, U), owner_namespace_grant_force(N).
+allow(R) :- request(R), user(U), operation("push"), update_kind("delete"), repository_owner_namespace(N, U), owner_namespace_grant_force(N).
+allow(R) :- request(R), user(U), operation("push"), changed_count(_), repository_owner_namespace(N, U), owner_namespace_grant_push(N).
+allow(R) :- request(R), user(U), operation("push"), changed_count(_), repository_owner_namespace(N, U), owner_namespace_grant_force(N).
+allow(R) :- request(R), user(U), operation("merge"), repository_owner_namespace(N, U), owner_namespace_grant_push(N).
+allow(R) :- request(R), user(U), operation("update-ref"), repository_owner_namespace(N, U), owner_namespace_grant_force(N).
+effective_vref_deny_name(U, P, F) :- vref_deny_name(U, P, F).
+effective_vref_deny_name(U, P, F) :- effective_group_member(U, G), group_vref_deny_name(G, P, F).
+effective_vref_deny_count(U, P, N) :- vref_deny_count(U, P, N).
+effective_vref_deny_count(U, P, N) :- effective_group_member(U, G), group_vref_deny_count(G, P, N).
+effective_vref_deny_new_count(U, P, N) :- vref_deny_new_count(U, P, N).
+effective_vref_deny_new_count(U, P, N) :- effective_group_member(U, G), group_vref_deny_new_count(G, P, N).
+effective_vref_deny_max_new_binary(U, P, N) :- vref_deny_max_new_binary(U, P, N).
+effective_vref_deny_max_new_binary(U, P, N) :- effective_group_member(U, G), group_vref_deny_max_new_binary(G, P, N).
+vref_count_exceeded(U, P) :- changed_count(C), effective_vref_deny_count(U, P, N), C > N.
+vref_new_count_exceeded(U, P) :- added_count(C), effective_vref_deny_new_count(U, P, N), C > N.
+vref_new_binary_exceeded(U, P) :- change_binary(true), change_blob_size(S), effective_vref_deny_max_new_binary(U, P, N), S > N.
+deny(R) :- request(R), user(U), repository(P), operation("push"), path(F), effective_vref_deny_name(U, P, F).
+deny(R) :- request(R), user(U), repository(P), operation("push"), vref_count_exceeded(U, P).
+deny(R) :- request(R), user(U), repository(P), operation("push"), vref_new_count_exceeded(U, P).
+deny(R) :- request(R), user(U), repository(P), operation("push"), vref_new_binary_exceeded(U, P).

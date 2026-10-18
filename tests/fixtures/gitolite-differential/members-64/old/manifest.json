@@ -1,0 +1,20 @@
+{
+  "policy_set_id": "maelys-git.gitolite-migration",
+  "policy_set_version": "1",
+  "manifest_version": "1",
+  "default_profile": "enforce",
+  "created_for": "maelys-git-core",
+  "strict_loading": true,
+  "fail_closed": true,
+  "capabilities": [],
+  "policies": [{
+    "policy_id": "maelys-git.gitolite.authorization",
+    "domain": "maelys_git",
+    "file": "gitolite-migrated.dl",
+    "sha256": "e8071d29b6d38bcdcf39e13a1d7432128adff467e65bd3e6eb332d87197ff381",
+    "mode": "enforce",
+    "enabled": true,
+    "description": "Safely migrated Gitolite ACL subset",
+    "queries": [{"name":"allow","arity":1},{"name":"deny","arity":1}]
+  }]
+}

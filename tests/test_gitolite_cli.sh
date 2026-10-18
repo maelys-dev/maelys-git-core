@@ -26,7 +26,7 @@ test ! -e "$test_root/generated"
 test -f "$test_root/generated/manifest.json"
 test -f "$test_root/generated/gitolite-migrated.dl"
 grep -q 'group_member("alice", "developers")' "$test_root/generated/gitolite-migrated.dl"
-grep -q 'grant_force("admin", "example.git")' "$test_root/generated/gitolite-migrated.dl"
+grep -q 'gitolite_access("admin", "example.git", "RW+")' "$test_root/generated/gitolite-migrated.dl"
 "$maelys_git_bin" validate "$test_root/generated/manifest.json" \
   --format json --compact | grep -q '"valid":true'
 "$maelys_git_bin" authorize "$test_root/generated/manifest.json" \
@@ -101,7 +101,7 @@ printf '%s\n' "$wild_plan" | grep -q '"canApply":true'
   "$test_root/wild" --apply --format json --compact >/dev/null
 grep -q 'group_namespace_creator("creators", "users")' \
   "$test_root/wild/gitolite-migrated.dl"
-grep -q 'owner_namespace_grant_force("users")' \
+grep -q 'owner_namespace_access("users", "RW+")' \
   "$test_root/wild/gitolite-migrated.dl"
 "$maelys_git_bin" validate "$test_root/wild/manifest.json" \
   --format json --compact | grep -q '"valid":true'
@@ -122,12 +122,12 @@ printf '%s\n' \
   '    - refs/heads/main = mallory' > "$test_root/refs.conf"
 "$maelys_git_bin" migrate gitolite "$test_root/refs.conf" \
   "$test_root/refs" --apply --format json --compact >/dev/null
-grep -q 'ref_grant_push("alice", "refs.git", "refs/heads/main")' \
+grep -q 'gitolite_ref_access("alice", "refs.git", "refs/heads/main", "RW")' \
   "$test_root/refs/gitolite-migrated.dl"
-grep -q 'ref_grant_force("bob", "refs.git", "refs/heads/release")' \
+grep -q 'gitolite_ref_access("bob", "refs.git", "refs/heads/release", "RW+")' \
   "$test_root/refs/gitolite-migrated.dl"
 # A bare literal denies as a prefix, as Gitolite does; grants stay exact.
-grep -qF 'effective_ref_deny("mallory", "refs.git", F) :- ref(F), starts_with(F, "refs/heads/main").' \
+grep -qF 'effective_ref_deny("mallory", "refs.git", F) :- user("mallory"), repository("refs.git"), ref(F), starts_with(F, "refs/heads/main").' \
   "$test_root/refs/gitolite-migrated.dl"
 "$maelys_git_bin" validate "$test_root/refs/manifest.json" \
   --format json --compact | grep -q '"valid":true'
@@ -180,7 +180,7 @@ plan=$("$maelys_git_bin" migrate gitolite "$test_root/prefix.conf" \
 printf '%s\n' "$plan" | grep -q '"canApply":true'
 "$maelys_git_bin" migrate gitolite "$test_root/prefix.conf" \
   "$test_root/prefix" --apply --format json --compact >/dev/null
-grep -qF 'effective_ref_grant_push("alice", "refs.git", F) :- ref(F), starts_with(F, "refs/heads/release/").' \
+grep -qF 'gitolite_ref_access("alice", "refs.git", "refs/heads/release/", "RW").' \
   "$test_root/prefix/gitolite-migrated.dl"
 "$maelys_git_bin" validate "$test_root/prefix/manifest.json" \
   --format json --compact | grep -q '"valid":true'
@@ -219,3 +219,54 @@ if "$maelys_git_bin" migrate gitolite "$test_root/regex.conf" \
   exit 1
 fi
 test ! -e "$test_root/regex"
+
+# The plan's budget: the engine's counts and bounds, the generator's worst
+# cases of execution, and the failure in the shape of a validate diagnostic.
+"$maelys_git_bin" describe migrate.gitolite --format json --compact --non-interactive | \
+  python3 -I -c '
+import json, sys
+schema = json.load(sys.stdin)["data"]["commands"][0]["outputSchema"]
+assert "budget" in schema["required"], schema["required"]
+budget = schema["properties"]["budget"]
+assert budget["additionalProperties"] is False
+assert set(budget["required"]) == {"compiled", "rules", "ruleLimit", "facts", "factLimit",
+    "predicates", "predicateLimit", "derivedPerPredicate", "derivedPerPredicateLimit",
+    "derived", "derivedLimit", "failure"}, budget["required"]
+'
+{
+  printf 'repo app\n'
+  i=1
+  while [ "$i" -le 129 ]; do printf '    RW = u%s\n' "$i"; i=$((i + 1)); done
+} > "$test_root/facts.conf"
+"$maelys_git_bin" migrate gitolite "$test_root/gitolite.conf" "$test_root/budget-ok" \
+  --format json --compact | python3 -I -c '
+import json, sys
+budget = json.load(sys.stdin)["data"]["budget"]
+assert budget["compiled"] is True and budget["failure"] is None, budget
+assert budget["facts"] == 8 and 0 < budget["rules"] <= budget["ruleLimit"], budget
+assert budget["derivedPerPredicate"] == 4, budget
+'
+"$maelys_git_bin" migrate gitolite "$test_root/facts.conf" "$test_root/budget-refused" \
+  --format json --compact | python3 -I -c '
+import json, sys
+data = json.load(sys.stdin)["data"]
+budget = data["budget"]
+assert data["canApply"] is False, data
+assert data["unsupported"] == ["line 130: policy budget exceeded: MAX_RULE_FACTS 129 requested, limit 128"], data
+assert budget["compiled"] is False and budget["rules"] is None and budget["facts"] is None, budget
+failure = budget["failure"]
+assert failure["kind"] == "capacity" and failure["budget"] == "MAX_RULE_FACTS", failure
+assert failure["requested"] == 129 and failure["limit"] == 128, failure
+'
+if "$maelys_git_bin" migrate gitolite "$test_root/facts.conf" "$test_root/budget-refused" \
+     --apply --format json --compact >/dev/null 2>"$test_root/budget-refused.err"; then
+  printf 'a migration beyond its fact budget was applied\n' >&2
+  exit 1
+fi
+python3 -I -c '
+import json, sys
+error = json.load(open(sys.argv[1]))["error"]
+assert error["code"] == "POLICY_FAILED", error
+assert "MAX_RULE_FACTS 129 requested, limit 128" in error["message"], error
+' "$test_root/budget-refused.err"
+test ! -e "$test_root/budget-refused"

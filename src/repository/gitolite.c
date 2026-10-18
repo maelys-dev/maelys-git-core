@@ -159,6 +159,8 @@ void maelys_git_gitolite_migration_result_clear(
     memset(result, 0, sizeof(*result));
 }
 
+/* One elementary grant on an exact repository is one fact: the subject, the
+ * repository and the Gitolite level, which the fixed rules read. */
 static int append_direct_grant(text_buffer_t *policy,
                                const char *right,
                                const char *subject,
@@ -166,25 +168,10 @@ static int append_direct_grant(text_buffer_t *policy,
     const char *prefix = subject[0] == '@' ? "group_" : "";
     const char *name = subject[0] == '@' ? subject + 1u : subject;
     if (!safe_atom(name)) return 0;
-    if (!strcmp(right, "C"))
-        return append_text(policy, "%sgrant_create(\"%s\", \"%s\").\n",
-                           prefix, name, repository);
-    if (!strcmp(right, "R"))
-        return append_text(policy, "%sgrant_read(\"%s\", \"%s\").\n",
-                           prefix, name, repository);
-    if (!strcmp(right, "RW") || !strcmp(right, "RW+")) {
-        if (!append_text(policy, "%sgrant_read(\"%s\", \"%s\").\n",
-                         prefix, name, repository) ||
-            !append_text(policy, "%sgrant_write(\"%s\", \"%s\").\n",
-                         prefix, name, repository) ||
-            !append_text(policy, "%sgrant_push(\"%s\", \"%s\").\n",
-                         prefix, name, repository)) return 0;
-        if (!strcmp(right, "RW+"))
-            return append_text(policy, "%sgrant_force(\"%s\", \"%s\").\n",
-                               prefix, name, repository);
-        return 1;
-    }
-    return 0;
+    if (strcmp(right, "C") && strcmp(right, "R") && strcmp(right, "RW") && strcmp(right, "RW+"))
+        return 0;
+    return append_text(policy, "%sgitolite_access(\"%s\", \"%s\", \"%s\").\n",
+                       prefix, name, repository, right);
 }
 
 static int append_creator_namespace_grant(text_buffer_t *policy,
@@ -200,21 +187,9 @@ static int append_creator_namespace_grant(text_buffer_t *policy,
                            prefix, name, namespace_name);
     }
     if (strcmp(subject, "CREATOR")) return 0;
-    if (!strcmp(right, "R"))
-        return append_text(policy, "owner_namespace_grant_read(\"%s\").\n",
-                           namespace_name);
-    if (!strcmp(right, "RW") || !strcmp(right, "RW+")) {
-        if (!append_text(policy, "owner_namespace_grant_read(\"%s\").\n",
-                         namespace_name) ||
-            !append_text(policy, "owner_namespace_grant_write(\"%s\").\n",
-                         namespace_name) ||
-            !append_text(policy, "owner_namespace_grant_push(\"%s\").\n",
-                         namespace_name)) return 0;
-        return strcmp(right, "RW+") ||
-               append_text(policy, "owner_namespace_grant_force(\"%s\").\n",
-                           namespace_name);
-    }
-    return 0;
+    if (strcmp(right, "R") && strcmp(right, "RW") && strcmp(right, "RW+")) return 0;
+    return append_text(policy, "owner_namespace_access(\"%s\", \"%s\").\n",
+                       namespace_name, right);
 }
 
 static int append_vref_fact(text_buffer_t *policy,
@@ -234,17 +209,18 @@ static int append_vref_fact(text_buffer_t *policy,
                        prefix, predicate, name, repository, *integer_value);
 }
 
-static int append_ref_fact(text_buffer_t *policy,
-                           const char *predicate,
-                           const char *subject,
-                           const char *repository,
-                           const char *ref_name) {
+/* An exact ref, or a prefix ending in '/', granted or denied at one level.
+ * Both are policy atoms: at most 63 bytes. */
+static int append_ref_access(text_buffer_t *policy,
+                             const char *subject,
+                             const char *repository,
+                             const char *ref_name,
+                             const char *level) {
     const char *prefix = subject[0] == '@' ? "group_" : "";
     const char *name = subject[0] == '@' ? subject + 1u : subject;
-    return safe_atom(name) && maelys_git_ref_name_is_valid(ref_name) &&
-           strlen(ref_name) < 64u &&
-           append_text(policy, "%s%s(\"%s\", \"%s\", \"%s\").\n",
-                       prefix, predicate, name, repository, ref_name);
+    return safe_atom(name) && strlen(ref_name) < 64u &&
+           append_text(policy, "%sgitolite_ref_access(\"%s\", \"%s\", \"%s\", \"%s\").\n",
+                       prefix, name, repository, ref_name, level);
 }
 
 /* The longest filter pattern the policy language accepts. */
@@ -300,146 +276,154 @@ static int append_once(text_buffer_t *policy, const char *line) {
     return append_text(policy, "%s", line);
 }
 
-/* A prefix is policy code: a rule with a constant filter pattern, never an
- * atom. The pattern holds only [A-Za-z0-9._/-], so it needs no escaping. The
- * access rules keep what an exact grant gives to requests that carry no ref:
- * the write operation and the summary of a push. */
+/* A prefix the request's ref_prefix facts can match: it ends with '/', it is
+ * an atom, and it is among the first MG_REF_PREFIX_FACTS prefixes of any ref
+ * it starts, because each of its '/' ends one of them. */
+static int prefix_is_fact(const char *pattern) {
+    size_t length = strlen(pattern), slashes = 0u;
+    if (length == 0u || length >= 64u || pattern[length - 1u] != '/') return 0;
+    for (size_t i = 0u; i < length; ++i) slashes += pattern[i] == '/';
+    return slashes <= MG_REF_PREFIX_FACTS;
+}
+
+/* Any other prefix is policy code: a rule with a constant filter pattern,
+ * never an atom, restricted to the request's subject and repository. The
+ * pattern holds only [A-Za-z0-9._/-], so it needs no escaping. A grant also
+ * gives what a ref grant gives to requests that carry no ref: has_ref_write,
+ * from which the write operation and the summary of a push follow. */
 static int append_ref_prefix_rules(text_buffer_t *policy, const char *right,
                                    const char *subject, const char *repository,
                                    const char *pattern) {
     int group = subject[0] == '@';
     const char *name = group ? subject + 1u : subject;
     if (!safe_atom(name) || strlen(pattern) > MG_REF_PATTERN_MAX) return 0;
-    char who[160], member[224], line[1024];
+    char who[160], guard[256], line[1024];
     if (group) {
         (void)snprintf(who, sizeof(who), "U");
-        (void)snprintf(member, sizeof(member), "effective_group_member(U, \"%s\"), ", name);
+        (void)snprintf(guard, sizeof(guard), "user(U), effective_group_member(U, \"%s\"), ", name);
     } else {
         (void)snprintf(who, sizeof(who), "\"%s\"", name);
-        member[0] = '\0';
+        (void)snprintf(guard, sizeof(guard), "user(\"%s\"), ", name);
     }
     static const char *const grant_heads[] = {"effective_ref_grant_push", "effective_ref_grant_force"};
-    if (!strcmp(right, "-")) {
+    const char *const deny_head[] = {"effective_ref_deny"};
+    const char *const *heads = grant_heads;
+    size_t head_count;
+    if (!strcmp(right, "-")) { heads = deny_head; head_count = 1u; }
+    else if (!strcmp(right, "RW")) head_count = 1u;
+    else if (!strcmp(right, "RW+")) head_count = 2u;
+    else return 0;
+    for (size_t i = 0u; i < head_count; ++i) {
         (void)snprintf(line, sizeof(line),
-                       "effective_ref_deny(%s, \"%s\", F) :- %sref(F), starts_with(F, \"%s\").\n",
-                       who, repository, member, pattern);
-        return append_once(policy, line);
-    }
-    if (strcmp(right, "RW") && strcmp(right, "RW+")) return 0;
-    size_t heads = strcmp(right, "RW+") ? 1u : 2u;
-    for (size_t i = 0u; i < heads; ++i) {
-        (void)snprintf(line, sizeof(line),
-                       "%s(%s, \"%s\", F) :- %sref(F), starts_with(F, \"%s\").\n",
-                       grant_heads[i], who, repository, member, pattern);
+                       "%s(%s, \"%s\", F) :- %srepository(\"%s\"), ref(F), starts_with(F, \"%s\").\n",
+                       heads[i], who, repository, guard, repository, pattern);
         if (!append_once(policy, line)) return 0;
     }
-    static const char *const access_heads[] = {"has_ref_write", "has_push_access"};
-    for (size_t i = 0u; i < 2u; ++i) {
-        if (group)
-            (void)snprintf(line, sizeof(line),
-                           "%s(U, \"%s\") :- effective_group_member(U, \"%s\").\n",
-                           access_heads[i], repository, name);
-        else
-            (void)snprintf(line, sizeof(line),
-                           "%s(\"%s\", \"%s\") :- user(\"%s\"), repository(\"%s\").\n",
-                           access_heads[i], name, repository, name, repository);
-        if (!append_once(policy, line)) return 0;
-    }
-    return 1;
+    if (heads == deny_head) return 1;
+    (void)snprintf(line, sizeof(line), "has_ref_write(%s, \"%s\") :- %srepository(\"%s\").\n",
+                   who, repository, guard, repository);
+    return append_once(policy, line);
 }
 
+/* With prefix_facts, a prefix the request's facts can match is a fact and
+ * *facts counts it; without, every prefix is a rule. */
 static int append_ref_grant(text_buffer_t *policy,
                             const char *right,
                             const char *subject,
                             const char *repository,
                             refex_kind_t kind,
-                            const char *ref_name) {
-    if (kind == REFEX_PREFIX)
-        return append_ref_prefix_rules(policy, right, subject, repository, ref_name);
-    if (!strcmp(right, "-"))
-        return append_ref_fact(policy, "ref_deny", subject, repository, ref_name);
-    if (strcmp(right, "RW") && strcmp(right, "RW+")) return 0;
-    if (!append_ref_fact(policy, "ref_grant_push", subject, repository, ref_name))
-        return 0;
-    return strcmp(right, "RW+") ||
-           append_ref_fact(policy, "ref_grant_force", subject, repository, ref_name);
+                            const char *ref_name,
+                            int prefix_facts,
+                            size_t *facts) {
+    if (strcmp(right, "-") && strcmp(right, "RW") && strcmp(right, "RW+")) return 0;
+    if (kind == REFEX_EXACT)
+        return append_ref_access(policy, subject, repository, ref_name, right);
+    if (prefix_facts && prefix_is_fact(ref_name)) {
+        ++*facts;
+        return append_ref_access(policy, subject, repository, ref_name, right);
+    }
+    return append_ref_prefix_rules(policy, right, subject, repository, ref_name);
 }
 
+/* The fixed rules. Each one that reads a policy fact indexed by a subject or
+ * a repository first binds them, and the ref or the path, from the request:
+ * what a derived predicate holds then depends on the request, never on the
+ * size of the configuration (see judge_budget). The level of the owner of a
+ * CREATOR namespace is an access level like any grant's, read by the same
+ * allow rules. */
 static int append_authorization_rules(text_buffer_t *policy) {
     if (!append_text(policy,
-        "\neffective_group_member(U, G) :- group_member(U, G).\n"
-        "effective_group_member(U, G) :- group_member(U, C), group_in_group(C, G).\n"
-        "effective_group_member(U, G) :- effective_group_member(U, C), group_in_group(C, G).\n"
-        "can_create_namespace(U, N) :- namespace_creator(U, N).\n"
-        "can_create_namespace(U, N) :- effective_group_member(U, G), group_namespace_creator(G, N).\n"
+        "\neffective_group_member(U, G) :- user(U), group_member(U, G).\n"
+        "effective_group_member(U, G) :- user(U), effective_group_member(U, C), group_in_group(C, G).\n"
+        "can_create_namespace(U, N) :- user(U), repository_owner_namespace(N, U), namespace_creator(U, N).\n"
+        "can_create_namespace(U, N) :- user(U), repository_owner_namespace(N, U), effective_group_member(U, G), group_namespace_creator(G, N).\n"
+        "effective_access(U, P, L) :- user(U), repository(P), gitolite_access(U, P, L).\n"
+        "effective_access(U, P, L) :- user(U), repository(P), effective_group_member(U, G), group_gitolite_access(G, P, L).\n"
+        "effective_access(U, P, L) :- user(U), repository(P), repository_owner_namespace(N, U), owner_namespace_access(N, L).\n"
         "push_request(R, U, P, F) :- request(R), user(U), repository(P), operation(\"push\"), ref(F).\n"
-        "effective_ref_grant_push(U, P, F) :- ref_grant_push(U, P, F).\n"
-        "effective_ref_grant_push(U, P, F) :- effective_group_member(U, G), group_ref_grant_push(G, P, F).\n"
-        "effective_ref_grant_force(U, P, F) :- ref_grant_force(U, P, F).\n"
-        "effective_ref_grant_force(U, P, F) :- effective_group_member(U, G), group_ref_grant_force(G, P, F).\n"
-        "effective_ref_deny(U, P, F) :- ref_deny(U, P, F).\n"
-        "effective_ref_deny(U, P, F) :- effective_group_member(U, G), group_ref_deny(G, P, F).\n"
-        "has_ref_write(U, P) :- effective_ref_grant_push(U, P, _).\n"
-        "has_push_access(U, P) :- grant_push(U, P).\n"
-        "has_push_access(U, P) :- grant_force(U, P).\n"
-        "has_push_access(U, P) :- effective_group_member(U, G), group_grant_push(G, P).\n"
-        "has_push_access(U, P) :- effective_group_member(U, G), group_grant_force(G, P).\n"
-        "has_push_access(U, P) :- effective_ref_grant_push(U, P, _).\n"
-        "has_push_access(U, P) :- effective_ref_grant_force(U, P, _).\n"
-        "\nallow(R) :- request(R), user(U), repository(P), operation(\"read\"), grant_read(U, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"write\"), grant_write(U, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), update_kind(\"create\"), grant_push(U, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), update_kind(\"fast_forward\"), grant_push(U, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), update_kind(\"force\"), grant_force(U, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), update_kind(\"delete\"), grant_force(U, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"merge\"), grant_push(U, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), grant_force(U, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"create\"), grant_create(U, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"read\"), effective_group_member(U, G), group_grant_read(G, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"write\"), effective_group_member(U, G), group_grant_write(G, P).\n"))
+        "effective_ref_grant_push(U, P, F) :- user(U), repository(P), ref(F), gitolite_ref_access(U, P, F, \"RW\").\n"
+        "effective_ref_grant_push(U, P, F) :- user(U), repository(P), ref(F), gitolite_ref_access(U, P, F, \"RW+\").\n"
+        "effective_ref_grant_push(U, P, F) :- user(U), repository(P), ref(F), ref_prefix(X), gitolite_ref_access(U, P, X, \"RW\").\n"
+        "effective_ref_grant_push(U, P, F) :- user(U), repository(P), ref(F), ref_prefix(X), gitolite_ref_access(U, P, X, \"RW+\").\n"
+        "effective_ref_grant_push(U, P, F) :- user(U), repository(P), ref(F), effective_group_member(U, G), group_gitolite_ref_access(G, P, F, \"RW\").\n"
+        "effective_ref_grant_push(U, P, F) :- user(U), repository(P), ref(F), effective_group_member(U, G), group_gitolite_ref_access(G, P, F, \"RW+\").\n"
+        "effective_ref_grant_push(U, P, F) :- user(U), repository(P), ref(F), ref_prefix(X), effective_group_member(U, G), group_gitolite_ref_access(G, P, X, \"RW\").\n"
+        "effective_ref_grant_push(U, P, F) :- user(U), repository(P), ref(F), ref_prefix(X), effective_group_member(U, G), group_gitolite_ref_access(G, P, X, \"RW+\").\n"
+        "effective_ref_grant_force(U, P, F) :- user(U), repository(P), ref(F), gitolite_ref_access(U, P, F, \"RW+\").\n"
+        "effective_ref_grant_force(U, P, F) :- user(U), repository(P), ref(F), ref_prefix(X), gitolite_ref_access(U, P, X, \"RW+\").\n"
+        "effective_ref_grant_force(U, P, F) :- user(U), repository(P), ref(F), effective_group_member(U, G), group_gitolite_ref_access(G, P, F, \"RW+\").\n"
+        "effective_ref_grant_force(U, P, F) :- user(U), repository(P), ref(F), ref_prefix(X), effective_group_member(U, G), group_gitolite_ref_access(G, P, X, \"RW+\").\n"
+        "effective_ref_deny(U, P, F) :- user(U), repository(P), ref(F), gitolite_ref_access(U, P, F, \"-\").\n"
+        "effective_ref_deny(U, P, F) :- user(U), repository(P), ref(F), ref_prefix(X), gitolite_ref_access(U, P, X, \"-\").\n"
+        "effective_ref_deny(U, P, F) :- user(U), repository(P), ref(F), effective_group_member(U, G), group_gitolite_ref_access(G, P, F, \"-\").\n"
+        "effective_ref_deny(U, P, F) :- user(U), repository(P), ref(F), ref_prefix(X), effective_group_member(U, G), group_gitolite_ref_access(G, P, X, \"-\").\n"
+        "has_ref_write(U, P) :- user(U), repository(P), gitolite_ref_access(U, P, _, \"RW\").\n"
+        "has_ref_write(U, P) :- user(U), repository(P), gitolite_ref_access(U, P, _, \"RW+\").\n"
+        "has_ref_write(U, P) :- user(U), repository(P), effective_group_member(U, G), group_gitolite_ref_access(G, P, _, \"RW\").\n"
+        "has_ref_write(U, P) :- user(U), repository(P), effective_group_member(U, G), group_gitolite_ref_access(G, P, _, \"RW+\").\n"
+        "has_push_access(U, P) :- effective_access(U, P, \"RW\").\n"
+        "has_push_access(U, P) :- effective_access(U, P, \"RW+\").\n"
+        "has_push_access(U, P) :- has_ref_write(U, P).\n"))
         return 0;
     if (!append_text(policy,
+        "\nallow(R) :- request(R), user(U), repository(P), operation(\"read\"), effective_access(U, P, \"R\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"read\"), effective_access(U, P, \"RW\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"read\"), effective_access(U, P, \"RW+\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"write\"), effective_access(U, P, \"RW\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"write\"), effective_access(U, P, \"RW+\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"write\"), has_ref_write(U, P).\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), update_kind(\"create\"), effective_access(U, P, \"RW\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), update_kind(\"create\"), effective_access(U, P, \"RW+\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), update_kind(\"fast_forward\"), effective_access(U, P, \"RW\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), update_kind(\"fast_forward\"), effective_access(U, P, \"RW+\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), update_kind(\"force\"), effective_access(U, P, \"RW+\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), update_kind(\"delete\"), effective_access(U, P, \"RW+\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"merge\"), effective_access(U, P, \"RW\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"merge\"), effective_access(U, P, \"RW+\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), effective_access(U, P, \"RW+\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"create\"), effective_access(U, P, \"C\").\n"
         "allow(R) :- push_request(R, U, P, F), update_kind(\"create\"), effective_ref_grant_push(U, P, F).\n"
         "allow(R) :- push_request(R, U, P, F), update_kind(\"fast_forward\"), effective_ref_grant_push(U, P, F).\n"
         "allow(R) :- push_request(R, U, P, F), update_kind(\"force\"), effective_ref_grant_force(U, P, F).\n"
         "allow(R) :- push_request(R, U, P, F), update_kind(\"delete\"), effective_ref_grant_force(U, P, F).\n"
         "deny(R) :- push_request(R, U, P, F), effective_ref_deny(U, P, F).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"write\"), has_ref_write(U, P).\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), changed_count(_), has_push_access(U, P).\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"merge\"), ref(F), effective_ref_grant_push(U, P, F).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), ref(F), effective_ref_grant_force(U, P, F).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), update_kind(\"create\"), effective_group_member(U, G), group_grant_push(G, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), update_kind(\"fast_forward\"), effective_group_member(U, G), group_grant_push(G, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), update_kind(\"force\"), effective_group_member(U, G), group_grant_force(G, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), update_kind(\"delete\"), effective_group_member(U, G), group_grant_force(G, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"merge\"), effective_group_member(U, G), group_grant_push(G, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), effective_group_member(U, G), group_grant_force(G, P).\n"
-        "allow(R) :- request(R), user(U), repository(P), operation(\"create\"), effective_group_member(U, G), group_grant_create(G, P).\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), ref(F), effective_ref_grant_force(U, P, F).\n"))
+        return 0;
+    if (!append_text(policy,
         "allow(R) :- request(R), user(U), operation(\"create\"), repository_owner_namespace(N, U), can_create_namespace(U, N).\n"
-        "allow(R) :- request(R), user(U), operation(\"read\"), repository_owner_namespace(N, U), owner_namespace_grant_read(N).\n"
-        "allow(R) :- request(R), user(U), operation(\"write\"), repository_owner_namespace(N, U), owner_namespace_grant_write(N).\n"
-        "allow(R) :- request(R), user(U), operation(\"push\"), update_kind(\"create\"), repository_owner_namespace(N, U), owner_namespace_grant_push(N).\n"
-        "allow(R) :- request(R), user(U), operation(\"push\"), update_kind(\"fast_forward\"), repository_owner_namespace(N, U), owner_namespace_grant_push(N).\n"
-        "allow(R) :- request(R), user(U), operation(\"push\"), update_kind(\"force\"), repository_owner_namespace(N, U), owner_namespace_grant_force(N).\n"
-        "allow(R) :- request(R), user(U), operation(\"push\"), update_kind(\"delete\"), repository_owner_namespace(N, U), owner_namespace_grant_force(N).\n"
-        "allow(R) :- request(R), user(U), operation(\"push\"), changed_count(_), repository_owner_namespace(N, U), owner_namespace_grant_push(N).\n"
-        "allow(R) :- request(R), user(U), operation(\"push\"), changed_count(_), repository_owner_namespace(N, U), owner_namespace_grant_force(N).\n"
-        "allow(R) :- request(R), user(U), operation(\"merge\"), repository_owner_namespace(N, U), owner_namespace_grant_push(N).\n"
-        "allow(R) :- request(R), user(U), operation(\"update-ref\"), repository_owner_namespace(N, U), owner_namespace_grant_force(N).\n"))
+))
         return 0;
     return append_text(policy,
-        "effective_vref_deny_name(U, P, F) :- vref_deny_name(U, P, F).\n"
-        "effective_vref_deny_name(U, P, F) :- effective_group_member(U, G), group_vref_deny_name(G, P, F).\n"
-        "effective_vref_deny_count(U, P, N) :- vref_deny_count(U, P, N).\n"
-        "effective_vref_deny_count(U, P, N) :- effective_group_member(U, G), group_vref_deny_count(G, P, N).\n"
-        "effective_vref_deny_new_count(U, P, N) :- vref_deny_new_count(U, P, N).\n"
-        "effective_vref_deny_new_count(U, P, N) :- effective_group_member(U, G), group_vref_deny_new_count(G, P, N).\n"
-        "effective_vref_deny_max_new_binary(U, P, N) :- vref_deny_max_new_binary(U, P, N).\n"
-        "effective_vref_deny_max_new_binary(U, P, N) :- effective_group_member(U, G), group_vref_deny_max_new_binary(G, P, N).\n"
-        "vref_count_exceeded(U, P) :- changed_count(C), effective_vref_deny_count(U, P, N), C > N.\n"
-        "vref_new_count_exceeded(U, P) :- added_count(C), effective_vref_deny_new_count(U, P, N), C > N.\n"
-        "vref_new_binary_exceeded(U, P) :- change_binary(true), change_blob_size(S), effective_vref_deny_max_new_binary(U, P, N), S > N.\n"
-        "deny(R) :- request(R), user(U), repository(P), operation(\"push\"), path(F), effective_vref_deny_name(U, P, F).\n"
+        "vref_count_exceeded(U, P) :- user(U), repository(P), changed_count(C), vref_deny_count(U, P, N), C > N.\n"
+        "vref_count_exceeded(U, P) :- user(U), repository(P), changed_count(C), effective_group_member(U, G), group_vref_deny_count(G, P, N), C > N.\n"
+        "vref_new_count_exceeded(U, P) :- user(U), repository(P), added_count(C), vref_deny_new_count(U, P, N), C > N.\n"
+        "vref_new_count_exceeded(U, P) :- user(U), repository(P), added_count(C), effective_group_member(U, G), group_vref_deny_new_count(G, P, N), C > N.\n"
+        "vref_new_binary_exceeded(U, P) :- user(U), repository(P), change_binary(true), change_blob_size(S), vref_deny_max_new_binary(U, P, N), S > N.\n"
+        "vref_new_binary_exceeded(U, P) :- user(U), repository(P), change_binary(true), change_blob_size(S), effective_group_member(U, G), group_vref_deny_max_new_binary(G, P, N), S > N.\n"
+        "deny(R) :- request(R), user(U), repository(P), operation(\"push\"), path(F), vref_deny_name(U, P, F).\n"
+        "deny(R) :- request(R), user(U), repository(P), operation(\"push\"), path(F), effective_group_member(U, G), group_vref_deny_name(G, P, F).\n"
         "deny(R) :- request(R), user(U), repository(P), operation(\"push\"), vref_count_exceeded(U, P).\n"
         "deny(R) :- request(R), user(U), repository(P), operation(\"push\"), vref_new_count_exceeded(U, P).\n"
         "deny(R) :- request(R), user(U), repository(P), operation(\"push\"), vref_new_binary_exceeded(U, P).\n");
@@ -484,8 +468,90 @@ static int parse_vref_rule(char *descriptor, vref_rule_t *out) {
     return 0;
 }
 
+/* The group graph of the configuration: who is a direct member of what, a
+ * user or, when nested, a group. */
+typedef struct {
+    char *member;
+    char *group;
+    int nested;
+} membership_t;
+
+typedef struct {
+    membership_t *items;
+    size_t count;
+    size_t capacity;
+} memberships_t;
+
+static int add_membership(memberships_t *graph, const char *member, const char *group, int nested) {
+    if (graph->count == graph->capacity) {
+        size_t next = graph->capacity ? graph->capacity * 2u : 64u;
+        membership_t *grown = realloc(graph->items, next * sizeof(*grown));
+        if (!grown) return 0;
+        graph->items = grown;
+        graph->capacity = next;
+    }
+    membership_t *item = &graph->items[graph->count];
+    item->member = strdup(member);
+    item->group = strdup(group);
+    item->nested = nested;
+    if (!item->member || !item->group) {
+        free(item->member);
+        free(item->group);
+        return 0;
+    }
+    ++graph->count;
+    return 1;
+}
+
+static void memberships_clear(memberships_t *graph) {
+    for (size_t i = 0u; i < graph->count; ++i) {
+        free(graph->items[i].member);
+        free(graph->items[i].group);
+    }
+    free(graph->items);
+    memset(graph, 0, sizeof(*graph));
+}
+
+static int group_seen(const char *const *groups, size_t count, const char *group) {
+    for (size_t i = 0u; i < count; ++i)
+        if (!strcmp(groups[i], group)) return 1;
+    return 0;
+}
+
+/* The most groups any user belongs to, directly or through nesting: what
+ * effective_group_member holds for one request. Returns 0 on allocation
+ * failure with *out untouched. */
+static int most_groups_of_a_user(const memberships_t *graph, size_t *out) {
+    size_t most = 0u;
+    const char **reached = graph->count ? malloc(graph->count * sizeof(*reached)) : NULL;
+    if (graph->count && !reached) return 0;
+    for (size_t u = 0u; u < graph->count; ++u) {
+        if (graph->items[u].nested) continue;
+        const char *user = graph->items[u].member;
+        size_t count = 0u;
+        for (size_t i = 0u; i < graph->count; ++i)
+            if (!graph->items[i].nested && !strcmp(graph->items[i].member, user) &&
+                !group_seen(reached, count, graph->items[i].group))
+                reached[count++] = graph->items[i].group;
+        /* Breadth first over nesting; each group is reached once. */
+        for (size_t next = 0u; next < count; ++next)
+            for (size_t i = 0u; i < graph->count; ++i)
+                if (graph->items[i].nested && !strcmp(graph->items[i].member, reached[next]) &&
+                    !group_seen(reached, count, graph->items[i].group))
+                    reached[count++] = graph->items[i].group;
+        if (count > most) most = count;
+    }
+    free(reached);
+    *out = most;
+    return 1;
+}
+
 static maelys_git_result_t parse_gitolite(FILE *input,
+                                          int prefix_facts,
                                           text_buffer_t *policy,
+                                          memberships_t *graph,
+                                          size_t *out_lines,
+                                          size_t *out_prefix_facts,
                                           maelys_git_gitolite_migration_result_t *migration,
                                           maelys_git_error_t *error) {
     char line[4096];
@@ -540,6 +606,8 @@ static maelys_git_result_t parse_gitolite(FILE *input,
                                      name, group)) return MAELYS_GIT_ERR_IO;
                 } else if (!append_text(policy, "group_member(\"%s\", \"%s\").\n",
                                         name, group)) return MAELYS_GIT_ERR_IO;
+                if (!add_membership(graph, name, group, member[0] == '@'))
+                    return MAELYS_GIT_ERR_IO;
             }
             if (!supported) {
                 if (!add_unsupported(migration, line_number,
@@ -676,7 +744,8 @@ static maelys_git_result_t parse_gitolite(FILE *input,
                     is_ref_rule ?
                     (repositories[i].kind == REPOSITORY_EXACT &&
                      append_ref_grant(policy, ref_permission, subject,
-                                      repositories[i].value, ref_kind, ref_name)) :
+                                      repositories[i].value, ref_kind, ref_name,
+                                      prefix_facts, out_prefix_facts)) :
                     repositories[i].kind == REPOSITORY_EXACT ?
                         append_direct_grant(policy, right, subject, repositories[i].value) :
                         append_creator_namespace_grant(policy, right, subject,
@@ -699,22 +768,120 @@ static maelys_git_result_t parse_gitolite(FILE *input,
         return MAELYS_GIT_ERR_IO;
     }
     if (!append_authorization_rules(policy)) return MAELYS_GIT_ERR_IO;
-    /* Every converted prefix is a rule, and a policy holds a bounded number of
-     * them. Exceeding it is reported like any other entry that cannot be
-     * migrated: the plan says so and nothing is applied. */
-    size_t rules = 0u;
-    for (const char *neck = policy->data; (neck = strstr(neck, " :- ")) != NULL; neck += 4)
-        ++rules;
-    size_t limit = 0u;
-    maelys_git_result_t limited = mg_policy_rule_limit(&limit, error);
-    if (limited != MAELYS_GIT_OK) return limited;
-    if (rules > limit) {
-        char detail[96];
-        (void)snprintf(detail, sizeof(detail), "%zu rules, limit %zu", rules, limit);
-        if (!add_unsupported(migration, line_number, "rule budget exceeded", detail))
+    *out_lines = line_number;
+    return MAELYS_GIT_OK;
+}
+
+#define MG_GITOLITE_POLICY_ID "maelys-git.gitolite.authorization"
+
+static int build_manifest(const text_buffer_t *policy, text_buffer_t *manifest) {
+    char policy_sha[MAELYS_CLI_SHA256_HEX_SIZE];
+    maelys_cli_sha256_hex(policy->data, policy->length, policy_sha);
+    return append_text(manifest,
+        "{\n  \"policy_set_id\": \"maelys-git.gitolite-migration\",\n"
+        "  \"policy_set_version\": \"1\",\n  \"manifest_version\": \"1\",\n"
+        "  \"default_profile\": \"enforce\",\n  \"created_for\": \"maelys-git-core\",\n"
+        "  \"strict_loading\": true,\n  \"fail_closed\": true,\n  \"capabilities\": [],\n"
+        "  \"policies\": [{\n    \"policy_id\": \"" MG_GITOLITE_POLICY_ID "\",\n"
+        "    \"domain\": \"maelys_git\",\n    \"file\": \"gitolite-migrated.dl\",\n"
+        "    \"sha256\": \"%s\",\n    \"mode\": \"enforce\",\n"
+        "    \"enabled\": true,\n    \"description\": \"Safely migrated Gitolite ACL subset\",\n"
+        "    \"queries\": [{\"name\":\"allow\",\"arity\":1},{\"name\":\"deny\",\"arity\":1}]\n"
+        "  }]\n}\n", policy_sha);
+}
+
+/* What one derived predicate holds for one request, beside the groups of its
+ * user, under the fixed rules: effective_access holds at most the four
+ * levels, whether they come from a grant or from the owner's namespace;
+ * every other derived predicate one fact, for the request's subject,
+ * repository and ref. Together, beside the groups: effective_access 4,
+ * can_create_namespace, push_request, the three ref grants, has_ref_write,
+ * has_push_access, the three VREF excesses, allow and deny, one each. */
+#define MG_GITOLITE_DERIVED_PER_PREDICATE 4u
+#define MG_GITOLITE_DERIVED_BESIDE_GROUPS 16u
+
+static int add_budget_refusal(maelys_git_gitolite_migration_result_t *migration, size_t line_number,
+                              const maelys_git_failure_detail_t *detail, const char *subject) {
+    char text[192];
+    if (detail->kind == MAELYS_GIT_FAILURE_CAPACITY)
+        (void)snprintf(text, sizeof(text), "%s %llu requested, limit %llu%s%s", detail->budget,
+                       (unsigned long long)detail->requested, (unsigned long long)detail->limit,
+                       subject ? " for " : "", subject ? subject : "");
+    else
+        (void)snprintf(text, sizeof(text), "%s", detail->diagnostic[0] ? detail->diagnostic : "refused");
+    return add_unsupported(migration, line_number,
+                           detail->kind == MAELYS_GIT_FAILURE_CAPACITY ? "policy budget exceeded" :
+                           "policy refused by the engine", text);
+}
+
+/* The plan's verdict on the generated policy. The engine compiles it as it
+ * will load it, which judges every budget of compilation. Execution depends
+ * on the request, which the engine cannot see at load time: its worst case
+ * is the generator's to compute, from the fixed rules and the group graph.
+ * A budget that does not hold is an entry that cannot be migrated, and
+ * budget.failure says which, for a machine. */
+static maelys_git_result_t judge_budget(const text_buffer_t *policy, const text_buffer_t *manifest,
+                                        const memberships_t *graph, size_t line_number,
+                                        maelys_git_gitolite_migration_result_t *migration,
+                                        maelys_git_error_t *error) {
+    maelys_git_policy_budget_t *budget = &migration->budget;
+    maelys_git_policy_t *compiled = NULL;
+    maelys_git_error_t refusal = {0};
+    maelys_git_result_t opened = mg_policy_open_buffer(manifest->data, manifest->length,
+        MG_GITOLITE_POLICY_ID, policy->data, policy->length, &compiled, &refusal);
+    if (opened != MAELYS_GIT_OK && opened != MAELYS_GIT_ERR_POLICY) {
+        mg_error_set(error, opened, 0, "%s", refusal.message);
+        return opened;
+    }
+    maelys_git_result_t result = mg_policy_budget(compiled, budget, error);
+    maelys_git_policy_close(compiled);
+    if (result != MAELYS_GIT_OK) return result;
+    if (opened != MAELYS_GIT_OK) {
+        budget->failure = refusal.detail;
+        if (budget->failure.kind == MAELYS_GIT_FAILURE_NONE)
+            budget->failure.kind = MAELYS_GIT_FAILURE_ENGINE;
+        if (!add_budget_refusal(migration, line_number, &budget->failure, NULL))
             return MAELYS_GIT_ERR_IO;
     }
-    return MAELYS_GIT_OK;
+    size_t groups = 0u;
+    if (!most_groups_of_a_user(graph, &groups)) return MAELYS_GIT_ERR_IO;
+    budget->derived_per_predicate =
+        groups > MG_GITOLITE_DERIVED_PER_PREDICATE ? groups : MG_GITOLITE_DERIVED_PER_PREDICATE;
+    budget->derived = groups + MG_GITOLITE_DERIVED_BESIDE_GROUPS;
+    maelys_git_failure_detail_t excess = {.kind = MAELYS_GIT_FAILURE_CAPACITY};
+    if (budget->derived_per_predicate > budget->derived_per_predicate_limit) {
+        (void)mg_copy_string(excess.budget, sizeof(excess.budget), "MAX_FACTS_PER_PRED");
+        excess.requested = budget->derived_per_predicate;
+        excess.limit = budget->derived_per_predicate_limit;
+    } else if (budget->derived > budget->derived_limit) {
+        (void)mg_copy_string(excess.budget, sizeof(excess.budget), "MAX_IDB_FACTS");
+        excess.requested = budget->derived;
+        excess.limit = budget->derived_limit;
+    } else {
+        return MAELYS_GIT_OK;
+    }
+    (void)mg_copy_string(excess.diagnostic, sizeof(excess.diagnostic),
+                         "derived:effective_group_member");
+    if (budget->failure.kind == MAELYS_GIT_FAILURE_NONE) budget->failure = excess;
+    return add_budget_refusal(migration, line_number, &excess, "effective_group_member")
+        ? MAELYS_GIT_OK : MAELYS_GIT_ERR_IO;
+}
+
+/* One encoding of the configuration, its manifest and the plan's verdict. */
+static maelys_git_result_t generate(FILE *input, int prefix_facts, text_buffer_t *policy,
+                                    text_buffer_t *manifest, size_t *out_prefix_facts,
+                                    maelys_git_gitolite_migration_result_t *migration,
+                                    maelys_git_error_t *error) {
+    memberships_t graph = {0};
+    size_t lines = 0u;
+    *out_prefix_facts = 0u;
+    maelys_git_result_t result = parse_gitolite(input, prefix_facts, policy, &graph, &lines,
+                                                out_prefix_facts, migration, error);
+    if (result == MAELYS_GIT_OK && !build_manifest(policy, manifest)) result = MAELYS_GIT_ERR_IO;
+    if (result == MAELYS_GIT_OK)
+        result = judge_budget(policy, manifest, &graph, lines, migration, error);
+    memberships_clear(&graph);
+    return result;
 }
 
 maelys_git_result_t maelys_git_migrate_gitolite(
@@ -739,39 +906,63 @@ maelys_git_result_t maelys_git_migrate_gitolite(
                      "cannot read Gitolite configuration: %s", strerror(errno));
         return MAELYS_GIT_ERR_IO;
     }
-    text_buffer_t policy = {0};
-    maelys_git_result_t result = parse_gitolite(input, &policy, out_result, error);
+    text_buffer_t policy = {0}, manifest = {0};
+    size_t prefix_facts = 0u;
+    maelys_git_result_t result = generate(input, 1, &policy, &manifest, &prefix_facts,
+                                          out_result, error);
+    /* A prefix as a fact spends a fact and an atom where the rule form spends
+     * rules. When those budgets refuse a policy that has prefix facts, the
+     * rule form is tried, and kept if every budget then holds: what the rule
+     * form of 62778f0 admitted stays admitted. */
+    const maelys_git_failure_detail_t *refused = &out_result->budget.failure;
+    if (result == MAELYS_GIT_OK && prefix_facts > 0u &&
+        refused->kind == MAELYS_GIT_FAILURE_CAPACITY &&
+        (!strcmp(refused->budget, "MAX_RULE_FACTS") || !strcmp(refused->budget, "MAX_POLICY_ATOMS"))) {
+        text_buffer_t rule_policy = {0}, rule_manifest = {0};
+        maelys_git_gitolite_migration_result_t rule_form;
+        memset(&rule_form, 0, sizeof(rule_form));
+        rewind(input);
+        result = generate(input, 0, &rule_policy, &rule_manifest, &prefix_facts, &rule_form, error);
+        if (result == MAELYS_GIT_OK && rule_form.budget.failure.kind == MAELYS_GIT_FAILURE_NONE) {
+            maelys_git_gitolite_migration_result_clear(out_result);
+            free(policy.data); free(manifest.data);
+            *out_result = rule_form;
+            policy = rule_policy;
+            manifest = rule_manifest;
+        } else {
+            maelys_git_gitolite_migration_result_clear(&rule_form);
+            free(rule_policy.data); free(rule_manifest.data);
+        }
+    }
     fclose(input);
     if (result != MAELYS_GIT_OK) {
-        free(policy.data);
+        free(policy.data); free(manifest.data);
         maelys_git_gitolite_migration_result_clear(out_result);
         if (!error->message[0]) mg_error_set(error, result, errno, "cannot compile Gitolite policy");
         return result;
     }
-    if (!apply) { free(policy.data); return MAELYS_GIT_OK; }
+    if (!apply) { free(policy.data); free(manifest.data); return MAELYS_GIT_OK; }
+    /* A budget that does not hold refuses as the engine would at load time,
+     * with the same detail, before anything is written. */
+    const maelys_git_failure_detail_t *failure = &out_result->budget.failure;
+    if (failure->kind != MAELYS_GIT_FAILURE_NONE) {
+        free(policy.data); free(manifest.data);
+        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                     "the generated policy is refused by its budget: %s %llu requested, limit %llu%s%s",
+                     failure->budget[0] ? failure->budget : failure->diagnostic,
+                     (unsigned long long)failure->requested, (unsigned long long)failure->limit,
+                     failure->kind == MAELYS_GIT_FAILURE_CAPACITY ? "" : " ",
+                     failure->kind == MAELYS_GIT_FAILURE_CAPACITY ? "" :
+                         maelys_git_failure_kind_name(failure->kind));
+        mg_error_set_detail(error, failure);
+        return MAELYS_GIT_ERR_POLICY;
+    }
     if (out_result->unsupported_count) {
-        free(policy.data);
+        free(policy.data); free(manifest.data);
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
                      "migration has %zu unsupported entries; apply is refused",
                      out_result->unsupported_count);
         return MAELYS_GIT_ERR_PROTOCOL;
-    }
-    char policy_sha[MAELYS_CLI_SHA256_HEX_SIZE];
-    maelys_cli_sha256_hex(policy.data, policy.length, policy_sha);
-    text_buffer_t manifest = {0};
-    if (!append_text(&manifest,
-        "{\n  \"policy_set_id\": \"maelys-git.gitolite-migration\",\n"
-        "  \"policy_set_version\": \"1\",\n  \"manifest_version\": \"1\",\n"
-        "  \"default_profile\": \"enforce\",\n  \"created_for\": \"maelys-git-core\",\n"
-        "  \"strict_loading\": true,\n  \"fail_closed\": true,\n  \"capabilities\": [],\n"
-        "  \"policies\": [{\n    \"policy_id\": \"maelys-git.gitolite.authorization\",\n"
-        "    \"domain\": \"maelys_git\",\n    \"file\": \"gitolite-migrated.dl\",\n"
-        "    \"sha256\": \"%s\",\n    \"mode\": \"enforce\",\n"
-        "    \"enabled\": true,\n    \"description\": \"Safely migrated Gitolite ACL subset\",\n"
-        "    \"queries\": [{\"name\":\"allow\",\"arity\":1},{\"name\":\"deny\",\"arity\":1}]\n"
-        "  }]\n}\n", policy_sha)) {
-        free(policy.data);
-        return MAELYS_GIT_ERR_IO;
     }
     /* The transaction directory lives beside its destination so that the
      * final rename stays on one file system. */
@@ -803,6 +994,7 @@ maelys_git_result_t maelys_git_migrate_gitolite(
         if (maelys_git_policy_open(manifest_path, &generated, &refusal) != MAELYS_GIT_OK) {
             mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
                          "the generated policy is refused by the engine: %.3800s", refusal.message);
+            mg_error_set_detail(error, &refusal.detail);
             result = MAELYS_GIT_ERR_POLICY;
         }
         maelys_git_policy_close(generated);

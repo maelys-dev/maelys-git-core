@@ -3,6 +3,7 @@
 #include <maelys/cli/digest.h>
 #include <maelys/datalog.h>
 #include <maelys/datalog_explanations.h>
+#include <maelys/datalog_program.h>
 
 #include <pthread.h>
 #include <stdint.h>
@@ -40,6 +41,16 @@ struct maelys_git_policy {
     size_t path_limit;
     request_bound_t exceeded; /* the bound that refused the last request facts */
     char repository_copy[MAELYS_GIT_MAX_REPOSITORY];
+    /* The first '/'-terminated prefixes of the request's ref, one string each. */
+    char ref_prefixes[MG_REF_PREFIX_FACTS][MAELYS_GIT_MAX_REF];
+    /* Whether a policy of the set reads ref_prefix/1, ref_prefix_count/1:
+     * only then does a request carry those facts. */
+    int emit_ref_prefix;
+    int emit_ref_prefix_count;
+    /* The largest compiled program of the set, as the engine counts it. */
+    size_t compiled_rules;
+    size_t compiled_facts;
+    size_t compiled_predicates;
     char fingerprint[MAELYS_DATALOG_PUBLIC_FINGERPRINT_BYTES];
     /* Allocated by the first explanation, kept until close: the storage of a
      * prepared explanation, and the document rendered from it. */
@@ -62,6 +73,8 @@ static const maelys_datalog_predicate_t k_git_domain[] = {
     {"repository_owner_namespace", 2u, MAELYS_DATALOG_PREDICATE_EDB},
     {"operation", 1u, MAELYS_DATALOG_PREDICATE_EDB},
     {"ref", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"ref_prefix", 1u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"ref_prefix_count", 1u, MAELYS_DATALOG_PREDICATE_EDB},
     {"path", 1u, MAELYS_DATALOG_PREDICATE_EDB},
     {"old_path", 1u, MAELYS_DATALOG_PREDICATE_EDB},
     {"ref_kind", 1u, MAELYS_DATALOG_PREDICATE_EDB},
@@ -130,6 +143,12 @@ static const maelys_datalog_predicate_t k_git_domain[] = {
     {"group_vref_deny_new_count", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
     {"vref_deny_max_new_binary", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
     {"group_vref_deny_max_new_binary", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"gitolite_access", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_gitolite_access", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"gitolite_ref_access", 4u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"group_gitolite_ref_access", 4u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"owner_namespace_access", 2u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
+    {"effective_access", 3u, MAELYS_DATALOG_PREDICATE_IDB},
     {"ref_grant_push", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
     {"group_ref_grant_push", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
     {"ref_grant_force", 3u, MAELYS_DATALOG_PREDICATE_POLICY_FACT},
@@ -284,11 +303,6 @@ size_t mg_policy_explanation_storage_bytes(const maelys_git_policy_t *policy) {
     return policy ? policy->explanation_storage_bytes : 0u;
 }
 
-maelys_git_result_t mg_policy_rule_limit(size_t *out_limit, maelys_git_error_t *error) {
-    if (!out_limit) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
-    return read_limit(MAELYS_DATALOG_LIMIT_MAX_RULES, out_limit, error);
-}
-
 /* Creates the session of one policy and records its identity. */
 static maelys_git_result_t prepare_entry(const maelys_datalog_policy_t *loaded, size_t index,
                                          policy_entry_t *entry, maelys_git_error_t *error) {
@@ -310,29 +324,78 @@ static maelys_git_result_t prepare_entry(const maelys_datalog_policy_t *loaded, 
     return MAELYS_GIT_OK;
 }
 
-maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
-                                            maelys_git_policy_t **out_policy,
-                                            maelys_git_error_t *error) {
-    maelys_git_error_clear(error);
-    if (!manifest_path || !out_policy) {
-        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0, "manifest path and output are required");
-        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
-    }
-    *out_policy = NULL;
+static maelys_git_result_t register_domain(maelys_git_error_t *error) {
     if (pthread_once(&s_domain_once, register_git_domain) != 0 ||
         s_domain_status != MAELYS_DATALOG_STATUS_OK) {
         mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "cannot register the maelys_git domain: %s",
                      maelys_datalog_status_name(s_domain_status));
         return MAELYS_GIT_ERR_POLICY;
     }
-    /* The engine reads the manifest and its sources, checks their digests and
-     * is the only reader of the policy language. */
-    maelys_datalog_diagnostic_t diagnostic = MAELYS_DATALOG_DIAGNOSTIC_INIT;
-    maelys_datalog_policy_t *loaded = NULL;
-    maelys_datalog_status_t status = maelys_datalog_policy_load_manifest(
-        manifest_path, MAELYS_DATALOG_PUBLIC_ALLOW_UNDECLARED_POLICY_ATOMS, &loaded, &diagnostic);
-    if (status != MAELYS_DATALOG_STATUS_OK) return load_failure(error, status, &diagnostic);
+    return MAELYS_GIT_OK;
+}
 
+/* The largest value of one statistic over the compiled programs of the set. */
+static maelys_git_result_t largest_stat(const maelys_datalog_policy_t *loaded, size_t count,
+                                        maelys_datalog_policy_stat_t statistic, size_t *out,
+                                        maelys_git_error_t *error) {
+    *out = 0u;
+    for (size_t i = 0u; i < count; ++i) {
+        size_t value = 0u;
+        maelys_datalog_status_t status = maelys_datalog_policy_stat_get(loaded, i, statistic, &value);
+        if (status != MAELYS_DATALOG_STATUS_OK) return engine_failure(error, "policy statistics", status);
+        if (value > *out) *out = value;
+    }
+    return MAELYS_GIT_OK;
+}
+
+/* Whether the compiled program of a session reads NAME/ARITY in a rule body,
+ * from the engine's read-only program view, never from the policy text. An
+ * atom, its negation and the source of an aggregate read their predicate; a
+ * comparison and a filter read none. A predicate the registry does not hold
+ * cannot be read. Anything the view cannot answer, an unknown literal kind or
+ * a program ABI other than this one, reads: a fact is never withheld from a
+ * policy that may need it. */
+static int session_reads(const maelys_datalog_session_t *session, const char *name, size_t arity) {
+    const maelys_datalog_program_t *program = NULL;
+    maelys_datalog_program_info_t info;
+    if (maelys_datalog_session_program(session, &program) != MAELYS_DATALOG_STATUS_OK || !program ||
+        maelys_datalog_program_info(program, &info) != MAELYS_DATALOG_STATUS_OK ||
+        info.abi_version != MAELYS_DATALOG_PROGRAM_ABI_VERSION)
+        return 1;
+    for (size_t r = 0u; r < info.rule_count; ++r) {
+        maelys_datalog_ir_rule_t rule;
+        if (maelys_datalog_program_rule(program, r, &rule) != MAELYS_DATALOG_STATUS_OK ||
+            rule.body_count > MAELYS_DATALOG_IR_MAX_BODY)
+            return 1;
+        for (size_t b = 0u; b < rule.body_count; ++b) {
+            const maelys_datalog_ir_literal_t *literal = &rule.body[b];
+            switch (literal->kind) {
+                case MAELYS_DATALOG_IR_ATOM:
+                case MAELYS_DATALOG_IR_NEGATION:
+                case MAELYS_DATALOG_IR_COUNT:
+                case MAELYS_DATALOG_IR_MIN:
+                case MAELYS_DATALOG_IR_MAX:
+                case MAELYS_DATALOG_IR_SUM:
+                    if (!literal->atom.predicate ||
+                        (literal->atom.arity == arity && !strcmp(literal->atom.predicate, name)))
+                        return 1;
+                    break;
+                case MAELYS_DATALOG_IR_COMPARISON:
+                case MAELYS_DATALOG_IR_FILTER:
+                    break;
+                default:
+                    return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* Builds the handle of a loaded set and releases the set, whatever happens. */
+static maelys_git_result_t open_loaded(maelys_datalog_policy_t *loaded,
+                                       maelys_git_policy_t **out_policy,
+                                       maelys_git_error_t *error) {
+    maelys_datalog_status_t status;
     maelys_git_result_t result = MAELYS_GIT_OK;
     maelys_git_policy_t *policy = calloc(1u, sizeof(*policy));
     if (!policy) {
@@ -363,6 +426,21 @@ maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
         result = read_limit(MAELYS_DATALOG_LIMIT_MAX_EDB_FACTS, &policy->fact_capacity, error);
     if (result == MAELYS_GIT_OK)
         result = read_limit(MAELYS_DATALOG_LIMIT_MAX_FACTS_PER_PRED, &policy->path_limit, error);
+    if (result == MAELYS_GIT_OK && policy->path_limit < MG_REF_PREFIX_FACTS) {
+        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                     "the engine holds %zu facts per predicate, fewer than the %u ref prefixes",
+                     policy->path_limit, MG_REF_PREFIX_FACTS);
+        result = MAELYS_GIT_ERR_POLICY;
+    }
+    if (result == MAELYS_GIT_OK)
+        result = largest_stat(loaded, count, MAELYS_DATALOG_POLICY_RULE_COUNT,
+                              &policy->compiled_rules, error);
+    if (result == MAELYS_GIT_OK)
+        result = largest_stat(loaded, count, MAELYS_DATALOG_POLICY_FACT_COUNT,
+                              &policy->compiled_facts, error);
+    if (result == MAELYS_GIT_OK)
+        result = largest_stat(loaded, count, MAELYS_DATALOG_POLICY_PREDICATE_COUNT,
+                              &policy->compiled_predicates, error);
     if (result == MAELYS_GIT_OK) {
         policy->entries = calloc(count, sizeof(*policy->entries));
         policy->facts = calloc(policy->fact_capacity, sizeof(*policy->facts));
@@ -375,6 +453,11 @@ maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
         result = prepare_entry(loaded, i, &policy->entries[i], error);
         policy->count = i + 1u; /* close releases a session created before a failure */
     }
+    for (size_t i = 0u; result == MAELYS_GIT_OK && i < count; ++i) {
+        policy->emit_ref_prefix |= session_reads(policy->entries[i].session, "ref_prefix", 1u);
+        policy->emit_ref_prefix_count |=
+            session_reads(policy->entries[i].session, "ref_prefix_count", 1u);
+    }
     /* Sessions keep their own snapshot of the policy they were created from. */
     (void)maelys_datalog_policy_free(loaded);
     if (result != MAELYS_GIT_OK) {
@@ -383,6 +466,76 @@ maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
     }
     *out_policy = policy;
     return MAELYS_GIT_OK;
+}
+
+maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
+                                            maelys_git_policy_t **out_policy,
+                                            maelys_git_error_t *error) {
+    maelys_git_error_clear(error);
+    if (!manifest_path || !out_policy) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0, "manifest path and output are required");
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    *out_policy = NULL;
+    maelys_git_result_t result = register_domain(error);
+    if (result != MAELYS_GIT_OK) return result;
+    /* The engine reads the manifest and its sources, checks their digests and
+     * is the only reader of the policy language. */
+    maelys_datalog_diagnostic_t diagnostic = MAELYS_DATALOG_DIAGNOSTIC_INIT;
+    maelys_datalog_policy_t *loaded = NULL;
+    maelys_datalog_status_t status = maelys_datalog_policy_load_manifest(
+        manifest_path, MAELYS_DATALOG_PUBLIC_ALLOW_UNDECLARED_POLICY_ATOMS, &loaded, &diagnostic);
+    if (status != MAELYS_DATALOG_STATUS_OK) return load_failure(error, status, &diagnostic);
+    return open_loaded(loaded, out_policy, error);
+}
+
+maelys_git_result_t mg_policy_open_buffer(const char *manifest, size_t manifest_length,
+                                          const char *policy_id, const char *source,
+                                          size_t source_length, maelys_git_policy_t **out_policy,
+                                          maelys_git_error_t *error) {
+    maelys_git_error_clear(error);
+    if (!manifest || !policy_id || !source || !out_policy) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0, "manifest, policy and output are required");
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    *out_policy = NULL;
+    maelys_git_result_t result = register_domain(error);
+    if (result != MAELYS_GIT_OK) return result;
+    /* The loader contract of a manifest on disk, without its files. */
+    const maelys_datalog_policy_bundle_entry_t bundle = {
+        .policy_id = policy_id, .src = source, .src_len = source_length};
+    maelys_datalog_diagnostic_t diagnostic = MAELYS_DATALOG_DIAGNOSTIC_INIT;
+    maelys_datalog_policy_t *loaded = NULL;
+    maelys_datalog_status_t status = maelys_datalog_policy_load_manifest_buffer(
+        manifest, manifest_length, &bundle, 1u, MAELYS_DATALOG_PUBLIC_ALLOW_UNDECLARED_POLICY_ATOMS,
+        &loaded, &diagnostic);
+    if (status != MAELYS_DATALOG_STATUS_OK) return load_failure(error, status, &diagnostic);
+    return open_loaded(loaded, out_policy, error);
+}
+
+maelys_git_result_t mg_policy_budget(const maelys_git_policy_t *policy,
+                                     maelys_git_policy_budget_t *out_budget,
+                                     maelys_git_error_t *error) {
+    if (!out_budget) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    maelys_git_policy_budget_t budget = {0};
+    if (policy) {
+        budget.compiled = 1;
+        budget.rules = policy->compiled_rules;
+        budget.facts = policy->compiled_facts;
+        budget.predicates = policy->compiled_predicates;
+    }
+    maelys_git_result_t result = read_limit(MAELYS_DATALOG_LIMIT_MAX_RULES, &budget.rule_limit, error);
+    if (result == MAELYS_GIT_OK)
+        result = read_limit(MAELYS_DATALOG_LIMIT_MAX_RULE_FACTS, &budget.fact_limit, error);
+    if (result == MAELYS_GIT_OK)
+        result = read_limit(MAELYS_DATALOG_LIMIT_MAX_PREDICATES, &budget.predicate_limit, error);
+    if (result == MAELYS_GIT_OK)
+        result = read_limit(MAELYS_DATALOG_LIMIT_MAX_FACTS_PER_PRED,
+                            &budget.derived_per_predicate_limit, error);
+    if (result == MAELYS_GIT_OK)
+        result = read_limit(MAELYS_DATALOG_LIMIT_MAX_IDB_FACTS, &budget.derived_limit, error);
+    if (result == MAELYS_GIT_OK) *out_budget = budget;
+    return result;
 }
 
 maelys_git_result_t maelys_git_policy_fingerprint(
@@ -494,6 +647,30 @@ static int push_repository_structure(maelys_git_policy_t *policy, const char *re
     return ok;
 }
 
+/* ref_prefix/1 for each of the first MG_REF_PREFIX_FACTS prefixes of a valid
+ * ref that end with '/', shortest first, never the ref itself, and
+ * ref_prefix_count/1, the number of such prefixes, untruncated. A policy that
+ * tests a deeper prefix can close on that count. Each is given only when a
+ * policy of the set reads it. The prefixes are copied into the handle, which
+ * outlives the solve. */
+static int push_ref_structure(maelys_git_policy_t *policy, const char *ref) {
+    if (!ref || (!policy->emit_ref_prefix && !policy->emit_ref_prefix_count) ||
+        !maelys_git_ref_name_is_valid(ref))
+        return 1;
+    size_t count = 0u;
+    for (size_t i = 0u; ref[i]; ++i) {
+        if (ref[i] != '/') continue;
+        if (policy->emit_ref_prefix && count < MG_REF_PREFIX_FACTS) {
+            char *prefix = policy->ref_prefixes[count];
+            memcpy(prefix, ref, i + 1u);
+            prefix[i + 1u] = '\0';
+            if (!push_symbol(policy, "ref_prefix", prefix)) return 0;
+        }
+        ++count;
+    }
+    return !policy->emit_ref_prefix_count || push_integer(policy, "ref_prefix_count", count);
+}
+
 /* The single builder of request facts. They borrow the request's strings and
  * stay valid, in the handle, until the next request. On failure the handle
  * says which bound refused them. */
@@ -508,6 +685,7 @@ static int build_request_facts(maelys_git_policy_t *policy,
              push_repository_structure(policy, request->repository) &&
              push_symbol(policy, "operation", request->operation) &&
              push_symbol(policy, "ref", request->ref_name) &&
+             push_ref_structure(policy, request->ref_name) &&
              push_symbol(policy, "ref_kind", request->ref_kind) &&
              push_symbol(policy, "update_kind", request->update_kind) &&
              push_symbol(policy, "change_kind", request->change_kind) &&

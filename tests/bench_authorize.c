@@ -44,8 +44,8 @@ static double now_ns(void) {
 }
 
 int main(int argc, char **argv) {
-    if (argc < 2 || argc == 5 || argc > 6) {
-        (void)fprintf(stderr, "usage: %s MANIFEST [ITERATIONS [plain|never|always [PRINCIPAL REPOSITORY]]]\n",
+    if (argc < 2 || argc == 5 || argc > 7) {
+        (void)fprintf(stderr, "usage: %s MANIFEST [ITERATIONS [plain|never|always [PRINCIPAL REPOSITORY [REF]]]]\n",
                       argv[0]);
         return 2;
     }
@@ -60,12 +60,13 @@ int main(int argc, char **argv) {
         (void)fprintf(stderr, "open: %s\n", error.message);
         return 1;
     }
-    /* A push of three changed paths with its summary: 24 request facts. */
+    /* A push of three changed paths with its summary: 24 request facts, and
+     * the prefixes of its ref with their count, 3 for refs/heads/main. */
     const char *paths[] = {"src/main.c", "docs/README.md", "src/util.c"};
     maelys_git_policy_request_t request = {
         .request_id = "r1", .principal = argc > 5 ? argv[4] : "alice",
         .repository = argc > 5 ? argv[5] : "team/app.git",
-        .operation = "push", .ref_name = "refs/heads/main", .ref_kind = "branch",
+        .operation = "push", .ref_name = argc > 6 ? argv[6] : "refs/heads/main", .ref_kind = "branch",
         .update_kind = "update", .paths = paths, .path_count = 3u, .has_summary = 1,
         .changed_count = 3u, .added_count = 1u, .modified_count = 2u,
         .max_new_blob_size = 4096u, .total_new_blob_size = 8192u, .commit_count = 2u};

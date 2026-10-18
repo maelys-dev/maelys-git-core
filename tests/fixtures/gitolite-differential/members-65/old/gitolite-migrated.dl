@@ -1,0 +1,142 @@
+group_member("m1", "big").
+group_member("m2", "big").
+group_member("m3", "big").
+group_member("m4", "big").
+group_member("m5", "big").
+group_member("m6", "big").
+group_member("m7", "big").
+group_member("m8", "big").
+group_member("m9", "big").
+group_member("m10", "big").
+group_member("m11", "big").
+group_member("m12", "big").
+group_member("m13", "big").
+group_member("m14", "big").
+group_member("m15", "big").
+group_member("m16", "big").
+group_member("m17", "big").
+group_member("m18", "big").
+group_member("m19", "big").
+group_member("m20", "big").
+group_member("m21", "big").
+group_member("m22", "big").
+group_member("m23", "big").
+group_member("m24", "big").
+group_member("m25", "big").
+group_member("m26", "big").
+group_member("m27", "big").
+group_member("m28", "big").
+group_member("m29", "big").
+group_member("m30", "big").
+group_member("m31", "big").
+group_member("m32", "big").
+group_member("m33", "big").
+group_member("m34", "big").
+group_member("m35", "big").
+group_member("m36", "big").
+group_member("m37", "big").
+group_member("m38", "big").
+group_member("m39", "big").
+group_member("m40", "big").
+group_member("m41", "big").
+group_member("m42", "big").
+group_member("m43", "big").
+group_member("m44", "big").
+group_member("m45", "big").
+group_member("m46", "big").
+group_member("m47", "big").
+group_member("m48", "big").
+group_member("m49", "big").
+group_member("m50", "big").
+group_member("m51", "big").
+group_member("m52", "big").
+group_member("m53", "big").
+group_member("m54", "big").
+group_member("m55", "big").
+group_member("m56", "big").
+group_member("m57", "big").
+group_member("m58", "big").
+group_member("m59", "big").
+group_member("m60", "big").
+group_member("m61", "big").
+group_member("m62", "big").
+group_member("m63", "big").
+group_member("m64", "big").
+group_member("m65", "big").
+group_grant_read("big", "app.git").
+group_grant_write("big", "app.git").
+group_grant_push("big", "app.git").
+
+effective_group_member(U, G) :- group_member(U, G).
+effective_group_member(U, G) :- group_member(U, C), group_in_group(C, G).
+effective_group_member(U, G) :- effective_group_member(U, C), group_in_group(C, G).
+can_create_namespace(U, N) :- namespace_creator(U, N).
+can_create_namespace(U, N) :- effective_group_member(U, G), group_namespace_creator(G, N).
+push_request(R, U, P, F) :- request(R), user(U), repository(P), operation("push"), ref(F).
+effective_ref_grant_push(U, P, F) :- ref_grant_push(U, P, F).
+effective_ref_grant_push(U, P, F) :- effective_group_member(U, G), group_ref_grant_push(G, P, F).
+effective_ref_grant_force(U, P, F) :- ref_grant_force(U, P, F).
+effective_ref_grant_force(U, P, F) :- effective_group_member(U, G), group_ref_grant_force(G, P, F).
+effective_ref_deny(U, P, F) :- ref_deny(U, P, F).
+effective_ref_deny(U, P, F) :- effective_group_member(U, G), group_ref_deny(G, P, F).
+has_ref_write(U, P) :- effective_ref_grant_push(U, P, _).
+has_push_access(U, P) :- grant_push(U, P).
+has_push_access(U, P) :- grant_force(U, P).
+has_push_access(U, P) :- effective_group_member(U, G), group_grant_push(G, P).
+has_push_access(U, P) :- effective_group_member(U, G), group_grant_force(G, P).
+has_push_access(U, P) :- effective_ref_grant_push(U, P, _).
+has_push_access(U, P) :- effective_ref_grant_force(U, P, _).
+
+allow(R) :- request(R), user(U), repository(P), operation("read"), grant_read(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("write"), grant_write(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("create"), grant_push(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("fast_forward"), grant_push(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("force"), grant_force(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("delete"), grant_force(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("merge"), grant_push(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("update-ref"), grant_force(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("create"), grant_create(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("read"), effective_group_member(U, G), group_grant_read(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("write"), effective_group_member(U, G), group_grant_write(G, P).
+allow(R) :- push_request(R, U, P, F), update_kind("create"), effective_ref_grant_push(U, P, F).
+allow(R) :- push_request(R, U, P, F), update_kind("fast_forward"), effective_ref_grant_push(U, P, F).
+allow(R) :- push_request(R, U, P, F), update_kind("force"), effective_ref_grant_force(U, P, F).
+allow(R) :- push_request(R, U, P, F), update_kind("delete"), effective_ref_grant_force(U, P, F).
+deny(R) :- push_request(R, U, P, F), effective_ref_deny(U, P, F).
+allow(R) :- request(R), user(U), repository(P), operation("write"), has_ref_write(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), changed_count(_), has_push_access(U, P).
+allow(R) :- request(R), user(U), repository(P), operation("merge"), ref(F), effective_ref_grant_push(U, P, F).
+allow(R) :- request(R), user(U), repository(P), operation("update-ref"), ref(F), effective_ref_grant_force(U, P, F).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("create"), effective_group_member(U, G), group_grant_push(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("fast_forward"), effective_group_member(U, G), group_grant_push(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("force"), effective_group_member(U, G), group_grant_force(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("push"), update_kind("delete"), effective_group_member(U, G), group_grant_force(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("merge"), effective_group_member(U, G), group_grant_push(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("update-ref"), effective_group_member(U, G), group_grant_force(G, P).
+allow(R) :- request(R), user(U), repository(P), operation("create"), effective_group_member(U, G), group_grant_create(G, P).
+allow(R) :- request(R), user(U), operation("create"), repository_owner_namespace(N, U), can_create_namespace(U, N).
+allow(R) :- request(R), user(U), operation("read"), repository_owner_namespace(N, U), owner_namespace_grant_read(N).
+allow(R) :- request(R), user(U), operation("write"), repository_owner_namespace(N, U), owner_namespace_grant_write(N).
+allow(R) :- request(R), user(U), operation("push"), update_kind("create"), repository_owner_namespace(N, U), owner_namespace_grant_push(N).
+allow(R) :- request(R), user(U), operation("push"), update_kind("fast_forward"), repository_owner_namespace(N, U), owner_namespace_grant_push(N).
+allow(R) :- request(R), user(U), operation("push"), update_kind("force"), repository_owner_namespace(N, U), owner_namespace_grant_force(N).
+allow(R) :- request(R), user(U), operation("push"), update_kind("delete"), repository_owner_namespace(N, U), owner_namespace_grant_force(N).
+allow(R) :- request(R), user(U), operation("push"), changed_count(_), repository_owner_namespace(N, U), owner_namespace_grant_push(N).
+allow(R) :- request(R), user(U), operation("push"), changed_count(_), repository_owner_namespace(N, U), owner_namespace_grant_force(N).
+allow(R) :- request(R), user(U), operation("merge"), repository_owner_namespace(N, U), owner_namespace_grant_push(N).
+allow(R) :- request(R), user(U), operation("update-ref"), repository_owner_namespace(N, U), owner_namespace_grant_force(N).
+effective_vref_deny_name(U, P, F) :- vref_deny_name(U, P, F).
+effective_vref_deny_name(U, P, F) :- effective_group_member(U, G), group_vref_deny_name(G, P, F).
+effective_vref_deny_count(U, P, N) :- vref_deny_count(U, P, N).
+effective_vref_deny_count(U, P, N) :- effective_group_member(U, G), group_vref_deny_count(G, P, N).
+effective_vref_deny_new_count(U, P, N) :- vref_deny_new_count(U, P, N).
+effective_vref_deny_new_count(U, P, N) :- effective_group_member(U, G), group_vref_deny_new_count(G, P, N).
+effective_vref_deny_max_new_binary(U, P, N) :- vref_deny_max_new_binary(U, P, N).
+effective_vref_deny_max_new_binary(U, P, N) :- effective_group_member(U, G), group_vref_deny_max_new_binary(G, P, N).
+vref_count_exceeded(U, P) :- changed_count(C), effective_vref_deny_count(U, P, N), C > N.
+vref_new_count_exceeded(U, P) :- added_count(C), effective_vref_deny_new_count(U, P, N), C > N.
+vref_new_binary_exceeded(U, P) :- change_binary(true), change_blob_size(S), effective_vref_deny_max_new_binary(U, P, N), S > N.
+deny(R) :- request(R), user(U), repository(P), operation("push"), path(F), effective_vref_deny_name(U, P, F).
+deny(R) :- request(R), user(U), repository(P), operation("push"), vref_count_exceeded(U, P).
+deny(R) :- request(R), user(U), repository(P), operation("push"), vref_new_count_exceeded(U, P).
+deny(R) :- request(R), user(U), repository(P), operation("push"), vref_new_binary_exceeded(U, P).

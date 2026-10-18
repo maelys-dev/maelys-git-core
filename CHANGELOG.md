@@ -5,6 +5,37 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- The Gitolite migration writes one policy fact per elementary grant (a
+  subject, a repository or namespace, a ref or a prefix, a level):
+  `gitolite_access/3`, `gitolite_ref_access/4`, their `group_` forms and
+  `owner_namespace_access/2`, read by fixed rules. Every fixed rule binds the
+  request's subject, repository and ref before it reads a policy fact, so a
+  derived predicate holds a number of facts that depends on the request, not
+  on the configuration. A group of more than 64 members, more than 64 exact
+  ref grants or VREF names, which migrated but failed every request on the
+  SMALL profile, now decide. One repository holds 128 `RW` lines instead of
+  42, 120 namespace prefixes for distinct subjects instead of 14, and 61
+  bare-literal denies instead of 56. A bare-literal deny, and a prefix of
+  more than 63 bytes or 16 `/`, stays a `starts_with` rule; when the fact or
+  atom budget refuses the policy, every prefix takes that rule form, so a
+  configuration the rule form admitted stays admitted. A differential test
+  against the encoding of 62778f0 shows the same decisions wherever it
+  decided, and decisions where it failed for capacity.
+- `migrate gitolite` has the engine compile the generated policy at plan
+  time, and computes the worst case of its execution: the groups of one user.
+  The plan adds `budget`: the engine's rule, fact and predicate counts with
+  their bounds, the derived facts per predicate and in all with theirs, and
+  `failure`, a validate diagnostic or `null`. A budget that does not hold is
+  an unsupported entry, `policy budget exceeded: BUDGET N requested, limit
+  L`, and the apply refuses with that detail in `maelys_git_error_t`.
+  `maelys_git_gitolite_migration_result_t` gains `budget`, a
+  `maelys_git_policy_budget_t`: a program linked against the library must be
+  rebuilt.
+- A request with a valid ref carries `ref_prefix/1`, its first sixteen
+  prefixes ending with `/`, and `ref_prefix_count/1`, their untruncated count,
+  each only when a policy of the manifest reads it, as the engine's read-only
+  view of the compiled program says when the manifest is opened. A policy
+  that reads neither gets the same facts, and the same receipts, as before.
 - Authorization receipts. `maelys_git_policy_authorize_receipt` decides
   exactly as `maelys_git_policy_authorize` and fills a
   `maelys_git_receipt_t`: the decision (`allow`, `deny_explicit`,
@@ -86,14 +117,12 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   of a denial by default with its `complete` or `truncated` status and the
   filter evaluations. A decision carries the policy-set and session
   fingerprints.
-- Gitolite migration converts literal ref prefixes into rules with a constant
-  `starts_with` pattern: `refs/heads/release/`, a short name completed by
-  `refs/heads/`, a final `$` as equality. A deny on a bare literal now covers
-  the names that start with it, as Gitolite does and more than the exact fact
-  it replaced; a grant on a bare literal stays exact. Regular-expression
-  syntax is refused with `unsupported refex syntax`; exceeding the engine's
-  128 rules is `rule budget exceeded`; the generated policy is loaded by the
-  engine before it is published.
+- Gitolite migration converts literal ref prefixes: `refs/heads/release/`, a
+  short name completed by `refs/heads/`, a final `$` as equality. A deny on a
+  bare literal now covers the names that start with it, as Gitolite does and
+  more than the exact fact it replaced; a grant on a bare literal stays exact.
+  Regular-expression syntax is refused with `unsupported refex syntax`; the
+  generated policy is loaded by the engine before it is published.
 - SHA-256 comes from the public digest of the maelys-cli core instead of a
   header private to the engine repository.
 - maelys-datalog pinned at v0.21.0 (from v0.4.0). 0.21.0 answers `OK` and

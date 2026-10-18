@@ -210,7 +210,19 @@ maelys_git_result_t mg_repository_visit_changes_with_budget(
 
 /* Bytes of explanation storage the handle holds: zero until it explains. */
 size_t mg_policy_explanation_storage_bytes(const maelys_git_policy_t *policy);
-/* The number of rules one policy may hold, read from the loaded engine. */
-maelys_git_result_t mg_policy_rule_limit(size_t *out_limit, maelys_git_error_t *error);
+/* The '/'-terminated prefixes of a request's ref given as ref_prefix facts. */
+#define MG_REF_PREFIX_FACTS 16u
+
+/* maelys_git_policy_open on a manifest and the source of its single policy,
+ * held in memory: the same loader contract and the same failure detail. */
+maelys_git_result_t mg_policy_open_buffer(const char *manifest, size_t manifest_length,
+                                          const char *policy_id, const char *source,
+                                          size_t source_length, maelys_git_policy_t **out_policy,
+                                          maelys_git_error_t *error);
+/* The compiled size of an open policy, or nothing for NULL, and the engine
+ * bounds that apply to it. The worst cases of execution are the caller's. */
+maelys_git_result_t mg_policy_budget(const maelys_git_policy_t *policy,
+                                     maelys_git_policy_budget_t *out_budget,
+                                     maelys_git_error_t *error);
 
 #endif

@@ -76,13 +76,14 @@ La migration ne convertit que des noms litteraux, composes de
 
 | Forme Gitolite | Resultat | Remarque |
 | --- | --- | --- |
-| `RW refs/heads/release/ = alice` | regle `starts_with(F, "refs/heads/release/")` | prefixe d'espace de noms |
-| `RW topic/ = alice` | regle `starts_with(F, "refs/heads/topic/")` | nom court complete |
-| `RW refs/heads/stable$ = alice` | fait exact `refs/heads/stable` | egalite |
-| `RW refs/heads/main = alice` | fait exact `refs/heads/main` | plus strict que Gitolite, qui y lit un prefixe |
+| `RW refs/heads/release/ = alice` | fait `gitolite_ref_access("alice", P, "refs/heads/release/", "RW")`, lu par `ref_prefix` | prefixe d'espace de noms |
+| `RW topic/ = alice` | fait sur `refs/heads/topic/` | nom court complete |
+| `RW refs/heads/stable$ = alice` | fait exact sur `refs/heads/stable` | egalite |
+| `RW refs/heads/main = alice` | fait exact sur `refs/heads/main` | plus strict que Gitolite, qui y lit un prefixe |
 | `- refs/heads/main = mallory` | regle `starts_with(F, "refs/heads/main")` | comme Gitolite ; refuse aussi `main-hotfix` |
 | `RW refs/heads/(main|dev) = alice` | refuse, `unsupported refex syntax` | alternance |
 | `RW refs/heads/feature/.* = alice`, `[a-z]+`, `^...` | refuse, `unsupported refex syntax` | repetition, classe, ancre |
+| prefixe de plus de 63 octets ou de plus de 16 `/` | regle `starts_with` | hors des faits `ref_prefix` |
 | motif de plus de 256 octets | refuse, `ref pattern exceeds 256 bytes` | borne du moteur |
 
 Un prefixe de tag de version comme `refs/tags/v` n'est donc pas migre en
@@ -91,11 +92,27 @@ autorisation : ecrit nu, il reste une egalite. Il s'ecrit a la main,
 `contains` ne sont jamais produits par la migration : Gitolite n'ancre pas la
 fin et une sous-chaine libre suppose `.*`.
 
-Chaque prefixe coute des regles et une politique en contient au plus 128, dont
-72 pour le socle d'autorisation genere : une quinzaine d'autorisations par
-prefixe tiennent dans une politique migree. Au-dela, le plan signale
-`rule budget exceeded` et rien n'est applique. La politique generee est
-rechargee par le moteur avant d'etre publiee.
+Une attribution elementaire, sujet, depot ou espace de noms, ref ou prefixe,
+niveau, coute un fait de politique et aucune regle, sauf le refus d'un
+litteral nu et les prefixes hors des faits `ref_prefix`, qui coutent une
+regle. Le socle d'autorisation genere compte 67 regles sur 128 et ne lit les
+faits de politique qu'apres avoir lie le sujet, le depot et la ref de la
+requete : ce qu'un predicat derive contient depend de la requete, jamais de
+la taille de la configuration. Mesure en SMALL et en LARGE : 128 lignes `RW`
+sur un depot (128 faits), 120 prefixes `RW+` de sujets distincts (borne des
+256 atomes de politique), 61 refus nus (borne des regles). Un prefixe en fait
+coute un fait et un atome ; quand ces budgets refusent la politique, la
+migration la regenere avec ses prefixes en regles et la garde si elle tient :
+une configuration admise par la forme en regles reste admise.
+
+Le plan fait compiler la politique par le moteur et calcule le pire cas de
+son execution : le nombre de groupes d'un utilisateur, imbrications
+comprises, que `effective_group_member` contient pour une requete. Il rend
+`budget`, les comptes du moteur, les bornes et ce pire cas ; un budget
+depasse est une entree non migrable, `policy budget exceeded: BUDGET N
+requested, limit L`, et `budget.failure` la decrit en machine. Rien n'est
+applique. La politique generee est rechargee par le moteur avant d'etre
+publiee.
 
 L'objectif raisonnable n'est pas la compatibilite syntaxique complete. Il faut
 fournir une bibliotheque de politiques typees couvrant les VREF utiles, puis
