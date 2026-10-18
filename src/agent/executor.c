@@ -515,6 +515,7 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
                               const char *git,
                               const char *root,
                               const mg_agent_message_t *message,
+                              maelys_git_explain_mode_t denial_mode,
                               maelys_git_error_t *error) {
     static const char *const allowed[] = {
         "base_ref", "base_oid", "head_oid", "style", "message", "approvals",
@@ -565,12 +566,22 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
         .blocking_review = blocking,
     };
     maelys_git_pr_check_result_t merge;
-    result = maelys_git_pr_merge_with_source(
+    char text[EXPLANATION_CAPACITY];
+    judged_t judged = {.text = denial_mode == MAELYS_GIT_EXPLAIN_NEVER ? NULL : text};
+    mg_receive_receipt_t receipt = {.mode = denial_mode, .text = (char *)judged.text,
+                                    .text_capacity = judged.text ? sizeof(text) : 0u};
+    result = mg_pr_merge(
         git, repository_path, message->repository, base_ref, base, head, style,
         merge_message,
         message->principal, &gates, policy, pr_id, source,
         expected_target_identity, expected_prepared_oid,
-        expected_policy_fingerprint, apply, &merge, error);
+        expected_policy_fingerprint, apply, &merge, &judged.decision, &receipt, error);
+    /* A policy denial is a decision with its receipt; the gates and the
+     * mergeability refuse without one. */
+    if (result == MAELYS_GIT_ERR_DENIED && receipt.decided) {
+        judged.receipt = receipt.receipt;
+        return decision_result(message, &judged, error);
+    }
     if (result == MAELYS_GIT_ERR_DENIED)
         return failure(message, "denied", result, error->message, error);
     if (result != MAELYS_GIT_OK) return failure(message, "failed", result, error->message, error);
@@ -622,7 +633,8 @@ maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
     } else if (strcmp(message->command, "pr_check") == 0) {
         *out_result_json = execute_pr_check(policy, git_executable, repository_root, message, error);
     } else if (strcmp(message->command, "pr_merge") == 0) {
-        *out_result_json = execute_pr_merge(policy, git_executable, repository_root, message, error);
+        *out_result_json = execute_pr_merge(policy, git_executable, repository_root, message,
+                                            denial_mode, error);
     } else {
         *out_result_json = failure(message, "failed", MAELYS_GIT_ERR_INVALID_COMMAND,
                                    "unsupported command", error);

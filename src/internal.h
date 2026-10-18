@@ -161,10 +161,10 @@ maelys_git_result_t mg_process_filter_spool_status(const char *executable,
                                                    int *out_exit_status,
                                                    maelys_git_error_t *error);
 
-/* The receipt of a receive, asked for by the caller: each authorization fills
- * it, so it ends as the first denial or as the last authorization of an
- * accepted transaction. `decided` says whether it is the receipt of the
- * outcome; a failure outside the policy leaves it 0. */
+/* The receipt of a receive or a merge, asked for by the caller: each
+ * authorization fills it, so it ends as the first denial or as the last
+ * authorization of an accepted transaction. `decided` says whether it is the
+ * receipt of the outcome; a failure outside the policy leaves it 0. */
 typedef struct {
     maelys_git_explain_mode_t mode;
     char *text;
@@ -182,6 +182,22 @@ maelys_git_result_t mg_receive_authorize(
     const maelys_git_inspection_limits_t *limits,
     const maelys_git_inspector_t *inspectors, size_t inspector_count,
     FILE *input, FILE *diagnostics, maelys_git_change_summary_t *out_summary,
+    maelys_git_policy_decision_t *out_decision, mg_receive_receipt_t *out_receipt,
+    maelys_git_error_t *error);
+
+/* maelys_git_pr_merge_with_source for the agent: the optional outputs expose
+ * the last policy decision and the decisive receipt. A refusal of the gates,
+ * of an empty or unmergeable pull request or of a changed plan is not the
+ * policy's and leaves `decided` 0. */
+maelys_git_result_t mg_pr_merge(
+    const char *git, const char *repository_path, const char *repository_name,
+    const char *base_ref, const char *base_oid, const char *head_oid,
+    maelys_git_merge_style_t style, const char *message, const char *principal,
+    const maelys_git_pr_gates_t *gates, maelys_git_policy_t *policy, const char *pr_id,
+    const maelys_git_pr_source_t *source,
+    const char *expected_target_identity, const char *expected_prepared_oid,
+    const char *expected_policy_fingerprint, int apply,
+    maelys_git_pr_check_result_t *out_result,
     maelys_git_policy_decision_t *out_decision, mg_receive_receipt_t *out_receipt,
     maelys_git_error_t *error);
 
