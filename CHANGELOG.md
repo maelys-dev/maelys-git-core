@@ -24,12 +24,14 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   earlier build after the conversion is not supported: it would refuse the
   replayed commands as reused `message_id`s.
 - The executor writes each result within the protocol's 65,536-byte line. A
-  result that would exceed it, such as the diff of a few thousand long paths,
-  is answered by a correlated `failed` result with code `limit_exceeded`, and
-  the next command of the stream is executed; the previous version wrote the
-  line, which the reader refused before stopping the stream. A decision whose
-  explanation text alone makes it too long is first written without
-  `explanation_text`, its receipt unchanged.
+  result that would exceed it, such as the diff of a thousand long paths, is
+  answered by a correlated `failed` result with code `limit_exceeded`, and the
+  next command of the stream is executed. The previous version wrote the whole
+  line on its stream (133,152 bytes for that diff), which a reader holding to
+  the protocol refuses; under the Cloud agent, the supervisor stopped the
+  executor and posted `executor_failed`, "executor response exceeded 64 KiB".
+  A decision whose explanation text alone makes it too long is first written
+  without `explanation_text`, its receipt unchanged.
 - The Gitolite migration writes one policy fact per elementary grant (a
   subject, a repository or namespace, a ref or a prefix, a level):
   `gitolite_access/3`, `gitolite_ref_access/4`, their `group_` forms and
