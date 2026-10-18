@@ -796,6 +796,9 @@ typedef struct {
     const char *repository;
     const char *principal;
     const char *ref;
+    maelys_git_policy_decision_t *last_decision;
+    mg_receive_receipt_t *receipt;
+    maelys_git_result_t decided; /* the result of the last policy decision */
 } pr_auth_context_t;
 
 static maelys_git_result_t authorize_pr_request(pr_auth_context_t *context,
@@ -832,13 +835,19 @@ static maelys_git_result_t authorize_pr_request(pr_auth_context_t *context,
         request.total_new_blob_size = summary->total_new_blob_size;
         request.has_binary = summary->has_binary;
     }
-    maelys_git_policy_decision_t decision;
-    maelys_git_result_t result = maelys_git_policy_authorize(context->policy, &request,
-                                                             &decision, error);
-    if (result != MAELYS_GIT_OK) return result;
-    if (decision.allowed) return MAELYS_GIT_OK;
-    mg_error_set(error, MAELYS_GIT_ERR_DENIED, 0, "%s", decision.reason);
-    return MAELYS_GIT_ERR_DENIED;
+    maelys_git_policy_decision_t decision = {0};
+    mg_receive_receipt_t *receipt = context->receipt;
+    maelys_git_result_t result = receipt ?
+        maelys_git_policy_authorize_receipt(context->policy, &request, receipt->mode, receipt->text,
+                                            receipt->text_capacity, &decision, &receipt->receipt, error) :
+        maelys_git_policy_authorize(context->policy, &request, &decision, error);
+    if (context->last_decision) *context->last_decision = decision;
+    if (result == MAELYS_GIT_OK && !decision.allowed) {
+        mg_error_set(error, MAELYS_GIT_ERR_DENIED, 0, "%s", decision.reason);
+        result = MAELYS_GIT_ERR_DENIED;
+    }
+    context->decided = result;
+    return result;
 }
 
 static maelys_git_result_t authorize_pr_change(const maelys_git_change_t *change,
@@ -937,6 +946,22 @@ maelys_git_result_t maelys_git_pr_merge_with_source(
     const char *expected_target_identity, const char *expected_prepared_oid,
     const char *expected_policy_fingerprint, int apply,
     maelys_git_pr_check_result_t *out_result, maelys_git_error_t *error) {
+    return mg_pr_merge(git, repository_path, repository_name, base_ref, base_oid, head_oid,
+                       style, message, principal, gates, policy, pr_id, source,
+                       expected_target_identity, expected_prepared_oid,
+                       expected_policy_fingerprint, apply, out_result, NULL, NULL, error);
+}
+
+static maelys_git_result_t merge(
+    const char *git, const char *repository_path, const char *repository_name,
+    const char *base_ref, const char *base_oid, const char *head_oid,
+    maelys_git_merge_style_t style, const char *message, const char *principal,
+    const maelys_git_pr_gates_t *gates, maelys_git_policy_t *policy, const char *pr_id,
+    const maelys_git_pr_source_t *source,
+    const char *expected_target_identity, const char *expected_prepared_oid,
+    const char *expected_policy_fingerprint, int apply,
+    maelys_git_pr_check_result_t *out_result, pr_auth_context_t *auth,
+    maelys_git_error_t *error) {
     maelys_git_error_clear(error);
     if (!repository_name || !base_ref || !maelys_git_ref_name_is_valid(base_ref) ||
         maelys_git_classify_ref(base_ref) != MAELYS_GIT_REF_BRANCH ||
@@ -1022,11 +1047,13 @@ maelys_git_result_t maelys_git_pr_merge_with_source(
         prepared_clear(&prepared);
         return MAELYS_GIT_ERR_DENIED;
     }
-    pr_auth_context_t auth = {.policy = policy, .repository = repository_name,
-                              .principal = principal, .ref = base_ref};
+    auth->policy = policy;
+    auth->repository = repository_name;
+    auth->principal = principal;
+    auth->ref = base_ref;
     result = authorize_pr(git, prepared.temporary_repository,
                           prepared.result.merge_base_oid, head_oid,
-                          &prepared.result.changes, &auth, error);
+                          &prepared.result.changes, auth, error);
     if (result != MAELYS_GIT_OK) { prepared_clear(&prepared); return result; }
     char *current_argv[] = {(char *)git, "--git-dir", (char *)repository_path,
                             "rev-parse", "--verify", (char *)base_ref, NULL};
@@ -1042,7 +1069,7 @@ maelys_git_result_t maelys_git_pr_merge_with_source(
         /* Authorization is deliberately repeated immediately before the state change. */
         result = authorize_pr(git, prepared.temporary_repository,
                               prepared.result.merge_base_oid, head_oid,
-                              &prepared.result.changes, &auth, error);
+                              &prepared.result.changes, auth, error);
         if (result == MAELYS_GIT_OK)
             result = verify_repository_identity(repository_path,
                                                 prepared.result.target_identity,
@@ -1074,5 +1101,37 @@ maelys_git_result_t maelys_git_pr_merge_with_source(
         memset(&prepared.result, 0, sizeof(prepared.result));
     }
     prepared_clear(&prepared);
+    return result;
+}
+
+maelys_git_result_t mg_pr_merge(
+    const char *git, const char *repository_path, const char *repository_name,
+    const char *base_ref, const char *base_oid, const char *head_oid,
+    maelys_git_merge_style_t style, const char *message, const char *principal,
+    const maelys_git_pr_gates_t *gates, maelys_git_policy_t *policy, const char *pr_id,
+    const maelys_git_pr_source_t *source,
+    const char *expected_target_identity, const char *expected_prepared_oid,
+    const char *expected_policy_fingerprint, int apply,
+    maelys_git_pr_check_result_t *out_result,
+    maelys_git_policy_decision_t *out_decision, mg_receive_receipt_t *out_receipt,
+    maelys_git_error_t *error) {
+    if (out_receipt) {
+        out_receipt->decided = 0;
+        memset(&out_receipt->receipt, 0, sizeof(out_receipt->receipt));
+    }
+    /* No policy decision yet: any result is an outcome the policy did not give. */
+    pr_auth_context_t auth = {.last_decision = out_decision, .receipt = out_receipt,
+                              .decided = MAELYS_GIT_ERR_INVALID_ARGUMENT};
+    maelys_git_result_t result = merge(
+        git, repository_path, repository_name, base_ref, base_oid, head_oid, style, message,
+        principal, gates, policy, pr_id, source, expected_target_identity,
+        expected_prepared_oid, expected_policy_fingerprint, apply, out_result, &auth, error);
+    /* The receipt is the outcome's only when the outcome is the last decision:
+     * an accepted merge, or the denial that stopped it. */
+    if (out_receipt)
+        out_receipt->decided = result == auth.decided &&
+            (result == MAELYS_GIT_OK || result == MAELYS_GIT_ERR_DENIED ||
+             (result == MAELYS_GIT_ERR_POLICY &&
+              out_receipt->receipt.decision == MAELYS_GIT_RECEIPT_DENY_ERROR));
     return result;
 }

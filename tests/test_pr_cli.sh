@@ -88,6 +88,53 @@ if "$maelys_git_bin" pr merge "$test_root" example.git refs/heads/target \
   exit 1
 fi
 
+# The executor answers a policy denial of pr_merge, in plan as in apply, with
+# the decision, its receipt and the explanation; the gates refuse without one.
+merge_command() {
+  printf '{"protocol":"maelys-git-agent/1","message_id":"%s","agent_id":"test-agent","type":"command","command":"pr_merge","repository":"example.git","principal":"%s","issued_at_ms":%s,"expires_at_ms":%s,"payload":{"base_ref":"refs/heads/target","base_oid":"%s","head_oid":"%s","style":"merge","approvals":%s,"required_approvals":1,"status_checks_passed":true,"blocking_review":false,%s}}\n' \
+    "$1" "$2" "$(($(date +%s) * 1000))" "$(($(date +%s) * 1000 + 60000))" \
+    "$base_oid" "$head_oid" "$3" "$4"
+}
+{
+  merge_command deny-plan mallory 1 '"apply":false'
+  merge_command deny-apply mallory 1 "\"apply\":true,\"pr_id\":\"42\",\"expected_target_identity\":\"$target_identity\",\"expected_prepared_oid\":\"$planned_oid\",\"expected_policy_fingerprint\":\"$policy_fingerprint\""
+  merge_command deny-gates alice 0 '"apply":false'
+} > "$test_root/denial-input.jsonl"
+"$maelys_executor_bin" serve --manifest "$manifest" --root "$test_root" --git /usr/bin/git \
+  < "$test_root/denial-input.jsonl" > "$test_root/denial-output.jsonl"
+python3 -I - "$test_root/denial-output.jsonl" <<'PY'
+import hashlib, json, sys
+results = {}
+for line in open(sys.argv[1], encoding="utf-8"):
+    result = json.loads(line)
+    results[result["message_id"]] = result
+assert sorted(results) == ["deny-apply", "deny-gates", "deny-plan"], sorted(results)
+for message_id in ("deny-plan", "deny-apply"):
+    result = results[message_id]
+    payload = result["payload"]
+    assert result["status"] == "denied", result
+    assert payload["allowed"] is False and payload["explicit_deny"] is False, payload
+    assert payload["matched_policy"] is None and "code" not in payload, payload
+    receipt = payload["receipt"]
+    canonical = json.dumps(receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    assert hashlib.sha256(canonical.encode()).hexdigest() == payload["receipt_sha256"], payload
+    assert receipt["decision"] == "deny_default", receipt
+    assert receipt["request"]["operation"] == "merge", receipt
+    assert receipt["request"]["principal"] == "mallory", receipt
+    assert receipt["request"]["ref"] == "refs/heads/target", receipt
+    text = payload["explanation_text"].encode()
+    assert len(text) == receipt["explanation"]["textBytes"], receipt
+    assert hashlib.sha256(text).hexdigest() == receipt["explanation"]["textSha256"], receipt
+gates = results["deny-gates"]
+assert gates["status"] == "denied", gates
+assert gates["payload"] == {"code": "denied", "message": "pull request gates are not satisfied"}, gates
+PY
+test "$(git --git-dir "$test_root/example.git" rev-parse refs/heads/target)" = "$base_oid"
+if git --git-dir "$test_root/example.git" show-ref --verify --quiet refs/maelys/pulls/42/head; then
+  printf 'a denied PR apply wrote the internal head ref\n' >&2
+  exit 1
+fi
+
 # A fork head is copied into an isolated temporary repository for checking and
 # reaches the target object database only during a reviewed apply.
 mkdir "$test_root/cross-root"

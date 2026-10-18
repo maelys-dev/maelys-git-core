@@ -24,8 +24,11 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   as `explanationText`, up to 32 KiB. The four members it had are unchanged.
 - The agent's decision results add `matched_policy`, `receipt` and
   `receipt_sha256`; an `authorize` command may ask for `explain: true` and
-  gets `explanation_text`. When the executor refuses `create_repository` or
-  `update_ref`, its result carries the explanation of that denial; the Cloud
+  gets `explanation_text`. A `pr_merge` refused by the policy, in plan or in
+  apply, returns that decision too; refused by its gates or its
+  mergeability, it keeps its `{code, message}` payload. When the executor
+  refuses `create_repository`, `update_ref` or, by its policy, `pr_merge`,
+  its result carries the explanation of that denial; the Cloud
   agent verifies the receipt (rewritten by maelys-json, then checked for
   canonical form and shape, then against `receipt_sha256`) and the text
   (size and SHA-256 named by the receipt), records them as

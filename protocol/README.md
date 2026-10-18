@@ -90,9 +90,10 @@ Pull-request orchestration uses `pr_check` for read-only merge analysis and
 boolean, validates the target OID, re-evaluates local Datalog policy, and uses
 Git compare-and-swap before changing the target reference. A decision result,
 whether `authorize` or the denial of another command, carries
-`matched_policy`, `receipt` and `receipt_sha256`; a `pr_merge` refused by that
-policy carries no receipt yet: its `status: "denied"` payload keeps `code` and
-`message`, which also report gates and mergeability refusals. An optional
+`matched_policy`, `receipt` and `receipt_sha256`, a `pr_merge` refused by that
+policy included. A `pr_merge` refused by its gates, or because the pull request
+is empty or not mergeable, is not a decision: its `status: "denied"` payload
+keeps `code` and `message`. An optional
 `pr_id` creates forge-neutral `refs/maelys/pulls/<id>/head` and `merged`
 references in the same atomic Git reference transaction as the target branch.
 For a fork PR, `source_repository` and `source_ref` are supplied together.
