@@ -140,10 +140,34 @@ maelys_git_result_t mg_store_record_command(maelys_git_agent_store_t *store,
 maelys_git_result_t mg_store_mark_running(maelys_git_agent_store_t *store,
                                           const char *command_id,
                                           maelys_git_error_t *error);
+/* What an executor result carries that the agent audits: the receipt's
+ * canonical bytes, verified, and the explanation text, checked against the
+ * receipt's size and digest. `published` is the result rewritten without the
+ * text when the command did not ask for it; NULL when the result is
+ * published as the executor wrote it. */
+typedef struct {
+    char *receipt;
+    char *text;
+    char *published;
+} mg_receipt_events_t;
+
+/* Reads an executor result for `command`. A result without a receipt gives
+ * no event. A receipt that does not verify, whose digest is not the
+ * result's, or a text that is not the one the receipt vouches for, is
+ * MAELYS_GIT_ERR_PROTOCOL: the command fails and nothing is audited. */
+maelys_git_result_t mg_receipt_events_prepare(const mg_agent_message_t *command,
+                                              const char *result_json,
+                                              mg_receipt_events_t *out_events,
+                                              maelys_git_error_t *error);
+void mg_receipt_events_clear(mg_receipt_events_t *events);
+
+/* Records the result, queues it and audits the completion, with the
+ * receipt and explanation events when given, in one transaction. */
 maelys_git_result_t mg_store_complete_command(maelys_git_agent_store_t *store,
                                               const char *command_id,
                                               int succeeded,
                                               const char *result_json,
+                                              const mg_receipt_events_t *events,
                                               int64_t now_ms,
                                               maelys_git_error_t *error);
 maelys_git_result_t mg_store_enqueue(maelys_git_agent_store_t *store,
@@ -185,12 +209,27 @@ uint64_t mg_retry_delay_ms(const char *key,
                            uint64_t base_ms,
                            uint64_t maximum_ms);
 
+/* Executes one command. `denial_mode` says whether the denial of a command
+ * that changes a repository carries the explanation text: an executor whose
+ * results an agent audits renders it, the agent keeps it in its audit and
+ * removes it from what it publishes. */
 maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
                                         const char *git_executable,
                                         const char *repository_root,
                                         const mg_agent_message_t *message,
+                                        maelys_git_explain_mode_t denial_mode,
                                         char **out_result_json,
                                         maelys_git_error_t *error);
+
+/* maelys_git_agent_serve with the executor's denial mode. */
+maelys_git_result_t mg_agent_serve(maelys_git_policy_t *policy,
+                                   const char *git_executable,
+                                   const char *repository_root,
+                                   FILE *input,
+                                   FILE *output,
+                                   FILE *diagnostics,
+                                   maelys_git_explain_mode_t denial_mode,
+                                   maelys_git_error_t *error);
 
 #ifdef MAELYS_GIT_ENABLE_CLOUD_AGENT
 maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *config,

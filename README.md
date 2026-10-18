@@ -107,7 +107,11 @@ build/maelys-git authorize policies/manifest.json bob example.git push refs/head
 ```
 
 For automation, add `--format json --compact --non-interactive`. Authorization
-is a successful read even when denied: inspect `data.allowed`. Policy
+is a successful read even when denied: inspect `data.allowed`. Every decision
+also carries `data.receipt`, a bounded record of it in Maelys Canonical JSON
+v1, and `data.receiptSha256`; `--explain`, written before `--`, adds the
+engine's explanation as `data.explanationText`. The receipt contract is in
+[docs/prepared-auth-receipts.md](docs/prepared-auth-receipts.md). Policy
 validation exits `2` when it completes and finds violations.
 
 ## Normalized CLI contract
@@ -284,7 +288,10 @@ hot paths. See the [protocol contract](protocol/README.md) for framing and limit
 Supported executor commands are:
 
 - `health`;
-- `authorize` with `operation`, optional `ref`, and a bounded `paths` array;
+- `authorize` with `operation`, optional `ref`, a bounded `paths` array and
+  optional `explain`, a boolean that adds `explanation_text`; every decision
+  result carries `matched_policy`, `receipt` and `receipt_sha256`, which the
+  Cloud agent verifies and records in its audit;
 - `repository_info`;
 - `diff` with `old_oid` and `new_oid`;
 - `update_ref` with `ref`, `old_oid` and `new_oid`;
@@ -378,8 +385,8 @@ durably accepted the idempotency key.
 The JSON architecture decision in [docs/json-boundaries.md](docs/json-boundaries.md)
 maps each reader and writer. Configuration, command envelopes and executor
 payload reads, Cloud polls and supervisor result validation now use
-maelys-json. Coordinated manifest loading and canonical receipts remain planned
-migration work. Jansson remains for mutable internal trees and ordinary
+maelys-json, and maelys-json alone writes and reads authorization receipts.
+Coordinated manifest loading remains planned migration work. Jansson remains for mutable internal trees and ordinary
 responses, including the existing command deduplication representation.
 
 The SSH shell and hook should run under a dedicated Unix account that owns only

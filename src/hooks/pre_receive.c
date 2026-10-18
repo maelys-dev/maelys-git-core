@@ -17,15 +17,20 @@ typedef struct {
     size_t *transaction_merge_commit_count;
     FILE *diagnostics;
     maelys_git_policy_decision_t *last_decision;
+    mg_receive_receipt_t *receipt;
 } authorize_changes_context_t;
 
 static maelys_git_result_t authorize_request(maelys_git_policy_t *policy,
                                              const maelys_git_policy_request_t *request,
                                              FILE *diagnostics,
                                              maelys_git_policy_decision_t *last_decision,
+                                             mg_receive_receipt_t *receipt,
                                              maelys_git_error_t *error) {
     maelys_git_policy_decision_t decision = {0};
-    maelys_git_result_t result = maelys_git_policy_authorize(policy, request, &decision, error);
+    maelys_git_result_t result = receipt ?
+        maelys_git_policy_authorize_receipt(policy, request, receipt->mode, receipt->text,
+                                            receipt->text_capacity, &decision, &receipt->receipt, error) :
+        maelys_git_policy_authorize(policy, request, &decision, error);
     if (last_decision) *last_decision = decision;
     if (result != MAELYS_GIT_OK) return result;
     if (decision.allowed) return MAELYS_GIT_OK;
@@ -71,7 +76,7 @@ static maelys_git_result_t authorize_change(const maelys_git_change_t *change,
     request.change_submodule = change->submodule;
     request.change_lfs_pointer = change->lfs_pointer;
     return authorize_request(context->policy, &request, context->diagnostics,
-                             context->last_decision, error);
+                             context->last_decision, context->receipt, error);
 }
 
 static maelys_git_result_t authorize_commits(const char *git,
@@ -160,7 +165,7 @@ static maelys_git_result_t authorize_commits(const char *git,
         request.has_commit_signature_trusted = 1;
         request.commit_signature_trusted = fields[1][0] == 'G';
         result = authorize_request(context->policy, &request, context->diagnostics,
-                                   context->last_decision, error);
+                                   context->last_decision, context->receipt, error);
         free(signature_data);
         if (result != MAELYS_GIT_OK) break;
     }
@@ -184,7 +189,12 @@ maelys_git_result_t mg_receive_authorize(
     FILE *diagnostics,
     maelys_git_change_summary_t *out_summary,
     maelys_git_policy_decision_t *out_decision,
+    mg_receive_receipt_t *out_receipt,
     maelys_git_error_t *error) {
+    if (out_receipt) {
+        out_receipt->decided = 0;
+        memset(&out_receipt->receipt, 0, sizeof(out_receipt->receipt));
+    }
     if (!policy || !git_executable || !repository_path || !repository_name ||
         !principal || !limits || !input || !diagnostics ||
         limits->max_commits == 0u || limits->max_changes == 0u ||
@@ -214,11 +224,12 @@ maelys_git_result_t mg_receive_authorize(
             .transaction_merge_commit_count = &transaction_merge_commit_count,
             .diagnostics = diagnostics,
             .last_decision = out_decision,
+            .receipt = out_receipt,
         };
         result = maelys_git_run_inspectors(inspectors, inspector_count, update, NULL, error);
         if (result != MAELYS_GIT_OK) break;
         maelys_git_policy_request_t request = update_request(&context);
-        result = authorize_request(policy, &request, diagnostics, out_decision, error);
+        result = authorize_request(policy, &request, diagnostics, out_decision, out_receipt, error);
         if (result != MAELYS_GIT_OK) break;
         result = authorize_commits(git_executable, repository_path, &context, error);
         if (result != MAELYS_GIT_OK) break;
@@ -242,7 +253,7 @@ maelys_git_result_t mg_receive_authorize(
         request.commit_count = update->commit_count;
         request.merge_commit_count = update->merge_commit_count;
         request.has_binary = update->changes.has_binary;
-        result = authorize_request(policy, &request, diagnostics, out_decision, error);
+        result = authorize_request(policy, &request, diagnostics, out_decision, out_receipt, error);
         if (result != MAELYS_GIT_OK) break;
         transaction.changes.changed_count += update->changes.changed_count;
         transaction.changes.added_count += update->changes.added_count;
@@ -279,8 +290,13 @@ maelys_git_result_t mg_receive_authorize(
             .merge_commit_count = transaction_merge_commit_count,
             .has_binary = transaction.changes.has_binary,
         };
-        result = authorize_request(policy, &summary_request, diagnostics, out_decision, error);
+        result = authorize_request(policy, &summary_request, diagnostics, out_decision,
+                                   out_receipt, error);
     }
+    if (out_receipt)
+        out_receipt->decided = result == MAELYS_GIT_OK || result == MAELYS_GIT_ERR_DENIED ||
+            (result == MAELYS_GIT_ERR_POLICY &&
+             out_receipt->receipt.decision == MAELYS_GIT_RECEIPT_DENY_ERROR);
     if (result == MAELYS_GIT_OK && out_summary) *out_summary = transaction.changes;
     maelys_git_receive_transaction_clear(&transaction);
     return result;
@@ -294,7 +310,7 @@ maelys_git_result_t maelys_git_pre_receive_with_limits(
     FILE *input, FILE *diagnostics, maelys_git_error_t *error) {
     return mg_receive_authorize(policy, git, repository_path, repository_name,
         principal, limits, inspectors, inspector_count, input, diagnostics,
-        NULL, NULL, error);
+        NULL, NULL, NULL, error);
 }
 
 maelys_git_result_t maelys_git_pre_receive_ex(maelys_git_policy_t *policy,

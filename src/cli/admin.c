@@ -1,6 +1,7 @@
 /* maelys-git: policy validation, authorization and repository administration.
  * Every command is one catalog entry, one handler and one embedded schema. */
 #include "cli/json_support.h"
+#include "maelys_git_receipt.h"
 
 #include <errno.h>
 #include <stdint.h>
@@ -22,6 +23,10 @@ static const maelys_cli_operand_t authorize_operands[] = {
     {MAELYS_CLI_OPERAND("OPERATION", "Datalog operation atom.")},
     {MAELYS_CLI_OPERAND_OPTIONAL("REF", "Optional full Git reference, or '-' when omitted.")},
     {MAELYS_CLI_OPERAND_REST("PATH", "Zero or more changed paths.")},
+};
+static const maelys_cli_option_t authorize_options[] = {
+    {MAELYS_CLI_FLAG("explain",
+     "Attach the engine's explanation document of the decision; write it before --.")},
 };
 static const maelys_cli_operand_t parse_ssh_operands[] = {
     {MAELYS_CLI_OPERAND("COMMAND", "Complete SSH_ORIGINAL_COMMAND value.")},
@@ -294,17 +299,39 @@ static int command_authorize(maelys_cli_context_t *context) {
         .paths = path_count ? paths : NULL,
         .path_count = path_count,
     };
+    int explain = maelys_cli_flag(context, "explain");
+    /* The document is exposed up to 32 KiB; beyond, the receipt keeps its
+     * size and digest and explanationText is absent. */
+    static char text[MAELYS_GIT_RECEIPT_MAX_EXPLANATION_TEXT + 1u];
     maelys_git_policy_decision_t decision;
+    maelys_git_receipt_t receipt;
     maelys_git_error_t error = {0};
-    maelys_git_result_t result = maelys_git_policy_authorize(policy, &request, &decision, &error);
+    maelys_git_result_t result = maelys_git_policy_authorize_receipt(
+        policy, &request, explain ? MAELYS_GIT_EXPLAIN_ALWAYS : MAELYS_GIT_EXPLAIN_NEVER,
+        explain ? text : NULL, explain ? sizeof(text) : 0u, &decision, &receipt, &error);
     maelys_git_policy_close(policy);
     if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
+    char *bytes = NULL;
+    size_t size = 0u;
+    char sha256[65];
+    result = maelys_git_receipt_serialize(&receipt, &bytes, &size, sha256, &error);
+    if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
+    /* The receipt object is read back from its canonical bytes; its digest is
+     * that of those bytes, computed before it enters the envelope. */
+    json_t *receipt_json = json_loadb(bytes, size, JSON_REJECT_DUPLICATES, NULL);
+    free(bytes);
     /* SIZE_MAX marks "no policy matched"; the contract exposes it as null. */
     json_t *matched = decision.matched_policy == SIZE_MAX ?
         json_null() : json_integer((json_int_t)decision.matched_policy);
-    json_t *data = json_pack("{s:b,s:b,s:o?,s:s}",
+    json_t *data = json_pack("{s:b,s:b,s:o?,s:s,s:o?,s:s}",
         "allowed", decision.allowed, "explicitDeny", decision.explicit_deny,
-        "matchedPolicy", matched, "reason", decision.reason);
+        "matchedPolicy", matched, "reason", decision.reason,
+        "receipt", receipt_json, "receiptSha256", sha256);
+    if (data && explain && receipt.explanation.has_text && text[0] &&
+        json_object_set_new(data, "explanationText", json_string(text)) != 0) {
+        json_decref(data);
+        data = NULL;
+    }
     return maelys_git_cli_succeed_json(context, data,
         decision.allowed ? "Authorization allowed." : "Authorization denied.",
         MAELYS_CLI_EXIT_OK);
@@ -818,7 +845,7 @@ static const maelys_cli_command_t commands[] = {
      MAELYS_CLI_SCHEMA(maelys_git_schema_validate)},
     {MAELYS_CLI_READ("authorize", "authorize", "Evaluate one authorization request.",
      command_authorize),
-     MAELYS_CLI_OPERANDS(authorize_operands),
+     MAELYS_CLI_OPERANDS(authorize_operands), MAELYS_CLI_OPTIONS(authorize_options),
      MAELYS_CLI_SCHEMA(maelys_git_schema_authorize)},
     {MAELYS_CLI_READ("parse-ssh", "parse-ssh", "Parse a forced SSH Git command.",
      command_parse_ssh),

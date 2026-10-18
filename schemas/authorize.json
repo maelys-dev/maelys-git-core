@@ -5,7 +5,9 @@
     "allowed",
     "explicitDeny",
     "matchedPolicy",
-    "reason"
+    "reason",
+    "receipt",
+    "receiptSha256"
   ],
   "properties": {
     "allowed": {
@@ -24,6 +26,290 @@
     },
     "reason": {
       "type": "string"
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision",
+        "errorBudget",
+        "errorCode",
+        "errorKind",
+        "explanation",
+        "matched",
+        "policySetFingerprint",
+        "request",
+        "stats",
+        "version"
+      ],
+      "properties": {
+        "decision": {
+          "enum": [
+            "allow",
+            "deny_explicit",
+            "deny_default",
+            "deny_error"
+          ]
+        },
+        "errorBudget": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "errorKind": {
+          "enum": [
+            "capacity",
+            "syntax",
+            "semantics",
+            "manifest",
+            "value",
+            "engine",
+            null
+          ]
+        },
+        "explanation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "counts",
+            "kind",
+            "limitHits",
+            "policyIndex",
+            "premiseCount",
+            "query",
+            "ruleId",
+            "status",
+            "stepCount",
+            "textBytes",
+            "textSha256"
+          ],
+          "properties": {
+            "counts": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "candidateRules",
+                    "diagnostics",
+                    "filterCostUnits",
+                    "substitutions"
+                  ],
+                  "properties": {
+                    "candidateRules": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "diagnostics": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "filterCostUnits": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "substitutions": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              ]
+            },
+            "kind": {
+              "enum": [
+                "none",
+                "why_true",
+                "why_false"
+              ]
+            },
+            "limitHits": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "enum": [
+                  "candidate-rules",
+                  "substitutions",
+                  "depth",
+                  "diagnostics",
+                  "filter-cost"
+                ]
+              }
+            },
+            "policyIndex": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "premiseCount": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "query": {
+              "enum": [
+                "allow",
+                "deny",
+                null
+              ]
+            },
+            "ruleId": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "status": {
+              "enum": [
+                "not_requested",
+                "complete",
+                "truncated",
+                "not_applicable",
+                "unknown"
+              ]
+            },
+            "stepCount": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "textBytes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "textSha256": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "matched": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "policyId",
+                "policyIndex",
+                "sessionFingerprint"
+              ],
+              "properties": {
+                "policyId": {
+                  "type": "string"
+                },
+                "policyIndex": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "sessionFingerprint": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          ]
+        },
+        "policySetFingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "operation",
+            "pathCount",
+            "principal",
+            "ref",
+            "repository"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "pathCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "principal": {
+              "type": "string"
+            },
+            "ref": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "repository": {
+              "type": "string"
+            }
+          }
+        },
+        "stats": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "edbFacts",
+            "evaluatedPolicies"
+          ],
+          "properties": {
+            "edbFacts": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "evaluatedPolicies": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "version": {
+          "const": 1
+        }
+      },
+      "description": "Authorization receipt v1, Maelys Canonical JSON v1 once rewritten; its SHA-256 is receiptSha256."
+    },
+    "receiptSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 of the receipt's canonical bytes."
+    },
+    "explanationText": {
+      "type": "string",
+      "description": "The engine's MAELYS-DATALOG-v2 document, with --explain, up to 32768 bytes."
     }
   }
 }

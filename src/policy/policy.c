@@ -1,6 +1,8 @@
 #include "internal.h"
 
+#include <maelys/cli/digest.h>
 #include <maelys/datalog.h>
+#include <maelys/datalog_explanations.h>
 
 #include <pthread.h>
 #include <stdint.h>
@@ -39,6 +41,12 @@ struct maelys_git_policy {
     request_bound_t exceeded; /* the bound that refused the last request facts */
     char repository_copy[MAELYS_GIT_MAX_REPOSITORY];
     char fingerprint[MAELYS_DATALOG_PUBLIC_FINGERPRINT_BYTES];
+    /* Allocated by the first explanation, kept until close: the storage of a
+     * prepared explanation, and the document rendered from it. */
+    void *explanation_storage;
+    size_t explanation_storage_bytes;
+    char *text;
+    size_t text_capacity;
 };
 
 /* The schema of the maelys_git domain: predicates only. Constants written in
@@ -272,6 +280,10 @@ static maelys_git_result_t read_limit(maelys_datalog_limit_t limit, size_t *out,
                ? MAELYS_GIT_OK : engine_failure(error, "engine limit query", status);
 }
 
+size_t mg_policy_explanation_storage_bytes(const maelys_git_policy_t *policy) {
+    return policy ? policy->explanation_storage_bytes : 0u;
+}
+
 maelys_git_result_t mg_policy_rule_limit(size_t *out_limit, maelys_git_error_t *error) {
     if (!out_limit) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     return read_limit(MAELYS_DATALOG_LIMIT_MAX_RULES, out_limit, error);
@@ -390,6 +402,8 @@ void maelys_git_policy_close(maelys_git_policy_t *policy) {
             (void)maelys_datalog_session_free(policy->entries[i].session);
     free(policy->entries);
     free(policy->facts);
+    free(policy->explanation_storage);
+    free(policy->text);
     free(policy);
 }
 
@@ -605,9 +619,13 @@ static maelys_git_result_t classify(const maelys_datalog_result_t *result, const
                                               : engine_failure(error, "decision query", status);
 }
 
-maelys_git_result_t maelys_git_policy_authorize(
-    maelys_git_policy_t *policy, const maelys_git_policy_request_t *request,
-    maelys_git_policy_decision_t *out_decision, maelys_git_error_t *error) {
+/* The decision of a request over the policies of the handle, in order; it
+ * counts the policies it solved. The request facts stay in the handle. */
+static maelys_git_result_t decide(maelys_git_policy_t *policy,
+                                  const maelys_git_policy_request_t *request,
+                                  maelys_git_policy_decision_t *out_decision,
+                                  size_t *out_evaluated, maelys_git_error_t *error) {
+    *out_evaluated = 0u;
     maelys_git_error_clear(error);
     if (!policy || !request || !out_decision || !request->principal ||
         !*request->principal || !request->repository || !*request->repository ||
@@ -639,6 +657,7 @@ maelys_git_result_t maelys_git_policy_authorize(
         maelys_datalog_result_t *solved = NULL;
         maelys_datalog_decision_t ranked = MAELYS_DATALOG_DECISION_DENY_DEFAULT;
         result = solve_entry(policy, entry, &solved, error);
+        *out_evaluated = i + 1u;
         if (result == MAELYS_GIT_OK) {
             result = classify(solved, request_id, &ranked, error);
             (void)maelys_datalog_result_free(solved);
@@ -678,16 +697,176 @@ maelys_git_result_t maelys_git_policy_authorize(
     return MAELYS_GIT_OK;
 }
 
+maelys_git_result_t maelys_git_policy_authorize(
+    maelys_git_policy_t *policy, const maelys_git_policy_request_t *request,
+    maelys_git_policy_decision_t *out_decision, maelys_git_error_t *error) {
+    size_t evaluated = 0u;
+    return decide(policy, request, out_decision, &evaluated, error);
+}
+
 /* ---- explanation --------------------------------------------------------- */
 
-/* The status line of a MAELYS-DATALOG-v2 explanation document. */
-static maelys_git_explanation_status_t document_status(const char *text) {
-    const char *line = strstr(text, "\nstatus=");
-    if (!line) return MAELYS_GIT_EXPLANATION_NOT_APPLICABLE;
-    line += 8;
-    if (strncmp(line, "complete", 8u) == 0) return MAELYS_GIT_EXPLANATION_COMPLETE;
-    if (strncmp(line, "truncated", 9u) == 0) return MAELYS_GIT_EXPLANATION_TRUNCATED;
-    return MAELYS_GIT_EXPLANATION_NOT_APPLICABLE;
+/* What one explanation of a decision says, read from the engine's structured
+ * views of a single prepared explanation; its text, when the engine rendered
+ * one, is in the handle's buffer. Git Core never reads that text. */
+typedef struct {
+    maelys_git_explanation_kind_t kind;
+    maelys_git_receipt_status_t status;
+    size_t policy_index;
+    const char *query;
+    int has_rule;
+    size_t rule_id, step_count, premise_count;
+    int has_counts;
+    size_t candidate_rules, diagnostics, filter_cost_units, substitutions;
+    unsigned limit_hits;
+    int has_text;
+    size_t text_bytes;
+    char text_sha256[65];
+    maelys_datalog_filter_statistics_t filters;
+} explanation_t;
+
+/* Storage for a prepared explanation of either kind, sized by the engine. */
+static maelys_git_result_t explanation_storage(maelys_git_policy_t *policy,
+                                               const maelys_datalog_session_t *session,
+                                               maelys_datalog_explanation_kind_t kind,
+                                               maelys_datalog_status_t *out_status,
+                                               maelys_git_error_t *error) {
+    size_t bytes = 0u, alignment = 0u;
+    *out_status = maelys_datalog_session_explanation_storage_bound(session, kind, &bytes, &alignment);
+    if (*out_status != MAELYS_DATALOG_STATUS_OK) return MAELYS_GIT_OK;
+    if (bytes <= policy->explanation_storage_bytes) return MAELYS_GIT_OK;
+    if (alignment < sizeof(void *)) alignment = sizeof(void *);
+    void *storage = NULL;
+    if (posix_memalign(&storage, alignment, bytes) != 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "unable to allocate explanation storage");
+        return MAELYS_GIT_ERR_IO;
+    }
+    free(policy->explanation_storage);
+    policy->explanation_storage = storage;
+    policy->explanation_storage_bytes = bytes;
+    return MAELYS_GIT_OK;
+}
+
+static unsigned receipt_limit_hits(unsigned engine_hits) {
+    static const struct { unsigned engine, receipt; } bits[] = {
+        {MAELYS_DATALOG_WHY_FALSE_LIMIT_CANDIDATE_RULES, MAELYS_GIT_RECEIPT_LIMIT_CANDIDATE_RULES},
+        {MAELYS_DATALOG_WHY_FALSE_LIMIT_SUBSTITUTIONS, MAELYS_GIT_RECEIPT_LIMIT_SUBSTITUTIONS},
+        {MAELYS_DATALOG_WHY_FALSE_LIMIT_DEPTH, MAELYS_GIT_RECEIPT_LIMIT_DEPTH},
+        {MAELYS_DATALOG_WHY_FALSE_LIMIT_DIAGNOSTICS, MAELYS_GIT_RECEIPT_LIMIT_DIAGNOSTICS},
+        {MAELYS_DATALOG_WHY_FALSE_LIMIT_FILTER_COST, MAELYS_GIT_RECEIPT_LIMIT_FILTER_COST},
+    };
+    unsigned hits = 0u;
+    for (size_t i = 0u; i < sizeof(bits) / sizeof(bits[0]); ++i)
+        if (engine_hits & bits[i].engine) hits |= bits[i].receipt;
+    return hits;
+}
+
+/* The status, counters and deciding rule of a prepared explanation. The rule
+ * of a why-true is that of the step deriving the queried fact. */
+static void read_views(const maelys_datalog_prepared_explanation_t *prepared, const char *query,
+                       explanation_t *out) {
+    maelys_datalog_explanation_info_t info;
+    if (maelys_datalog_prepared_explanation_info(prepared, &info) != MAELYS_DATALOG_STATUS_OK) {
+        out->status = MAELYS_GIT_RECEIPT_STATUS_UNKNOWN;
+        return;
+    }
+    if (out->kind == MAELYS_GIT_EXPLANATION_WHY_TRUE) {
+        out->status = !info.found ? MAELYS_GIT_RECEIPT_STATUS_NOT_APPLICABLE :
+                      info.truncated ? MAELYS_GIT_RECEIPT_STATUS_TRUNCATED :
+                                       MAELYS_GIT_RECEIPT_STATUS_COMPLETE;
+        if (out->status != MAELYS_GIT_RECEIPT_STATUS_COMPLETE) return;
+        for (size_t i = 0u; i < info.step_count; ++i) {
+            maelys_datalog_explanation_step_view_t step;
+            if (maelys_datalog_prepared_explanation_step(prepared, i, &step) == MAELYS_DATALOG_STATUS_OK &&
+                step.fact.predicate && !strcmp(step.fact.predicate, query)) {
+                out->has_rule = 1;
+                out->rule_id = step.rule_id;
+                out->step_count = info.step_count;
+                out->premise_count = info.premise_count;
+                break;
+            }
+        }
+        return;
+    }
+    out->status = info.false_status == MAELYS_DATALOG_WHY_FALSE_STATUS_COMPLETE ?
+                      MAELYS_GIT_RECEIPT_STATUS_COMPLETE :
+                  info.false_status == MAELYS_DATALOG_WHY_FALSE_STATUS_TRUNCATED ?
+                      MAELYS_GIT_RECEIPT_STATUS_TRUNCATED : MAELYS_GIT_RECEIPT_STATUS_NOT_APPLICABLE;
+    out->has_counts = 1;
+    out->candidate_rules = info.candidate_rule_count;
+    out->diagnostics = info.diagnostic_count;
+    out->filter_cost_units = info.filter_cost_units;
+    out->substitutions = info.substitution_count;
+    out->limit_hits = receipt_limit_hits(info.limit_hits);
+}
+
+/* Renders the document of a prepared explanation into the handle's buffer
+ * and hashes it. */
+static maelys_git_result_t render_text(maelys_git_policy_t *policy,
+                                       const maelys_datalog_prepared_explanation_t *prepared,
+                                       explanation_t *out, maelys_git_error_t *error) {
+    size_t required = 0u;
+    maelys_datalog_status_t status = maelys_datalog_prepared_explanation_text_size(prepared, &required);
+    if (status != MAELYS_DATALOG_STATUS_OK) return engine_failure(error, "explanation size", status);
+    if (required + 1u > policy->text_capacity) {
+        char *text = realloc(policy->text, required + 1u);
+        if (!text) {
+            mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "unable to allocate the explanation text");
+            return MAELYS_GIT_ERR_IO;
+        }
+        policy->text = text;
+        policy->text_capacity = required + 1u;
+    }
+    status = maelys_datalog_prepared_explanation_write_text(prepared, policy->text, required + 1u);
+    if (status != MAELYS_DATALOG_STATUS_OK) return engine_failure(error, "explanation", status);
+    out->has_text = 1;
+    out->text_bytes = required;
+    maelys_cli_sha256_hex(policy->text, required, out->text_sha256);
+    return MAELYS_GIT_OK;
+}
+
+/* The single path that explains a decision: the witness of a derived allow or
+ * deny in the policy that derived it, or the why-false document of allow in
+ * the last policy for a denial by default. The request facts are still in
+ * the handle: that policy is solved again and explained from the result that
+ * carries the decision, by one preparation for the views and the text. */
+static maelys_git_result_t explain_decision(maelys_git_policy_t *policy,
+                                            const maelys_git_policy_request_t *request,
+                                            const maelys_git_policy_decision_t *decision,
+                                            explanation_t *out, maelys_git_error_t *error) {
+    memset(out, 0, sizeof(*out));
+    int why_true = decision->allowed || decision->explicit_deny;
+    out->kind = why_true ? MAELYS_GIT_EXPLANATION_WHY_TRUE : MAELYS_GIT_EXPLANATION_WHY_FALSE;
+    out->query = decision->explicit_deny ? "deny" : "allow";
+    out->policy_index = why_true ? decision->matched_policy : policy->count - 1u;
+    out->status = MAELYS_GIT_RECEIPT_STATUS_NOT_APPLICABLE;
+    const policy_entry_t *entry = &policy->entries[out->policy_index];
+    maelys_datalog_explanation_kind_t kind = why_true ? MAELYS_DATALOG_EXPLAIN_TRUE : MAELYS_DATALOG_EXPLAIN_FALSE;
+    maelys_datalog_status_t status = MAELYS_DATALOG_STATUS_OK;
+    maelys_git_result_t result = explanation_storage(policy, entry->session, kind, &status, error);
+    if (result != MAELYS_GIT_OK) return result;
+    /* A backend that cannot explain: the decision stands, without a document. */
+    if (status == MAELYS_DATALOG_STATUS_UNSUPPORTED) return MAELYS_GIT_OK;
+    if (status != MAELYS_DATALOG_STATUS_OK) return engine_failure(error, "explanation storage bound", status);
+    maelys_datalog_result_t *solved = NULL;
+    result = solve_entry(policy, entry, &solved, error);
+    if (result != MAELYS_GIT_OK) return result;
+    if (maelys_datalog_result_filter_statistics(solved, &out->filters) != MAELYS_DATALOG_STATUS_OK)
+        memset(&out->filters, 0, sizeof(out->filters));
+    maelys_datalog_value_t query = symbol_value(request_identifier(request));
+    maelys_datalog_prepared_explanation_t *prepared = NULL;
+    status = maelys_datalog_result_prepare_explanation(
+        solved, kind, out->query, &query, 1u, policy->explanation_storage,
+        policy->explanation_storage_bytes, &prepared);
+    if (status == MAELYS_DATALOG_STATUS_OK) {
+        read_views(prepared, out->query, out);
+        result = render_text(policy, prepared, out, error);
+        (void)maelys_datalog_prepared_explanation_release(prepared);
+    } else if (status != MAELYS_DATALOG_STATUS_UNSUPPORTED) {
+        result = engine_failure(error, "explanation", status);
+    }
+    (void)maelys_datalog_result_free(solved);
+    return result;
 }
 
 maelys_git_result_t maelys_git_policy_explain(
@@ -706,65 +885,119 @@ maelys_git_result_t maelys_git_policy_explain(
     maelys_git_result_t result =
         maelys_git_policy_authorize(policy, request, &out_explanation->decision, error);
     if (result != MAELYS_GIT_OK) return result;
-    const maelys_git_policy_decision_t *decision = &out_explanation->decision;
-    int why_true = decision->allowed || decision->explicit_deny;
-    const char *query_name = decision->explicit_deny ? "deny" : "allow";
-    /* A derived allow or deny is witnessed by the policy that derived it; a
-     * default denial is examined on the last policy that could have allowed. */
-    size_t target = why_true ? decision->matched_policy : policy->count - 1u;
-    out_explanation->kind = why_true ? MAELYS_GIT_EXPLANATION_WHY_TRUE : MAELYS_GIT_EXPLANATION_WHY_FALSE;
-    out_explanation->explained_policy = target;
-    (void)mg_copy_string(out_explanation->query, sizeof(out_explanation->query), query_name);
-
-    /* The request facts are still in the handle: solve the one policy again and
-     * render from the result that carries the decision. */
-    maelys_datalog_result_t *solved = NULL;
-    result = solve_entry(policy, &policy->entries[target], &solved, error);
+    explanation_t explanation;
+    result = explain_decision(policy, request, &out_explanation->decision, &explanation, error);
     if (result != MAELYS_GIT_OK) return result;
-    maelys_datalog_value_t query = symbol_value(request_identifier(request));
-    maelys_datalog_status_t (*render)(const maelys_datalog_result_t *, const char *,
-                                      const maelys_datalog_value_t *, size_t, char *, size_t,
-                                      size_t *) =
-        why_true ? maelys_datalog_result_explain_true_text : maelys_datalog_result_explain_false_text;
-    size_t required = 0u;
-    maelys_datalog_status_t status = render(solved, query_name, &query, 1u, NULL, 0u, &required);
-    if (status == MAELYS_DATALOG_STATUS_UNSUPPORTED) {
-        /* The backend cannot explain: the decision stands, without a document. */
-        (void)maelys_datalog_result_free(solved);
+    out_explanation->kind = explanation.kind;
+    out_explanation->explained_policy = explanation.policy_index;
+    (void)mg_copy_string(out_explanation->query, sizeof(out_explanation->query), explanation.query);
+    out_explanation->filter_matches = explanation.filters.matches;
+    out_explanation->filter_non_matches = explanation.filters.non_matches;
+    out_explanation->filter_cost_units = explanation.filters.cost_units;
+    if (!explanation.has_text) {
         out_explanation->status = MAELYS_GIT_EXPLANATION_NOT_APPLICABLE;
         return MAELYS_GIT_OK;
     }
-    if (status != MAELYS_DATALOG_STATUS_OK && status != MAELYS_DATALOG_STATUS_PAYLOAD_TOO_LARGE) {
-        (void)maelys_datalog_result_free(solved);
-        return engine_failure(error, "explanation", status);
-    }
-    out_explanation->text_required = required;
-    maelys_datalog_filter_statistics_t filters;
-    memset(&filters, 0, sizeof(filters));
-    if (maelys_datalog_result_filter_statistics(solved, &filters) == MAELYS_DATALOG_STATUS_OK) {
-        out_explanation->filter_matches = filters.matches;
-        out_explanation->filter_non_matches = filters.non_matches;
-        out_explanation->filter_cost_units = filters.cost_units;
-    }
-    if (!out_text) {
-        /* Size query: the caller allocates text_required + 1 bytes and calls again. */
-        (void)maelys_datalog_result_free(solved);
-        return MAELYS_GIT_OK;
-    }
-    if (capacity <= required) {
-        (void)maelys_datalog_result_free(solved);
-        mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0,
-                     "the explanation needs %zu bytes and the buffer holds %zu", required + 1u, capacity);
+    out_explanation->text_required = explanation.text_bytes;
+    /* Size query: the caller allocates text_required + 1 bytes and calls again. */
+    if (!out_text) return MAELYS_GIT_OK;
+    if (capacity <= explanation.text_bytes) {
+        mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0, "the explanation needs %zu bytes and the buffer holds %zu",
+                     explanation.text_bytes + 1u, capacity);
         return MAELYS_GIT_ERR_LIMIT;
     }
-    /* The text is copied into the caller's buffer before the result goes. */
-    status = render(solved, query_name, &query, 1u, out_text, capacity, &required);
-    (void)maelys_datalog_result_free(solved);
-    if (status != MAELYS_DATALOG_STATUS_OK) {
-        out_text[0] = '\0';
-        return engine_failure(error, "explanation", status);
+    memcpy(out_text, policy->text, explanation.text_bytes + 1u);
+    out_explanation->text_length = explanation.text_bytes;
+    out_explanation->status =
+        explanation.status == MAELYS_GIT_RECEIPT_STATUS_COMPLETE ? MAELYS_GIT_EXPLANATION_COMPLETE :
+        explanation.status == MAELYS_GIT_RECEIPT_STATUS_TRUNCATED ? MAELYS_GIT_EXPLANATION_TRUNCATED :
+                                                                    MAELYS_GIT_EXPLANATION_NOT_APPLICABLE;
+    return MAELYS_GIT_OK;
+}
+
+/* ---- receipts ------------------------------------------------------------- */
+
+static int copy_field(char *out, size_t capacity, const char *value, maelys_git_error_t *error,
+                      const char *name) {
+    if (!value) value = "";
+    if (mg_copy_string(out, capacity, value)) return 1;
+    mg_error_set(error, MAELYS_GIT_ERR_LIMIT, 0, "the receipt cannot hold a request %s of %zu bytes",
+                 name, strlen(value));
+    return 0;
+}
+
+maelys_git_result_t maelys_git_policy_authorize_receipt(
+    maelys_git_policy_t *policy, const maelys_git_policy_request_t *request,
+    maelys_git_explain_mode_t mode, char *out_text, size_t text_capacity,
+    maelys_git_policy_decision_t *out_decision, maelys_git_receipt_t *out_receipt,
+    maelys_git_error_t *error) {
+    maelys_git_error_clear(error);
+    if (!out_receipt || !request || (mode != MAELYS_GIT_EXPLAIN_NEVER &&
+        mode != MAELYS_GIT_EXPLAIN_ON_DENIAL && mode != MAELYS_GIT_EXPLAIN_ALWAYS)) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0, "a request, a receipt and a known mode are required");
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     }
-    out_explanation->text_length = required;
-    out_explanation->status = document_status(out_text);
+    if (out_text && text_capacity > 0u) out_text[0] = '\0';
+    maelys_git_receipt_t *receipt = out_receipt;
+    memset(receipt, 0, sizeof(*receipt));
+    if (!copy_field(receipt->request.id, sizeof(receipt->request.id), request_identifier(request), error, "id") ||
+        !copy_field(receipt->request.principal, sizeof(receipt->request.principal), request->principal, error, "principal") ||
+        !copy_field(receipt->request.repository, sizeof(receipt->request.repository), request->repository, error, "repository") ||
+        !copy_field(receipt->request.operation, sizeof(receipt->request.operation), request->operation, error, "operation") ||
+        !copy_field(receipt->request.ref, sizeof(receipt->request.ref), request->ref_name, error, "ref"))
+        return MAELYS_GIT_ERR_LIMIT;
+    receipt->request.path_count = request->path_count;
+    size_t evaluated = 0u;
+    maelys_git_result_t result = decide(policy, request, out_decision, &evaluated, error);
+    if (result == MAELYS_GIT_ERR_INVALID_ARGUMENT) return result;
+    memcpy(receipt->policy_set_fingerprint, policy->fingerprint, sizeof(policy->fingerprint));
+    receipt->edb_facts = policy->fact_count;
+    receipt->evaluated_policies = evaluated;
+    if (result != MAELYS_GIT_OK) {
+        /* A failure denies; the receipt says so, and what kind of failure it was. */
+        receipt->decision = MAELYS_GIT_RECEIPT_DENY_ERROR;
+        (void)mg_copy_string(receipt->error_code, sizeof(receipt->error_code), maelys_git_result_name(result));
+        if (error && error->detail.kind != MAELYS_GIT_FAILURE_NONE) {
+            (void)mg_copy_string(receipt->error_kind, sizeof(receipt->error_kind),
+                                 maelys_git_failure_kind_name(error->detail.kind));
+            if (error->detail.kind == MAELYS_GIT_FAILURE_CAPACITY)
+                (void)mg_copy_string(receipt->error_budget, sizeof(receipt->error_budget), error->detail.budget);
+        }
+        return result;
+    }
+    receipt->decision = out_decision->allowed ? MAELYS_GIT_RECEIPT_ALLOW :
+                        out_decision->explicit_deny ? MAELYS_GIT_RECEIPT_DENY_EXPLICIT :
+                                                      MAELYS_GIT_RECEIPT_DENY_DEFAULT;
+    if (out_decision->allowed || out_decision->explicit_deny) {
+        const policy_entry_t *entry = &policy->entries[out_decision->matched_policy];
+        receipt->matched = 1;
+        receipt->matched_policy_index = out_decision->matched_policy;
+        (void)mg_copy_string(receipt->matched_policy_id, sizeof(receipt->matched_policy_id), entry->policy_id);
+        memcpy(receipt->matched_session_fingerprint, entry->fingerprint, sizeof(entry->fingerprint));
+    }
+    if (mode == MAELYS_GIT_EXPLAIN_NEVER || (mode == MAELYS_GIT_EXPLAIN_ON_DENIAL && out_decision->allowed))
+        return MAELYS_GIT_OK;
+    explanation_t explanation;
+    result = explain_decision(policy, request, out_decision, &explanation, error);
+    if (result != MAELYS_GIT_OK) return result;
+    receipt->explanation.kind = explanation.kind;
+    receipt->explanation.status = explanation.status;
+    receipt->explanation.policy_index = explanation.policy_index;
+    (void)mg_copy_string(receipt->explanation.query, sizeof(receipt->explanation.query), explanation.query);
+    receipt->explanation.has_rule = explanation.has_rule;
+    receipt->explanation.rule_id = explanation.rule_id;
+    receipt->explanation.step_count = explanation.step_count;
+    receipt->explanation.premise_count = explanation.premise_count;
+    receipt->explanation.has_counts = explanation.has_counts;
+    receipt->explanation.candidate_rules = explanation.candidate_rules;
+    receipt->explanation.diagnostics = explanation.diagnostics;
+    receipt->explanation.filter_cost_units = explanation.filter_cost_units;
+    receipt->explanation.substitutions = explanation.substitutions;
+    receipt->explanation.limit_hits = explanation.limit_hits;
+    receipt->explanation.has_text = explanation.has_text;
+    receipt->explanation.text_bytes = explanation.text_bytes;
+    memcpy(receipt->explanation.text_sha256, explanation.text_sha256, sizeof(explanation.text_sha256));
+    if (explanation.has_text && out_text && text_capacity > explanation.text_bytes)
+        memcpy(out_text, policy->text, explanation.text_bytes + 1u);
     return MAELYS_GIT_OK;
 }

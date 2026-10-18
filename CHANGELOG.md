@@ -5,6 +5,47 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- Authorization receipts. `maelys_git_policy_authorize_receipt` decides
+  exactly as `maelys_git_policy_authorize` and fills a
+  `maelys_git_receipt_t`: the decision (`allow`, `deny_explicit`,
+  `deny_default`, `deny_error` with the failure's code, kind and budget), the
+  deciding policy and its session fingerprint, the policy-set fingerprint,
+  the request without its paths, and, when an explanation is asked for
+  (`MAELYS_GIT_EXPLAIN_ON_DENIAL` or `_ALWAYS`), a bounded summary of it read
+  from the engine's structured views: kind, status, deciding rule, counters,
+  limits reached, and the size and SHA-256 of the document. The document
+  itself is never in the receipt. `maelys_git_receipt_serialize` writes it as
+  Maelys Canonical JSON v1 through maelys-json, at most 8 KiB, with its
+  SHA-256; `maelys_git_receipt_verify` accepts only that form and the closed
+  shape of version 1 (`maelys_git_receipt.h`, library `maelys_git_receipt`).
+- `maelys-git authorize` adds `receipt`, the receipt of its decision, and
+  `receiptSha256`, the SHA-256 of its canonical bytes; with `--explain`,
+  written before `--`, it also renders the engine's explanation and adds it
+  as `explanationText`, up to 32 KiB. The four members it had are unchanged.
+- The agent's decision results add `matched_policy`, `receipt` and
+  `receipt_sha256`; an `authorize` command may ask for `explain: true` and
+  gets `explanation_text`. When the executor refuses `create_repository` or
+  `update_ref`, its result carries the explanation of that denial; the Cloud
+  agent verifies the receipt (rewritten by maelys-json, then checked for
+  canonical form and shape, then against `receipt_sha256`) and the text
+  (size and SHA-256 named by the receipt), records them as
+  `authorization_receipt` and `authorization_explanation` audit events in
+  the transaction that completes the command, and publishes the result
+  without the text, rewritten in canonical form. A receipt or text that does
+  not verify fails the command and records no event. `maelys-git-agent
+  stdio`, which keeps no audit, sends no denial text.
+- `maelys-git-hook pre-receive --receipts FILE` appends one JSONL line per
+  push, written by maelys-json: the receipt of the first denial with its
+  explanation, or of the final authorization of an accepted push without
+  one, and the receipt's SHA-256. A failure outside the policy writes no
+  line; a line that cannot be written refuses the push. Without the option
+  the hook is unchanged, and what the Git client receives is the same
+  either way. Neither the hook nor the shell links Jansson.
+- `maelys_git_policy_explain` now renders through the same single
+  preparation as the receipt, and reads its status from the engine's
+  structured views instead of searching the document's text. The policy
+  handle keeps the preparation storage from its first explanation until it
+  is closed: about 113 KiB in SMALL and 145 KiB in LARGE.
 - A policy failure says by machine what it is. `maelys_git_error_t` gains a
   `detail`: its kind (`capacity`, `syntax`, `semantics`, `manifest`, `value`
   or `engine`, named by `maelys_git_failure_kind_name`), the engine's

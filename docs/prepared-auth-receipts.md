@@ -7,8 +7,9 @@ Statut : proposée, amendée le 2026-09-05.
 les sessions préparées confinées à un worker et l'oracle fresh réservé aux
 tests sont présents ; CTest couvre le différentiel, A/B/A, la reprise après
 erreur et les contextes parallèles. Les révisions consommées sont enregistrées
-dans `cmake/dependencies.cmake`. Les reçus, leur sérialisation, leur propagation
-et le benchmark restent une proposition, et ne sont pas annoncés comme livrés.
+dans `cmake/dependencies.cmake`. Les reçus, leur sérialisation et leur
+exposition sont livrés par le cycle GIT-C02 : les sections 6 et 7 décrivent le
+contrat implémenté.
 Les chemins historiques cités plus bas décrivent l'état lors de la rédaction.
 Le découpage JSON est désormais fixé module par module dans
 [Frontières JSON](json-boundaries.md) : coexistence durable de maelys-json et
@@ -135,141 +136,134 @@ l'utilise comme référence de coût.
 
 ## 6. Reçu d'autorisation
 
-### 6.1 Forme
+Livré par le cycle GIT-C02 (directive R5) : cette section décrit le contrat
+implémenté, qui remplace la proposition du 2026-09-05. Le reçu ne recopie
+plus le corps de la preuve : il en garde un résumé borné, lu dans les vues
+structurées du moteur, et l'empreinte du document, qui voyage à côté.
+
+### 6.1 Forme, version 1
 
 ```json
 {
-  "version": 1,
-  "decision": "allow",
-  "policySetFingerprint": "<64 hex>",
-  "matched": {
-    "policyIndex": 0,
-    "policyId": "core",
-    "policyFingerprint": "<64 hex>"
-  },
+  "decision": "deny_explicit",
+  "errorBudget": null,
+  "errorCode": null,
+  "errorKind": null,
   "explanation": {
+    "counts": null,
     "kind": "why_true",
-    "query": "allow",
+    "limitHits": null,
+    "policyIndex": 0,
+    "premiseCount": 6,
+    "query": "deny",
+    "ruleId": 12,
     "status": "complete",
-    "detailLevel": 0,
-    "steps": [
-      {"ruleId": 12, "fact": "allow(\"cli\")", "premises": ["user(\"alice\")", "repository(\"team/app\")"]}
-    ]
+    "stepCount": 1,
+    "textBytes": 609,
+    "textSha256": "<64 hex>"
   },
-  "stats": {
-    "evaluatedPolicies": 1,
-    "edbFacts": 17,
-    "derivedFacts": 8
-  }
+  "matched": {"policyId": "maelys-git.example.authorization", "policyIndex": 0,
+              "sessionFingerprint": "<64 hex>"},
+  "policySetFingerprint": "<64 hex>",
+  "request": {"id": "cli", "operation": "push", "pathCount": 0, "principal": "mallory",
+              "ref": "refs/heads/main", "repository": "example.git"},
+  "stats": {"edbFacts": 8, "evaluatedPolicies": 1},
+  "version": 1
 }
 ```
 
 ### 6.2 Sémantique des champs
 
-- `decision` est une énumération fermée : `allow`, `deny_explicit`,
-  `deny_default`, `deny_error`. Le dernier couvre l'échec fail-closed du
-  solveur ; il n'y a pas de reçu partiel, il y a un reçu de refus.
-- `matched` vaut `null` pour `deny_default` et `deny_error`. Il ne porte pas de
-  `ruleId` : un `deny` peut être dérivé par plusieurs règles, et la règle
-  décisive est dans `explanation`.
-- `explanation.kind` : `why_true` pour `allow` et `deny_explicit`, `why_false`
-  pour `deny_default`, `none` pour `deny_error`. `query` nomme le prédicat
-  expliqué.
-- `explanation.status` : `complete`, `truncated`, `not_applicable`.
-- Pour `why_false`, l'objet porte en plus `limits` (les quatre bornes C69
-  utilisées), `limitHits`, `counts` avec `candidateRules`, `substitutions`,
-  `diagnostics`, et le tableau `diagnostics`. Ces compteurs sont ceux de
-  l'extraction why-false et ne vont pas dans `stats` : sur un `allow` ils
-  vaudraient zéro parce que l'extraction n'a pas tourné, pas parce que rien ne
-  s'est passé.
-- `stats` ne contient que des mesures du solve lui-même : politiques
-  évaluées, faits EDB matérialisés, faits dérivés cumulés sur les politiques
-  évaluées.
-- Toutes les chaînes sont des textes de symboles ou des identifiants de
-  politique ; tous les nombres sont des entiers non signés.
+- `decision` : `allow`, `deny_explicit`, `deny_default`, `deny_error`.
+  `deny_error` est l'échec d'une autorisation : `errorCode` est le nom du code
+  de résultat, `errorKind` le genre d'échec de GIT-C04 (`capacity`,
+  `syntax`, `semantics`, `manifest`, `value`, `engine`) et `errorBudget` le
+  nom du budget du moteur pour une capacité. Ces trois champs valent `null`
+  hors `deny_error`. La valeur demandée et la limite n'y sont pas : elles
+  dépendent du profil du moteur.
+- `matched` vaut `null` pour `deny_default` et `deny_error`.
+- `explanation.kind` vaut `none` et `status` `not_requested` quand aucune
+  explication n'a été demandée ; tous les autres champs valent alors `null`.
+  `why_true` explique `allow` ou `deny` dans la policy décisive ;
+  `why_false` explique `allow` dans la dernière policy du jeu.
+- `status` vient de la vue structurée, jamais du texte : `complete`,
+  `truncated`, `not_applicable`, ou `unknown` quand le backend n'offre pas de
+  vue.
+- `ruleId`, `stepCount` et `premiseCount` ne valent que pour un Why-true
+  `complete` ; `ruleId` est l'index de la règle dans le programme compilé,
+  plus un, et n'a de sens que pour `matched.sessionFingerprint`. `counts` et
+  `limitHits` ne valent que pour un Why-false.
+- `textBytes` et `textSha256` désignent le document `MAELYS-DATALOG-v2`
+  rendu ; le document n'est jamais dans le reçu.
+- `request` ne contient pas les chemins, seulement leur nombre. `stats`
+  compte les faits de requête construits et les policies résolues.
+- Tous les nombres sont des entiers non signés.
 
-### 6.3 Canonicalisation
+### 6.3 Canonicalisation et vérification
 
-Le reçu est sérialisé par maelys-json en **Maelys Canonical JSON v1**, profil
-`RFC8259` : les principaux, dépôts et chemins ne sont pas garantis ASCII.
-Clés triées par unités UTF-16 non échappées, entiers minimaux, un seul épellement
-d'échappement, aucun blanc, LF final non demandé.
+Le reçu est écrit par maelys-json en Maelys Canonical JSON v1, profil
+`RFC8259`, sans saut de ligne final ; son empreinte est le SHA-256 de ces
+octets. `maelys_git_receipt_verify` n'accepte que cette forme, les clés
+fermées de la version 1, les énumérations et les longueurs d'empreinte, et
+refuse fraction et exposant. Un reçu relu dans une enveloppe est réécrit par
+maelys-json puis vérifié avant d'être haché : depuis maelys-json 0.3.0, la
+réécriture recopie un nombre non entier par son lexème, et ne prouve donc
+rien seule.
 
-Les octets canoniques sont la seule forme de référence du reçu. Toute
-empreinte du reçu se calcule sur eux, avant insertion dans une enveloppe
-Jansson. Une fois insérés puis ré-émis par Jansson, les octets ne sont plus
-garantis canoniques ; l'enveloppe porte donc `receiptSha256` calculée sur la forme
-canonique, et l'audit SQLite conserve la forme canonique brute.
+### 6.4 Budget
 
-À réception d'un reçu canonique brut, parser les octets avec les limites du
-reçu et valider le schéma, puis exiger que
-`maelys_json_document_is_canonical(document, 0, &is_canonical)` retourne
-`MAELYS_JSON_OK` avec `is_canonical != 0`. Hacher ensuite les octets d'entrée,
-sans les réémettre ; refuser une forme non canonique plutôt que la corriger.
-Le transport de ces octets bruts devra être défini avec les reçus : l'objet
-de présentation réémis par Jansson ne s'y substitue pas. La forme de
-déduplication v1 des commandes reste un contrat Jansson distinct, décrit dans
-[Frontières JSON](json-boundaries.md).
-
-Le noyau de politique ne dépend pas de Jansson. Il expose une structure C
-`maelys_git_receipt_t` entièrement matérialisée. Un module de sérialisation
-séparé, lié à maelys-json, produit les octets canoniques. Ce module est le
-seul point de contact du noyau avec un format d'échange.
-
-### 6.4 Budget et troncature déterministe
-
-| Limite | Valeur | Justification |
-|---|---|---|
-| Octets canoniques | 16 384 | Nettement sous la ligne protocole de 64 Kio, enveloppe comprise. |
-| Profondeur | 8 | Le reçu est plat. |
-| Nœuds | 2 048 | 16 diagnostics C69 avec supports et substitutions tiennent largement. |
-
-Le writer maelys-json refuse de terminer si une limite est dépassée et ne
-produit alors aucun octet. La troncature est une échelle de niveaux de détail
-croissants en perte, essayés dans l'ordre jusqu'au premier qui tient :
-
-| `detailLevel` | Contenu |
-|---|---|
-| 0 | Explication complète. |
-| 1 | Sans substitutions ni supports des diagnostics why-false ; sans prémisses des étapes why-true. |
-| 2 | Diagnostics ou étapes limités aux quatre premiers dans l'ordre canonique du solveur. |
-| 3 | Aucun corps d'explication ; seuls `kind`, `query`, `status`, `detailLevel` et, pour why-false, `limits`, `limitHits`, `counts`. |
-
-Le niveau 3 tient toujours par construction. `status` vaut `truncated` dès que
-le niveau retenu est supérieur à 0 ou que C68/C69 a lui-même tronqué. Le
-même reçu, sérialisé deux fois, produit les mêmes octets.
+Un reçu fait au plus 8 192 octets canoniques ; tous ses champs sont bornés
+par des limites du produit, et le plus grand reçu possible, champs au
+maximum, tient en 3 403 octets. Un document d'explication est exposé jusqu'à
+32 768 octets ; au-delà il ne l'est pas, et le reçu garde sa taille et son
+empreinte.
 
 ## 7. Exposition
 
-### 7.1 `maelys-git authorize`
+| Surface | Explication rendue | Texte exposé |
+|---|---|---|
+| `maelys-git authorize` | jamais | non |
+| `maelys-git authorize --explain` | toujours | `explanationText` |
+| Agent, `authorize` | jamais | non |
+| Agent, `authorize` avec `explain: true` | toujours | `explanation_text` |
+| Exécuteur supervisé, refus de `create_repository` ou `update_ref` | sur refus | vers l'agent superviseur |
+| Résultat publié par l'agent Cloud pour ce refus | — | non : retiré après audit |
+| Audit SQLite, `authorization_receipt` | — | le reçu canonique seul |
+| Audit SQLite, `authorization_explanation` | — | le texte d'un refus ou d'une demande |
+| Hook avec `--receipts FILE`, refus | sur refus | dans le fichier |
+| Hook avec `--receipts FILE`, acceptation | jamais | non |
+| `maelys-git-agent stdio`, refus de `create_repository` ou `update_ref` | jamais | non ; le reçu n'a pas de résumé (`explanation.kind` vaut `none`) |
+| Refus de policy de `pr_merge` | — | aucun reçu (voir plus bas) |
+| Client Git | — | jamais |
 
-L'enveloppe normalisée gagne `receipt` (objet) et `receiptSha256`.
-`matchedPolicy` est déjà `["integer","null"]` avec `minimum: 0`. Le schéma
-`schemas/authorize.json`, son usage dans `src/cli/admin.c` et le contrat généré
-`docs/cli-contract.json` sont mis à jour ensemble pour les nouveaux champs ; le
-test `maelys-git-cli-docs` les maintient alignés.
+- `maelys-git authorize` ajoute `receipt` et `receiptSha256` à ses quatre
+  membres, inchangés.
+- Les résultats de décision de l'agent ajoutent `matched_policy`, `receipt`
+  et `receipt_sha256`.
+- L'agent Cloud vérifie le reçu et le texte d'un résultat avant de
+  l'enregistrer ; les deux événements d'audit, l'enregistrement du résultat
+  et sa mise en file sont dans la même transaction.
+- Le hook écrit une ligne par push, `{"explanationText":…,"receipt":{…},
+  "receiptSha256":"…"}`, par maelys-json ; le flux vers le client Git est le
+  même avec ou sans l'option.
+- `maelys-git-agent stdio` publie ce que l'agent Cloud publierait, sans
+  l'audit qui seul justifie de rendre le texte d'un refus : il n'explique
+  donc pas le refus d'une commande qui modifie un dépôt.
+- **Exception : le refus de policy de `pr_merge` ne porte pas de reçu.** La
+  réautorisation d'une fusion se fait dans `maelys_git_pr_merge_with_source`,
+  qui ne rend pas de décision, et le même résultat `denied` couvre aussi des
+  refus sans policy (gates de PR, PR non fusionnable, configuration Git
+  interdite). Ce refus garde sa charge `{code, message}` et n'écrit aucun
+  événement d'audit de reçu ; un cycle ultérieur lui donnera le reçu de la
+  décision décisive, comme pour `update_ref`.
 
-### 7.2 Agent
+### Corpus de référence
 
-Les résultats `authorize`, `update_ref` et PR portent `receipt` et
-`receiptSha256`. Un push évalue une autorisation par ref, commit, fichier et
-résumé. Le résultat d'agent porte **le reçu décisif** : le premier refus s'il y
-en a un, sinon le reçu de l'autorisation du résumé final. Il porte aussi
-`receiptCount`. L'exhaustivité est dans l'audit, pas dans le résultat.
-
-### 7.3 SQLite
-
-La table `audit` existante reçoit un événement par reçu, `kind` =
-`authorization_receipt`, `payload` = octets canoniques bruts, sans migration
-de schéma. `event_id` est dérivé de l'identifiant de commande et du rang de
-l'autorisation.
-
-### 7.4 Hook
-
-Sortie JSONL optionnelle vers un fichier d'audit, un reçu canonique par
-ligne, jamais sur stdout. stderr conserve seulement le diagnostic destiné à
-Git. Le writer maelys-json remplace l'échappeur maison ; Jansson n'entre pas
-dans le hook.
+`tests/fixtures/receipts/receipts.tsv` est le contrat d'octets de la version
+1 : trente reçus, comparés à l'octet près dans les profils SMALL et LARGE. Il
+est régénéré par `MG_RECORD_RECEIPTS=FICHIER` uniquement dans un commit qui
+explique chaque ligne changée ; une montée du moteur qui change une empreinte
+le régénère dans son propre commit, jamais dans celui d'une fonctionnalité.
 
 ## 8. Préalables
 

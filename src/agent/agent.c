@@ -48,13 +48,14 @@ oversized:
     return -1;
 }
 
-maelys_git_result_t maelys_git_agent_serve(maelys_git_policy_t *policy,
-                                            const char *git_executable,
-                                            const char *repository_root,
-                                            FILE *input,
-                                            FILE *output,
-                                            FILE *diagnostics,
-                                            maelys_git_error_t *error) {
+maelys_git_result_t mg_agent_serve(maelys_git_policy_t *policy,
+                                   const char *git_executable,
+                                   const char *repository_root,
+                                   FILE *input,
+                                   FILE *output,
+                                   FILE *diagnostics,
+                                   maelys_git_explain_mode_t denial_mode,
+                                   maelys_git_error_t *error) {
     if (!policy || !git_executable || !repository_root || !input || !output || !diagnostics)
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     char *line = malloc(MAELYS_GIT_MAX_PROTOCOL_LINE + 2u);
@@ -78,7 +79,7 @@ maelys_git_result_t maelys_git_agent_serve(maelys_git_policy_t *policy,
         }
         char *encoded = NULL;
         result = mg_executor_execute(policy, git_executable, repository_root,
-                                     &message, &encoded, &local_error);
+                                     &message, denial_mode, &encoded, &local_error);
         if (result == MAELYS_GIT_OK) {
             if (fprintf(output, "%s\n", encoded) < 0 || fflush(output) != 0) {
                 free(encoded);
@@ -99,4 +100,17 @@ maelys_git_result_t maelys_git_agent_serve(maelys_git_policy_t *policy,
         return MAELYS_GIT_ERR_IO;
     }
     return MAELYS_GIT_OK;
+}
+
+/* A local front-end publishes what it executes and keeps no audit: a denial
+ * carries no explanation text. */
+maelys_git_result_t maelys_git_agent_serve(maelys_git_policy_t *policy,
+                                            const char *git_executable,
+                                            const char *repository_root,
+                                            FILE *input,
+                                            FILE *output,
+                                            FILE *diagnostics,
+                                            maelys_git_error_t *error) {
+    return mg_agent_serve(policy, git_executable, repository_root, input, output, diagnostics,
+                          MAELYS_GIT_EXPLAIN_NEVER, error);
 }

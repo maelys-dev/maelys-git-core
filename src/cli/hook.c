@@ -3,6 +3,7 @@
  * events. Both are protocol streams and never render CLI envelopes. */
 #include "cli/support.h"
 #include "internal.h"
+#include "receipt/receipt_internal.h"
 
 #include <errno.h>
 #include <stdint.h>
@@ -31,6 +32,9 @@ static const maelys_cli_option_t pre_receive_options[] = {
     {MAELYS_CLI_SIZE("max-inspected-blob-bytes", "BYTES",
      "Maximum blob content consumed across the receive transaction.", 1u, HOOK_LIMIT_MAX),
      MAELYS_CLI_DEFAULT_OF(MAELYS_GIT_DEFAULT_MAX_INSPECTED_BLOB_BYTES)},
+    {MAELYS_CLI_PATH("receipts", "FILE",
+     "Append one receipt line per push: the first denial with its explanation, "
+     "or the final authorization of an accepted push.")},
 };
 
 static const maelys_cli_option_t post_receive_options[] = {
@@ -76,17 +80,48 @@ static int command_pre_receive(maelys_cli_context_t *context) {
     if (maelys_cli_option_unsigned(context, "max-total-blob-bytes", &total))
         limits.max_total_new_blob_size = total;
     maelys_git_error_t error = {0};
+    /* With --receipts, the file is opened before anything is decided: a push
+     * whose receipt cannot be written is refused. */
+    const char *receipts_path = maelys_cli_option(context, "receipts");
+    FILE *receipts = receipts_path ? fopen(receipts_path, "a") : NULL;
+    if (receipts_path && !receipts) {
+        error.code = MAELYS_GIT_ERR_IO;
+        error.system_error = errno;
+        (void)snprintf(error.message, sizeof(error.message),
+                       "cannot open receipt output: %s", strerror(errno));
+        return maelys_git_cli_stream_error(context, "pre-receive", error.code, &error);
+    }
+    static char text[MAELYS_GIT_RECEIPT_MAX_EXPLANATION_TEXT + 1u];
+    mg_receive_receipt_t receipt = {.mode = MAELYS_GIT_EXPLAIN_ON_DENIAL, .text = text,
+                                    .text_capacity = sizeof(text)};
     maelys_git_policy_t *policy = NULL;
     maelys_git_result_t result = maelys_git_policy_open(
         maelys_cli_option(context, "manifest"), &policy, &error);
     if (result == MAELYS_GIT_OK) result = mg_receive_objects_begin(git_dir, &error);
     if (result == MAELYS_GIT_OK)
-        result = maelys_git_pre_receive_with_limits(
+        result = mg_receive_authorize(
             policy, maelys_git_cli_git(context), git_dir,
             maelys_cli_option(context, "repository"), user, &limits, NULL, 0u,
-            stdin, context->err, &error);
+            stdin, context->err, NULL, NULL, receipts ? &receipt : NULL, &error);
     mg_receive_objects_end();
     maelys_git_policy_close(policy);
+    if (receipts) {
+        maelys_git_error_t write_error = {0};
+        const maelys_git_receipt_explanation_t *explanation = &receipt.receipt.explanation;
+        maelys_git_result_t written = !receipt.decided ? MAELYS_GIT_OK :
+            mg_receipt_write_line(receipts, &receipt.receipt,
+                                  explanation->has_text && text[0] ? text : NULL, &write_error);
+        if (fclose(receipts) != 0 && written == MAELYS_GIT_OK) {
+            write_error.code = written = MAELYS_GIT_ERR_IO;
+            write_error.system_error = errno;
+            (void)snprintf(write_error.message, sizeof(write_error.message),
+                           "cannot close receipt output: %s", strerror(errno));
+        }
+        if (written != MAELYS_GIT_OK && result == MAELYS_GIT_OK) {
+            result = written;
+            error = write_error;
+        }
+    }
     return result == MAELYS_GIT_OK ? MAELYS_CLI_EXIT_OK :
         maelys_git_cli_stream_error(context, "pre-receive", result, &error);
 }
