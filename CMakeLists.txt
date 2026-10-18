@@ -31,7 +31,6 @@ set(MAELYS_SYSTEM_SOURCE_DIR
     CACHE PATH "Path to the maelys-system source tree")
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson>=2.14.1)
 find_package(SQLite3 REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -109,8 +108,8 @@ foreach(tool IN ITEMS MAELYS_CLI_EMBED MAELYS_CLI_REFERENCE)
 endforeach()
 
 # ---- maelys-json ------------------------------------------------------------
-# External configuration is parsed by the pinned, bounded reader. Jansson
-# remains the builder for internal messages and configuration output.
+# The one JSON library: the pinned, bounded reader of external documents and
+# the writer of every document the programs produce.
 maelys_git_resolve_dependency(JSON MAELYS_JSON_SOURCE_DIR)
 if(NOT EXISTS "${MAELYS_JSON_SOURCE_DIR}/CMakeLists.txt")
     message(FATAL_ERROR
@@ -180,7 +179,7 @@ target_include_directories(maelys_git_agent_core
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(maelys_git_agent_core
     PUBLIC maelys_git_core maelys_git_receipt maelys_git_json maelys::json
-    PRIVATE PkgConfig::JANSSON SQLite::SQLite3 maelys_git_build_flags)
+    PRIVATE SQLite::SQLite3 maelys_git_build_flags)
 
 # ---- command-line interface -------------------------------------------------
 # Output schemas are plain JSON Schema files embedded at build time; the C
@@ -208,7 +207,7 @@ foreach(kind IN ITEMS c h)
 endforeach()
 
 # Shared product CLI support plus the two stream-only programs. This library
-# does not depend on Jansson so the SSH shell and receive hook stay lean.
+# writes no JSON of its own so the SSH shell and receive hook stay lean.
 add_library(maelys_git_cli STATIC
     src/cli/support.c
     src/cli/shell.c
@@ -222,7 +221,7 @@ target_link_libraries(maelys_git_cli
     PUBLIC maelys_git_core maelys_git_receipt maelys::cli
     PRIVATE maelys_git_build_flags)
 
-# Administrative commands of `maelys-git`; Jansson builds their data.
+# Administrative commands of `maelys-git`; maelys-json writes their data.
 add_library(maelys_git_cli_admin STATIC
     src/cli/json_support.c
     src/cli/admin.c)
@@ -230,7 +229,7 @@ target_include_directories(maelys_git_cli_admin
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${MAELYS_GIT_GENERATED_DIR}")
 target_link_libraries(maelys_git_cli_admin
     PUBLIC maelys_git_cli maelys_git_json
-    PRIVATE PkgConfig::JANSSON maelys_git_build_flags)
+    PRIVATE maelys_git_build_flags)
 
 # Agent and executor commands.
 add_library(maelys_git_cli_agent STATIC src/cli/agent.c)
@@ -238,7 +237,7 @@ target_include_directories(maelys_git_cli_agent
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${MAELYS_GIT_GENERATED_DIR}")
 target_link_libraries(maelys_git_cli_agent
     PUBLIC maelys_git_cli_admin maelys_git_agent_core
-    PRIVATE PkgConfig::JANSSON maelys_git_build_flags)
+    PRIVATE maelys_git_build_flags)
 
 set(MAELYS_GIT_PROGRAMS maelys-git maelys-git-agent maelys-git-executor
     maelys-git-shell maelys-git-hook)
@@ -316,7 +315,7 @@ if(MAELYS_GIT_ENABLE_CLOUD_AGENT)
         PUBLIC maelys_git_agent_core
         PRIVATE "${MAELYS_HTTP_TLS_LIB}" "${MAELYS_HTTP_CLIENT_LIB}"
                 "${MAELYS_HTTP_CORE_LIB}" "${MAELYS_SYSTEM_LIB}"
-                PkgConfig::MBEDTLS PkgConfig::JANSSON SQLite::SQLite3
+                PkgConfig::MBEDTLS SQLite::SQLite3
                 maelys_git_build_flags)
     target_compile_definitions(maelys_git_cli_agent PRIVATE MAELYS_GIT_ENABLE_CLOUD_AGENT=1)
     target_link_libraries(maelys_git_cli_agent PUBLIC maelys_git_agent_http)
@@ -458,7 +457,7 @@ if(MAELYS_GIT_BUILD_TESTS)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_protocol_limits.py
             $<TARGET_FILE:maelys-git-executor> ${MAELYS_GIT_TEST_MANIFEST})
 
-    # The JSON every program writes, against the corpus recorded with Jansson.
+    # The JSON every program writes, against the corpus recorded at 1016d1b.
     add_executable(json-corpus-emitter tests/json_corpus_emitter.c)
     target_include_directories(json-corpus-emitter PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(json-corpus-emitter PRIVATE

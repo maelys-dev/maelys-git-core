@@ -2,18 +2,6 @@ FROM ubuntu:24.04
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     build-essential clang libclang-rt-18-dev cmake git python3 pkg-config libsqlite3-dev \
     openssl ca-certificates && rm -rf /var/lib/apt/lists/*
-# Ubuntu's Jansson predates the project's minimum. Build the tested release
-# as a static library only: binutils' ld loads the system libjansson.so.4,
-# and a shared build in /usr/local/lib, which the amd64 loader searches
-# first, would replace it with one whose symbol versions ld cannot resolve.
-RUN git init /tmp/jansson && \
-    git -C /tmp/jansson fetch --depth 1 https://github.com/akheron/jansson.git 1749b187dc516909df82a2769a990078230c6a76 && \
-    git -C /tmp/jansson checkout --detach FETCH_HEAD && \
-    cmake -S /tmp/jansson -B /tmp/jansson-build -DCMAKE_BUILD_TYPE=Release \
-        -DJANSSON_BUILD_DOCS=OFF -DJANSSON_BUILD_SHARED_LIBS=OFF \
-        -DCMAKE_POSITION_INDEPENDENT_CODE=ON && \
-    cmake --build /tmp/jansson-build -j 4 && cmake --install /tmp/jansson-build && \
-    test ! -e /usr/local/lib/libjansson.so.4 && rm -rf /tmp/jansson /tmp/jansson-build
 # Ubuntu's Mbed TLS is below the floor maelys-http enforces. Build the release
 # maelys-http pins in its dependencies/mbedtls.pin (v3.6.7), as its own CI does.
 RUN git init /tmp/mbedtls && \
