@@ -10,14 +10,17 @@
 #include <string.h>
 
 /* The parse limits of a snapshot: its bytes, three levels (the object, a
- * section, a tuple) and the values a text of that size can hold. */
+ * section, a tuple), and the values its schema allows, keys included: the
+ * object, its nine keys and nine values, then for each tuple its array and
+ * at most six fields. A text of more values is refused while it is parsed,
+ * before its document grows. */
 #define GRANTS_DEPTH 3u
-#define GRANTS_TOKENS ((MG_GRANTS_MAX_BYTES + 1u) / 2u)
 #define MAX_FIELDS 6u
+#define GRANTS_TOKENS (19u + (1u + MAX_FIELDS) * MG_GRANTS_MAX_TUPLES)
 
 struct mg_grants {
-    maelys_json_document_t *document;   /* owns every string of the view */
     mg_grants_view_t view;
+    char *strings;                      /* the arena every string of the view points into */
     char sha256[MAELYS_CLI_SHA256_HEX_SIZE];
 };
 
@@ -64,7 +67,7 @@ static const char *string_at(reader_t *reader, maelys_json_value_t tuple, size_t
         return NULL;
     }
     if (view.size == 0u || view.size > MG_GRANTS_MAX_STRING) {
-        (void)refuse(reader, MAELYS_GIT_ERR_LIMIT, "a string is empty or longer than 1023 bytes");
+        (void)refuse(reader, MAELYS_GIT_ERR_LIMIT, "a string is empty or longer than 1024 bytes");
         return NULL;
     }
     return view.data;
@@ -93,24 +96,10 @@ static int repository(reader_t *reader, const char *text) {
            refuse(reader, MAELYS_GIT_ERR_INVALID_ARGUMENT, "a repository name is invalid");
 }
 
-/* The generator's refex subset, without the policy atom bound: an exact
- * ref, or a prefix of refs/ of [A-Za-z0-9._/-] that ends with '/', or, for
- * a deny, a bare literal Gitolite also denies as a prefix. */
+/* The generator's refex subset, by its own rule. */
 static int pattern(reader_t *reader, int prefix, int deny, const char *text) {
-    size_t length = strlen(text);
-    int valid = length <= 256u;
-    if (prefix) {
-        valid = valid && length > 5u && !strncmp(text, "refs/", 5u) && (deny || text[length - 1u] == '/') &&
-                !strstr(text, "..") && !strstr(text, "//");
-        for (size_t i = 0u; valid && i < length; ++i) {
-            unsigned char ch = (unsigned char)text[i];
-            valid = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
-                    ch == '.' || ch == '_' || ch == '/' || ch == '-';
-        }
-    } else {
-        valid = valid && maelys_git_ref_name_is_valid(text);
-    }
-    return valid || refuse(reader, MAELYS_GIT_ERR_INVALID_ARGUMENT, "a ref pattern is invalid");
+    return mg_gitolite_pattern_is_valid(text, prefix, deny) ||
+           refuse(reader, MAELYS_GIT_ERR_INVALID_ARGUMENT, "a ref pattern is invalid");
 }
 
 /* A VREF path: relative, components of [A-Za-z0-9._-], none "." or "..". */
@@ -346,6 +335,80 @@ static int read_root(reader_t *reader, maelys_json_value_t root) {
     return 1;
 }
 
+/* Every string field of the view, given to VISIT, which counts or moves it. */
+static void visit_strings(mg_grants_view_t *view, void (*visit)(const char **field, void *context),
+                          void *context) {
+    mg_grant_member_t *members = (mg_grant_member_t *)view->members;
+    mg_grant_nested_t *nested = (mg_grant_nested_t *)view->nested;
+    mg_grant_access_t *access = (mg_grant_access_t *)view->access;
+    mg_grant_ref_t *refs = (mg_grant_ref_t *)view->refs;
+    mg_grant_creator_t *creators = (mg_grant_creator_t *)view->creators;
+    mg_grant_owner_t *owners = (mg_grant_owner_t *)view->owners;
+    mg_grant_vref_name_t *names = (mg_grant_vref_name_t *)view->vref_names;
+    mg_grant_vref_limit_t *limits = (mg_grant_vref_limit_t *)view->vref_limits;
+    for (size_t i = 0u; i < view->member_count; ++i) {
+        visit(&members[i].user, context);
+        visit(&members[i].group, context);
+    }
+    for (size_t i = 0u; i < view->nested_count; ++i) {
+        visit(&nested[i].group, context);
+        visit(&nested[i].parent, context);
+    }
+    for (size_t i = 0u; i < view->access_count; ++i) {
+        visit(&access[i].subject, context);
+        visit(&access[i].repository, context);
+        visit(&access[i].level, context);
+    }
+    for (size_t i = 0u; i < view->ref_count; ++i) {
+        visit(&refs[i].subject, context);
+        visit(&refs[i].repository, context);
+        visit(&refs[i].pattern, context);
+        visit(&refs[i].level, context);
+    }
+    for (size_t i = 0u; i < view->creator_count; ++i) {
+        visit(&creators[i].subject, context);
+        visit(&creators[i].namespace_name, context);
+    }
+    for (size_t i = 0u; i < view->owner_count; ++i) {
+        visit(&owners[i].namespace_name, context);
+        visit(&owners[i].level, context);
+    }
+    for (size_t i = 0u; i < view->vref_name_count; ++i) {
+        visit(&names[i].subject, context);
+        visit(&names[i].repository, context);
+        visit(&names[i].path, context);
+    }
+    for (size_t i = 0u; i < view->vref_limit_count; ++i) {
+        visit(&limits[i].subject, context);
+        visit(&limits[i].repository, context);
+        visit(&limits[i].limit, context);
+    }
+}
+
+static void count_string(const char **field, void *context) {
+    *(size_t *)context += strlen(*field) + 1u;
+}
+
+static void move_string(const char **field, void *context) {
+    char **cursor = context;
+    size_t size = strlen(*field) + 1u;
+    memcpy(*cursor, *field, size);
+    *field = *cursor;
+    *cursor += size;
+}
+
+/* Copies every string into one arena, so that the document can go. */
+static int keep_strings(mg_grants_t *grants) {
+    size_t bytes = 0u;
+    visit_strings(&grants->view, count_string, &bytes);
+    grants->strings = malloc(bytes ? bytes : 1u);
+    if (!grants->strings) return 0;
+    char *cursor = grants->strings;
+    visit_strings(&grants->view, move_string, &cursor);
+    grants->view.index_bytes += bytes;
+    return 1;
+}
+
 void mg_grants_free(mg_grants_t *grants) {
     if (!grants) return;
     free((void *)grants->view.members);
@@ -356,7 +419,7 @@ void mg_grants_free(mg_grants_t *grants) {
     free((void *)grants->view.owners);
     free((void *)grants->view.vref_names);
     free((void *)grants->view.vref_limits);
-    maelys_json_document_release(grants->document);
+    free(grants->strings);
     free(grants);
 }
 
@@ -377,8 +440,9 @@ maelys_git_result_t mg_grants_parse(const void *bytes, size_t size, mg_grants_t 
                                          .maximum_depth = GRANTS_DEPTH,
                                          .maximum_tokens = GRANTS_TOKENS};
     maelys_json_error_t json_error;
+    maelys_json_document_t *document = NULL;
     maelys_json_result_t parsed = maelys_json_document_parse(bytes, size, MAELYS_JSON_PROFILE_RFC8259, &limits,
-                                                             &grants->document, &json_error);
+                                                             &document, &json_error);
     if (parsed != MAELYS_JSON_OK) {
         maelys_git_result_t code = parsed == MAELYS_JSON_ERR_LIMIT ? MAELYS_GIT_ERR_LIMIT
                                                                     : MAELYS_GIT_ERR_INVALID_ARGUMENT;
@@ -387,9 +451,19 @@ maelys_git_result_t mg_grants_parse(const void *bytes, size_t size, mg_grants_t 
         mg_grants_free(grants);
         return code;
     }
-    reader_t reader = {.document = grants->document, .error = error};
+    /* One set of grants, one byte form: the bytes received are hashed only
+     * when they are the canonical serialization of what they hold. */
+    int canonical = 0;
+    if (maelys_json_document_is_canonical(document, 0u, &canonical) != MAELYS_JSON_OK || !canonical) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0,
+                     "grants snapshot is not in Canonical JSON v1");
+        maelys_json_document_release(document);
+        mg_grants_free(grants);
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    reader_t reader = {.document = document, .error = error};
     mg_grants_view_t *view = &grants->view;
-    maelys_json_value_t root = maelys_json_document_root(grants->document);
+    maelys_json_value_t root = maelys_json_document_root(document);
     int ok = read_root(&reader, root) &&
         read_section(&reader, root, "members", 2u, sizeof(mg_grant_member_t), read_member,
                      (void **)&view->members, &view->member_count, &view->index_bytes) &&
@@ -408,6 +482,8 @@ maelys_git_result_t mg_grants_parse(const void *bytes, size_t size, mg_grants_t 
         read_section(&reader, root, "vref_limits", 5u, sizeof(mg_grant_vref_limit_t), read_vref_limit,
                      (void **)&view->vref_limits, &view->vref_limit_count, &view->index_bytes) &&
         count_groups(&reader, view);
+    if (ok && !keep_strings(grants)) ok = refuse(&reader, MAELYS_GIT_ERR_IO, "out of memory");
+    maelys_json_document_release(document);
     if (!ok) {
         mg_grants_free(grants);
         return error && error->code != MAELYS_GIT_OK ? error->code : MAELYS_GIT_ERR_INVALID_ARGUMENT;

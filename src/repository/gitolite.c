@@ -227,13 +227,27 @@ static int append_ref_access(text_buffer_t *policy,
                        prefix, name, repository, ref_name, level);
 }
 
-/* The longest filter pattern the policy language accepts. */
-#define MG_REF_PATTERN_MAX 256u
 
 typedef enum {
     REFEX_EXACT = 1,
     REFEX_PREFIX = 2
 } refex_kind_t;
+
+/* The longest filter pattern the policy language accepts. */
+#define MG_REF_PATTERN_MAX 256u
+
+int mg_gitolite_pattern_is_valid(const char *pattern, int prefix, int deny) {
+    size_t length = pattern ? strlen(pattern) : 0u;
+    if (length < 5u || length > MG_REF_PATTERN_MAX || strncmp(pattern, "refs/", 5u) ||
+        strstr(pattern, "..") || strstr(pattern, "//"))
+        return 0;
+    for (size_t i = 0u; i < length; ++i) {
+        unsigned char ch = (unsigned char)pattern[i];
+        if (!(isalnum(ch) || ch == '.' || ch == '_' || ch == '/' || ch == '-')) return 0;
+    }
+    if (prefix) return deny || pattern[length - 1u] == '/';
+    return pattern[length - 1u] != '/' && maelys_git_ref_name_is_valid(pattern);
+}
 
 /* Reads one Gitolite refex and returns NULL, or the stable reason it is
  * refused. Gitolite anchors a refex at its start only, completes a name that
@@ -259,15 +273,16 @@ static const char *classify_refex(const char *text, int deny, refex_kind_t *out_
     const char *implied = strncmp(text, "refs/", 5u) == 0 ? "" : "refs/heads/";
     if (strlen(implied) + body > MG_REF_PATTERN_MAX) return "ref pattern exceeds 256 bytes";
     (void)snprintf(out_value, MG_REF_PATTERN_MAX + 1u, "%s%.*s", implied, (int)body, text);
-    if (strstr(out_value, "..") || strstr(out_value, "//")) return "unsupported refex syntax";
     int open_namespace = out_value[strlen(out_value) - 1u] == '/';
     if (anchored && open_namespace) return "unsupported refex syntax";
-    if (!anchored && (open_namespace || deny)) {
+    int prefix = !anchored && (open_namespace || deny);
+    /* The normalized form, by the rule a snapshot of grants is read with. */
+    if (!mg_gitolite_pattern_is_valid(out_value, prefix, deny)) return "unsupported refex syntax";
+    if (prefix) {
         *out_kind = REFEX_PREFIX;
         return NULL;
     }
-    /* An exact ref is a policy atom: the full-ref form and the atom length apply. */
-    if (!maelys_git_ref_name_is_valid(out_value)) return "unsupported refex syntax";
+    /* An exact ref is a policy atom: the atom length applies. */
     if (strlen(out_value) >= 64u) return "exact ref exceeds 63 bytes";
     *out_kind = REFEX_EXACT;
     return NULL;

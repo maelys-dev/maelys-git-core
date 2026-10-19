@@ -1,6 +1,8 @@
 /* Cost of loading a grants snapshot: the trusted read, the parse, the
- * validation and the index. Prints the minimum over ITERATIONS loads, the
- * counts and the bytes of the index. Not a test.
+ * validation and the index. Each load keeps the previous snapshot until it
+ * succeeds, as a reload in a stream does, so the peak includes both. Prints
+ * the minimum over ITERATIONS loads, the counts and the bytes held. Not a
+ * test.
  *
  *   bench-maelys-git-grants FILE [ITERATIONS] */
 #include "policy/grants.h"
@@ -17,6 +19,7 @@ int main(int argc, char **argv) {
     long iterations = argc > 2 ? atol(argv[2]) : 10;
     double best = 0.0;
     mg_grants_view_t view = {0};
+    mg_grants_t *previous = NULL;
     for (long i = 0; i < iterations; ++i) {
         struct timespec start, end;
         mg_grants_t *grants = NULL;
@@ -30,8 +33,10 @@ int main(int argc, char **argv) {
         double ms = (double)(end.tv_sec - start.tv_sec) * 1e3 + (double)(end.tv_nsec - start.tv_nsec) / 1e6;
         if (i == 0 || ms < best) best = ms;
         mg_grants_view(grants, &view);
-        mg_grants_free(grants);
+        mg_grants_free(previous);
+        previous = grants;
     }
+    mg_grants_free(previous);
     size_t tuples = view.member_count + view.nested_count + view.access_count + view.ref_count +
                     view.creator_count + view.owner_count + view.vref_name_count + view.vref_limit_count;
     printf("%.2f ms tuples=%zu groups=%zu index_bytes=%zu\n", best, tuples, view.group_count, view.index_bytes);

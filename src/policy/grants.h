@@ -23,12 +23,14 @@
  *                        limit: "count", "new_count" or "max_new_binary";
  *                        value: an integer in [0, INT64_MAX]
  *
- * kind is "user" or "group". Every array is strictly increasing in the
- * order of mg_grants_compare: one set of grants has one byte form, and so
- * one fingerprint, whoever wrote it. Names, repositories, namespaces, refs
- * and paths follow the generator's rules (mg_gitolite_name_is_valid,
- * maelys_git_repository_name_is_valid, maelys_git_ref_name_is_valid), with
- * the engine's string bound instead of the policy atom bound.
+ * kind is "user" or "group". The file is in Canonical JSON v1 (members in
+ * key order, no whitespace, minimal escapes, integers only, no final
+ * newline) and every array is strictly increasing, element by element:
+ * one set of grants has one byte form, and so one fingerprint, whoever
+ * wrote it. Names, repositories, namespaces, refs and paths follow the
+ * generator's rules (mg_gitolite_name_is_valid,
+ * maelys_git_repository_name_is_valid, mg_gitolite_pattern_is_valid), with
+ * Git Core's string bound below instead of the policy atom bound.
  *
  * The snapshot is immutable once loaded: every decision made with it uses
  * this one generation of grants. */
@@ -40,13 +42,15 @@
 
 #define MG_GRANTS_FORMAT "maelys-git-grants/1"
 
-/* The provisional bounds of D7, reviewed with the measured index. */
-#define MG_GRANTS_MAX_BYTES (16u * 1024u * 1024u)
+/* The bounds of D7. */
+#define MG_GRANTS_MAX_BYTES (4u * 1024u * 1024u)
 #define MG_GRANTS_MAX_TUPLES 65536u
 #define MG_GRANTS_MAX_GROUPS 4096u
 #define MG_GRANTS_MAX_DIRECT_GROUPS 64u
-/* One name, repository, namespace, ref or path: the engine's string bound. */
-#define MG_GRANTS_MAX_STRING 1023u
+/* One name, repository, namespace, ref or path: Git Core's bound, chosen
+ * equal to the bytes an engine symbol may hold (1 024, NUL excluded), so
+ * that every string of the snapshot can be a fact of a slice. */
+#define MG_GRANTS_MAX_STRING 1024u
 
 typedef enum { MG_SUBJECT_USER = 0, MG_SUBJECT_GROUP = 1 } mg_subject_kind_t;
 
@@ -91,7 +95,8 @@ typedef struct {
 } mg_grant_vref_limit_t;
 
 /* The sections of a loaded snapshot, each sorted and without duplicates.
- * The strings belong to the snapshot. */
+ * The strings belong to the snapshot: one arena, the parsed document is
+ * released once they are copied. */
 typedef struct {
     const mg_grant_member_t *members;
     size_t member_count;
@@ -110,7 +115,7 @@ typedef struct {
     const mg_grant_vref_limit_t *vref_limits;
     size_t vref_limit_count;
     size_t group_count;       /* distinct groups named anywhere */
-    size_t index_bytes;       /* memory held by the index, the document excluded */
+    size_t index_bytes;       /* memory held: the tuples and the arena of strings */
 } mg_grants_view_t;
 
 typedef struct mg_grants mg_grants_t;

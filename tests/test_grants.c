@@ -14,22 +14,21 @@
 static char g_root[256];
 
 /* A snapshot with the given sections; NULL leaves a section empty. */
+/* Canonical JSON v1: members in key order, no whitespace. */
 #define SNAPSHOT_FORMAT \
-    "{\"format\":\"maelys-git-grants/1\",\"members\":[%s],\"nested\":[%s],\"access\":[%s]," \
-    "\"refs\":[%s],\"namespace_creators\":[%s],\"owner_access\":[%s],\"vref_names\":[%s]," \
-    "\"vref_limits\":[%s]}"
+    "{\"access\":[%s],\"format\":\"maelys-git-grants/1\",\"members\":[%s],\"namespace_creators\":[%s]," \
+    "\"nested\":[%s],\"owner_access\":[%s],\"refs\":[%s],\"vref_limits\":[%s],\"vref_names\":[%s]}"
 #define OR_EMPTY(x) ((x) ? (x) : "")
 
 static char *snapshot(const char *members, const char *nested, const char *access, const char *refs,
                       const char *creators, const char *owners, const char *names, const char *limits) {
-    int size = snprintf(NULL, 0u, SNAPSHOT_FORMAT, OR_EMPTY(members), OR_EMPTY(nested), OR_EMPTY(access),
-                        OR_EMPTY(refs), OR_EMPTY(creators), OR_EMPTY(owners), OR_EMPTY(names),
-                        OR_EMPTY(limits));
+    int size = snprintf(NULL, 0u, SNAPSHOT_FORMAT, OR_EMPTY(access), OR_EMPTY(members), OR_EMPTY(creators),
+                        OR_EMPTY(nested), OR_EMPTY(owners), OR_EMPTY(refs), OR_EMPTY(limits), OR_EMPTY(names));
     char *text = size < 0 ? NULL : malloc((size_t)size + 1u);
     if (text)
-        (void)snprintf(text, (size_t)size + 1u, SNAPSHOT_FORMAT, OR_EMPTY(members), OR_EMPTY(nested),
-                       OR_EMPTY(access), OR_EMPTY(refs), OR_EMPTY(creators), OR_EMPTY(owners),
-                       OR_EMPTY(names), OR_EMPTY(limits));
+        (void)snprintf(text, (size_t)size + 1u, SNAPSHOT_FORMAT, OR_EMPTY(access), OR_EMPTY(members),
+                       OR_EMPTY(creators), OR_EMPTY(nested), OR_EMPTY(owners), OR_EMPTY(refs),
+                       OR_EMPTY(limits), OR_EMPTY(names));
     return text;
 }
 
@@ -91,10 +90,25 @@ static int test_refused_shapes(void) {
     CHECK(refused("[]", MAELYS_GIT_ERR_INVALID_ARGUMENT, "an object of nine members"));
     CHECK(refused("{\"format\":\"maelys-git-grants/1\"}", MAELYS_GIT_ERR_INVALID_ARGUMENT, "nine members"));
     text = snapshot(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    /* A tenth member, in key order: canonical, and refused for its shape. */
     char *other = malloc(strlen(text) + 32u);
-    (void)snprintf(other, strlen(text) + 32u, "%.*s,\"surprise\":1}", (int)strlen(text) - 1, text);
+    const char *refs_end = strstr(text, "\"refs\":[]") + strlen("\"refs\":[]");
+    (void)snprintf(other, strlen(text) + 32u, "%.*s,\"surprise\":1%s", (int)(refs_end - text), text, refs_end);
     CHECK(refused(other, MAELYS_GIT_ERR_INVALID_ARGUMENT, "nine members"));
     free(other);
+    /* The same grants in other byte forms: refused, so that one set of
+     * grants has one fingerprint. */
+    char *spaced = malloc(strlen(text) + 2u);
+    (void)snprintf(spaced, strlen(text) + 2u, "%s ", text);
+    CHECK(refused(spaced, MAELYS_GIT_ERR_INVALID_ARGUMENT, "not in Canonical JSON v1"));
+    free(spaced);
+    CHECK(refused("{\"format\":\"maelys-git-grants/1\",\"access\":[],\"members\":[],"
+                  "\"namespace_creators\":[],\"nested\":[],\"owner_access\":[],\"refs\":[],"
+                  "\"vref_limits\":[],\"vref_names\":[]}",
+                  MAELYS_GIT_ERR_INVALID_ARGUMENT, "not in Canonical JSON v1"));
+    char *escaped = snapshot("[\"\\u0061lice\",\"devs\"]", NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    CHECK(refused(escaped, MAELYS_GIT_ERR_INVALID_ARGUMENT, "not in Canonical JSON v1"));
+    free(escaped);
     char *renamed = strdup(text);
     memcpy(strstr(renamed, "\"nested\""), "\"nestex\"", 8u);
     CHECK(refused(renamed, MAELYS_GIT_ERR_INVALID_ARGUMENT, "an unknown member"));
@@ -121,12 +135,14 @@ static int test_refused_shapes(void) {
         {NULL, "[\"user\",\"a\",\"app.git\",\"prefix\",\"refs/heads/../\",\"RW\"]", NULL, NULL, "ref pattern"},
         {NULL, "[\"user\",\"a\",\"app.git\",\"prefix\",\"heads/rel/\",\"RW\"]", NULL, NULL, "ref pattern"},
         {NULL, "[\"user\",\"a\",\"app.git\",\"exact\",\"refs/heads/a b\",\"RW\"]", NULL, NULL, "ref pattern"},
+        /* A character the generator refuses, though a ref name may hold it. */
+        {NULL, "[\"user\",\"a\",\"app.git\",\"exact\",\"refs/heads/a+b\",\"RW\"]", NULL, NULL, "ref pattern"},
         {NULL, "[\"user\",\"a\",\"app.git\",\"glob\",\"refs/heads/\",\"RW\"]", NULL, NULL, "form is"},
         {NULL, "[\"user\",\"a\",\"app.git\",\"exact\",\"refs/heads/main\",\"R\"]", NULL, NULL, "level is"},
         {NULL, NULL, "[\"user\",\"a\",\"app.git\",\"/etc/passwd\"]", NULL, "VREF path"},
         {NULL, NULL, "[\"user\",\"a\",\"app.git\",\"docs/../x\"]", NULL, "VREF path"},
         {NULL, NULL, NULL, "[\"user\",\"a\",\"app.git\",\"count\",-1]", "value is an integer"},
-        {NULL, NULL, NULL, "[\"user\",\"a\",\"app.git\",\"count\",1.0]", "value is an integer"},
+        {NULL, NULL, NULL, "[\"user\",\"a\",\"app.git\",\"count\",1.0]", "not in Canonical JSON v1"},
         {NULL, NULL, NULL, "[\"user\",\"a\",\"app.git\",\"size\",1]", "limit is"},
         /* Order: strictly increasing, so neither unsorted nor repeated. */
         {"[\"user\",\"bob\",\"app.git\",\"R\"],[\"user\",\"alice\",\"app.git\",\"R\"]", NULL, NULL, NULL,
@@ -195,6 +211,36 @@ static int accepted(const char *text) {
     return result == MAELYS_GIT_OK;
 }
 
+/* A canonical snapshot of exactly SIZE bytes: VREF paths of increasing
+ * names, the last one cut to fit. NULL when SIZE cannot be met. */
+static char *sized_snapshot(size_t size) {
+    char *empty = snapshot(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    if (!empty) return NULL;
+    /* ["user","a","app.git","PATH"]: 25 bytes and the path, one comma between. */
+    size_t room = size - strlen(empty), index = 0u;
+    free(empty);
+    text_t names = {0};
+    char path[MG_GRANTS_MAX_STRING + 1u];
+    /* The smallest tuple holds a path of 7 bytes, its index. */
+    const size_t smallest = 1u + 25u + 7u;
+    while (room > 0u) {
+        size_t separator = index ? 1u : 0u;
+        if (room < separator + 25u + 7u) break;
+        size_t available = room - separator - 25u, length = available;
+        if (available > MG_GRANTS_MAX_STRING)
+            length = available - 1000u >= smallest ? 1000u : available - smallest;
+        (void)snprintf(path, sizeof(path), "%07zu", index);
+        memset(path + 7u, 'p', length - 7u);
+        path[length] = '\0';
+        if (!append(&names, "%s[\"user\",\"a\",\"app.git\",\"%s\"]", separator ? "," : "", path)) return NULL;
+        room -= separator + 25u + length;
+        ++index;
+    }
+    char *text = room == 0u ? snapshot(NULL, NULL, NULL, NULL, NULL, NULL, names.data, NULL) : NULL;
+    free(names.data);
+    return text;
+}
+
 static int test_bounds(void) {
     /* 65 536 grants, then one more. */
     char *text = many_access(MG_GRANTS_MAX_TUPLES, 0);
@@ -222,7 +268,7 @@ static int test_bounds(void) {
                            : refused(text, MAELYS_GIT_ERR_LIMIT, "more than 64 groups")));
         free(text);
     }
-    /* A string of 1 023 bytes, then 1 024 (a VREF path of one component). */
+    /* A string of 1 024 bytes, then 1 025 (a VREF path of one component). */
     for (size_t length = MG_GRANTS_MAX_STRING; length <= MG_GRANTS_MAX_STRING + 1u; ++length) {
         char path[MG_GRANTS_MAX_STRING + 2u], tuple[MG_GRANTS_MAX_STRING + 64u];
         memset(path, 'p', length);
@@ -231,27 +277,81 @@ static int test_bounds(void) {
         text = snapshot(NULL, NULL, NULL, NULL, NULL, NULL, tuple, NULL);
         CHECK(text && (length == MG_GRANTS_MAX_STRING
                            ? accepted(text)
-                           : refused(text, MAELYS_GIT_ERR_LIMIT, "longer than 1023 bytes")));
+                           : refused(text, MAELYS_GIT_ERR_LIMIT, "longer than 1024 bytes")));
         free(text);
     }
-    /* 16 MiB of text, the last bytes whitespace, then one byte more. */
+    /* A canonical snapshot of exactly 4 MiB is read; one byte more is not. */
+    char *exact = sized_snapshot(MG_GRANTS_MAX_BYTES);
+    CHECK(exact && strlen(exact) == MG_GRANTS_MAX_BYTES && accepted(exact));
+    free(exact);
+    exact = sized_snapshot(MG_GRANTS_MAX_BYTES + 1u);
+    CHECK(exact && refused(exact, MAELYS_GIT_ERR_LIMIT, "exceeds 4194304 bytes"));
+    free(exact);
+    /* More values than the schema allows are refused while parsed: 458 753
+     * zeros make 458 772 values, one past 19 + 7 x 65 536. */
+    text_t zeros = {0};
+    for (size_t i = 0u; i < 458753u; ++i) CHECK(append(&zeros, i ? ",0" : "0"));
+    text = snapshot(zeros.data, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    free(zeros.data);
+    CHECK(text && refused(text, MAELYS_GIT_ERR_LIMIT, "not valid JSON within its limits"));
+    free(text);
     char *base = snapshot(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
     CHECK(base);
-    char *big = malloc(MG_GRANTS_MAX_BYTES + 2u);
-    CHECK(big);
-    memset(big, ' ', MG_GRANTS_MAX_BYTES + 1u);
-    memcpy(big, base, strlen(base));
-    big[MG_GRANTS_MAX_BYTES] = '\0';
-    CHECK(accepted(big));
-    big[MG_GRANTS_MAX_BYTES] = ' ';
-    big[MG_GRANTS_MAX_BYTES + 1u] = '\0';
-    CHECK(refused(big, MAELYS_GIT_ERR_LIMIT, "exceeds 16777216 bytes"));
-    free(big);
     /* Depth 4: a tuple holding an array. */
     text = snapshot(NULL, NULL, "[\"user\",\"alice\",\"app.git\",[\"R\"]]", NULL, NULL, NULL, NULL, NULL);
     CHECK(text && refused(text, MAELYS_GIT_ERR_LIMIT, "not valid JSON within its limits"));
     free(text);
     free(base);
+    return 1;
+}
+
+/* The generator and the reader judge a ref pattern by one rule: each refex
+ * of the corpus is migrated, and its normalized tuple read. One difference
+ * is by design: an exact ref of more than 63 bytes was refused as a policy
+ * atom, and is a string of a slice. */
+static int write_file(const char *path, const char *text, mode_t mode);
+
+static int test_patterns_against_generator(void) {
+    static const struct {
+        const char *line, *form, *pattern, *level;
+        int generator, reader;
+    } corpus[] = {
+        {"RW refs/ = alice", "prefix", "refs/", "RW", 1, 1},
+        {"RW refs/heads/a+b$ = alice", "exact", "refs/heads/a+b", "RW", 0, 0},
+        {"RW main = alice", "exact", "refs/heads/main", "RW", 1, 1},
+        {"RW feature/x$ = alice", "exact", "refs/heads/feature/x", "RW", 1, 1},
+        {"RW rel/ = alice", "prefix", "refs/heads/rel/", "RW", 1, 1},
+        {"- main = alice", "prefix", "refs/heads/main", "-", 1, 1},
+        {"RW refs/heads/a..b$ = alice", "exact", "refs/heads/a..b", "RW", 0, 0},
+        {"RW refs/heads//x/ = alice", "prefix", "refs/heads//x/", "RW", 0, 0},
+        {"RW refs/tags/v1.0$ = alice", "exact", "refs/tags/v1.0", "RW", 1, 1},
+        /* 64 bytes: one past the policy atom bound. */
+        {"RW refs/heads/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$ = alice", "exact",
+         "refs/heads/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "RW", 0, 1},
+    };
+    for (size_t i = 0u; i < sizeof(corpus) / sizeof(corpus[0]); ++i) {
+        char conf[512], output[512], text[512];
+        (void)snprintf(conf, sizeof(conf), "%s/pattern-%zu.conf", g_root, i);
+        (void)snprintf(output, sizeof(output), "%s/pattern-%zu", g_root, i);
+        (void)snprintf(text, sizeof(text), "repo app\n    %s\n", corpus[i].line);
+        CHECK(write_file(conf, text, 0600));
+        maelys_git_gitolite_migration_result_t migration = {0};
+        maelys_git_error_t error = {0};
+        CHECK(maelys_git_migrate_gitolite(conf, output, 0, &migration, &error) == MAELYS_GIT_OK);
+        int generator = migration.unsupported_count == 0u;
+        maelys_git_gitolite_migration_result_clear(&migration);
+        char tuple[512];
+        (void)snprintf(tuple, sizeof(tuple), "[\"user\",\"alice\",\"app.git\",\"%s\",\"%s\",\"%s\"]",
+                       corpus[i].form, corpus[i].pattern, corpus[i].level);
+        char *snapshot_text = snapshot(NULL, NULL, NULL, tuple, NULL, NULL, NULL, NULL);
+        mg_grants_t *grants = NULL;
+        int reader = snapshot_text && parse(snapshot_text, &grants, &error) == MAELYS_GIT_OK;
+        mg_grants_free(grants);
+        free(snapshot_text);
+        if (generator != corpus[i].generator || reader != corpus[i].reader)
+            (void)fprintf(stderr, "%s: generator %d reader %d\n", corpus[i].line, generator, reader);
+        CHECK(generator == corpus[i].generator && reader == corpus[i].reader);
+    }
     return 1;
 }
 
@@ -319,7 +419,8 @@ int main(void) {
     char *root = mkdtemp(template);
     if (!root) return 1;
     (void)snprintf(g_root, sizeof(g_root), "%s", root);
-    int ok = test_accepted() && test_refused_shapes() && test_bounds() && test_trusted_read();
+    int ok = test_accepted() && test_refused_shapes() && test_bounds() && test_trusted_read() &&
+             test_patterns_against_generator();
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok) puts("grants snapshot: closed form, order, bounds, trusted read: ok");
     return ok ? 0 : 1;

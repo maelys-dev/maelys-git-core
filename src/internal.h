@@ -213,6 +213,12 @@ size_t mg_policy_explanation_storage_bytes(const maelys_git_policy_t *policy);
 /* A Gitolite user, group or namespace name the generator accepts: one or
  * more of [A-Za-z0-9._-]. */
 int mg_gitolite_name_is_valid(const char *name);
+/* A ref pattern of the supported refex subset, once normalized: under
+ * refs/, of [A-Za-z0-9._/-], without ".." or "//", at most 256 bytes. A
+ * prefix ends with '/', unless it is a deny's bare literal, which Gitolite
+ * denies as a prefix; an exact ref is a valid ref name. The generator and
+ * the snapshot of grants read patterns by this one rule. */
+int mg_gitolite_pattern_is_valid(const char *pattern, int prefix, int deny);
 /* The '/'-terminated prefixes of a request's ref given as ref_prefix facts. */
 #define MG_REF_PREFIX_FACTS 16u
 
