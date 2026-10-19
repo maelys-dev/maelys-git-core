@@ -130,6 +130,7 @@ add_library(maelys_git_core STATIC
     src/common/strings.c
     src/shell/command.c
     src/policy/policy.c
+    src/policy/grants.c
     src/repository/repository.c
     src/repository/lifecycle.c
     src/repository/mirror.c
@@ -145,7 +146,7 @@ target_include_directories(maelys_git_core
 # comes from the public digest of the dependency-free CLI framework core.
 target_link_libraries(maelys_git_core
     PUBLIC maelys_datalog
-    PRIVATE maelys::cli Threads::Threads maelys_git_build_flags)
+    PRIVATE maelys::cli maelys::json Threads::Threads maelys_git_build_flags)
 
 # Authorization receipts: their only writer and reader, on maelys-json. The
 # policy core builds the receipt structure and stays without JSON.
@@ -368,6 +369,12 @@ if(MAELYS_GIT_BUILD_TESTS)
         maelys_git_core maelys::cli maelys_git_build_flags)
     add_test(NAME maelys-git-policy-facade COMMAND test-maelys-git-policy-facade)
 
+    add_executable(test-maelys-git-grants tests/test_grants.c)
+    target_include_directories(test-maelys-git-grants PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-maelys-git-grants PRIVATE maelys_git_core maelys::cli maelys_git_build_flags)
+    add_test(NAME maelys-git-grants COMMAND test-maelys-git-grants)
+    set_tests_properties(maelys-git-grants PROPERTIES TIMEOUT 120)
+
     add_executable(test-maelys-git-gitolite-budget tests/test_gitolite_budget.c)
     target_include_directories(test-maelys-git-gitolite-budget PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_definitions(test-maelys-git-gitolite-budget PRIVATE
@@ -405,6 +412,9 @@ if(MAELYS_GIT_BUILD_TESTS)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_facade_consumer.cmake)
 
     # Timing is not a test: built on demand, never run by CTest.
+    add_executable(bench-maelys-git-grants EXCLUDE_FROM_ALL tests/bench_grants.c)
+    target_include_directories(bench-maelys-git-grants PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(bench-maelys-git-grants PRIVATE maelys_git_core maelys_git_build_flags)
     add_executable(bench-maelys-git-authorize EXCLUDE_FROM_ALL tests/bench_authorize.c)
     target_link_libraries(bench-maelys-git-authorize PRIVATE
         maelys_git_receipt maelys_git_build_flags)

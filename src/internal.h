@@ -210,6 +210,9 @@ maelys_git_result_t mg_repository_visit_changes_with_budget(
 
 /* Bytes of explanation storage the handle holds: zero until it explains. */
 size_t mg_policy_explanation_storage_bytes(const maelys_git_policy_t *policy);
+/* A Gitolite user, group or namespace name the generator accepts: one or
+ * more of [A-Za-z0-9._-]. */
+int mg_gitolite_name_is_valid(const char *name);
 /* The '/'-terminated prefixes of a request's ref given as ref_prefix facts. */
 #define MG_REF_PREFIX_FACTS 16u
 

@@ -75,6 +75,10 @@ static int safe_atom(const char *value) {
     return 1;
 }
 
+int mg_gitolite_name_is_valid(const char *name) {
+    return safe_atom(name);
+}
+
 static int safe_exact_path(const char *value) {
     if (!value || !*value || value[0] == '/' || value[strlen(value) - 1u] == '/')
         return 0;
