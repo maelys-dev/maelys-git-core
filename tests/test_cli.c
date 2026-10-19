@@ -690,6 +690,142 @@ static int test_authorize_receipt(void) {
     return 1;
 }
 
+/* ---- the pinned engine: variable identity and strata ----------------------------- */
+
+/* authorize of alice on example.git, pushing refs/heads/main with one path,
+ * under the single policy SOURCE written in DIRECTORY: its data. */
+static maelys_json_document_t *decide(const char *directory, const char *source,
+                                      const maelys_json_document_t *schema) {
+    const char *manifest = write_manifest(directory, source);
+    if (!manifest) return NULL;
+    ARGV(argv, "authorize", (char *)manifest, "alice", "example.git", "push", "refs/heads/main",
+         "--json", "--compact", "--", "notes.txt");
+    return authorize_data(argv, argv_count, 0, schema);
+}
+
+/* Tests 1 to 3 of GIT-C07: the engine identifies a variable by its complete
+ * name. Under 0.23.1, Ab and Ac were one variable, so these rules required a
+ * user equal to the path and derived nothing: the allow failed and the deny
+ * did not hold. One-letter names decide as they always did. */
+static int test_variable_identity(void) {
+    maelys_json_document_t *schema = output_schema("authorize");
+    char template[] = "/tmp/maelys_git_cli_variables_XXXXXX";
+    char *root = mkdtemp(template);
+    CHECK(schema && root);
+    static const struct {
+        const char *name, *source;
+        int allowed, explicit_deny;
+    } cases[] = {
+        {"allow-long", "allow(R) :- request(R), user(Ab), path(Ac).\n", 1, 0},
+        {"deny-long", "allow(R) :- request(R).\ndeny(R) :- request(R), user(Ab), path(Ac).\n", 0, 1},
+        {"allow-short", "allow(R) :- request(R), user(A), path(B).\n", 1, 0},
+        {"deny-short", "allow(R) :- request(R).\ndeny(R) :- request(R), user(A), path(B).\n", 0, 1},
+    };
+    for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        char directory[256];
+        (void)snprintf(directory, sizeof(directory), "%s/%s", root, cases[i].name);
+        maelys_json_document_t *data = decide(directory, cases[i].source, schema);
+        if (!data) (void)fprintf(stderr, "%s: no decision\n", cases[i].name);
+        CHECK(data != NULL);
+        CHECK(tj_boolean(data, "data.allowed") == cases[i].allowed);
+        CHECK(tj_boolean(data, "data.explicitDeny") == cases[i].explicit_deny);
+        if (cases[i].explicit_deny) CHECK(tj_i64(data, "data.matchedPolicy", -1) == 0);
+        tj_release(data);
+    }
+    CHECK(test_remove_tree(root));
+    tj_release(schema);
+    return 1;
+}
+
+/* The first diagnostic of validate on SOURCE, checked against the schema. */
+static maelys_json_document_t *refused(const char *directory, const char *source,
+                                       const maelys_json_document_t *schema) {
+    const char *manifest = write_manifest(directory, source);
+    return manifest ? validate(manifest, 2, schema) : NULL;
+}
+
+/* Tests 4 and 5 of GIT-C07: the engine's capacities as validate reports
+ * them. A 27th variable name is refused (MAX_RULE_VARIABLES); four stacked
+ * negations need five strata and are refused as a capacity (MAX_STRATA),
+ * three are accepted; a negation cycle stays a semantic failure, without a
+ * budget. */
+static int test_engine_capacities(void) {
+    maelys_json_document_t *schema = output_schema("validate");
+    char template[] = "/tmp/maelys_git_cli_capacities_XXXXXX";
+    char *root = mkdtemp(template);
+    CHECK(schema && root);
+    char directory[256], source[2048];
+
+    /* R and 25 names, then R and 26: 26 and 27 distinct names, packed four
+     * to a literal to stay within the eight literals of a rule body. */
+    for (int names = 26; names <= 27; ++names) {
+        size_t used = (size_t)snprintf(source, sizeof(source), "allow(R) :- request(R)");
+        for (int v = 1; v <= 24; v += 4)
+            used += (size_t)snprintf(source + used, sizeof(source) - used,
+                                     ", push_request(V%02d, V%02d, V%02d, V%02d)", v, v + 1, v + 2, v + 3);
+        (void)snprintf(source + used, sizeof(source) - used, ", effective_access(V25, V%02d, V25).\n",
+                       names == 27 ? 26 : 25);
+        (void)snprintf(directory, sizeof(directory), "%s/variables-%d", root, names);
+        if (names == 26) {
+            const char *manifest = write_manifest(directory, source);
+            maelys_json_document_t *data = manifest ? validate(manifest, 0, schema) : NULL;
+            CHECK(data && tj_boolean(data, "data.valid") == 1);
+            tj_release(data);
+            continue;
+        }
+        maelys_json_document_t *data = refused(directory, source, schema);
+        CHECK(data && tj_boolean(data, "data.valid") == 0);
+        CHECK(tj_string_is(data, "data.diagnostics.0.kind", "capacity"));
+        CHECK(tj_string_is(data, "data.diagnostics.0.budget", "MAX_RULE_VARIABLES"));
+        CHECK(tj_i64(data, "data.diagnostics.0.requested", 0) == 27);
+        CHECK(tj_i64(data, "data.diagnostics.0.limit", 0) == 26);
+        tj_release(data);
+    }
+
+    /* Each derived predicate negates the previous one. */
+    static const char chain[] =
+        "has_ref_write(R, R) :- request(R).\n"
+        "has_push_access(R, R) :- request(R), not(has_ref_write(R, R)).\n"
+        "vref_count_exceeded(R, R) :- request(R), not(has_push_access(R, R)).\n"
+        "vref_new_count_exceeded(R, R) :- request(R), not(vref_count_exceeded(R, R)).\n";
+    (void)snprintf(source, sizeof(source), "%sallow(R) :- request(R), vref_new_count_exceeded(R, R).\n",
+                   chain);
+    (void)snprintf(directory, sizeof(directory), "%s/negations-3", root);
+    const char *manifest = write_manifest(directory, source);
+    maelys_json_document_t *data = manifest ? validate(manifest, 0, schema) : NULL;
+    CHECK(data && tj_boolean(data, "data.valid") == 1);
+    tj_release(data);
+
+    (void)snprintf(source, sizeof(source),
+                   "%svref_new_binary_exceeded(R, R) :- request(R), not(vref_new_count_exceeded(R, R)).\n"
+                   "allow(R) :- request(R), vref_new_binary_exceeded(R, R).\n", chain);
+    (void)snprintf(directory, sizeof(directory), "%s/negations-4", root);
+    data = refused(directory, source, schema);
+    CHECK(data && tj_boolean(data, "data.valid") == 0);
+    CHECK(tj_string_is(data, "data.diagnostics.0.kind", "capacity"));
+    CHECK(tj_string_is(data, "data.diagnostics.0.diagnostic", "policy_not_stratifiable"));
+    CHECK(tj_string_is(data, "data.diagnostics.0.budget", "MAX_STRATA"));
+    CHECK(tj_i64(data, "data.diagnostics.0.requested", 0) == 5);
+    CHECK(tj_i64(data, "data.diagnostics.0.limit", 0) == 4);
+    tj_release(data);
+
+    (void)snprintf(directory, sizeof(directory), "%s/negation-cycle", root);
+    data = refused(directory,
+                   "has_ref_write(R, R) :- request(R), not(has_push_access(R, R)).\n"
+                   "has_push_access(R, R) :- request(R), not(has_ref_write(R, R)).\n"
+                   "allow(R) :- request(R), has_ref_write(R, R).\n", schema);
+    CHECK(data && tj_boolean(data, "data.valid") == 0);
+    CHECK(tj_string_is(data, "data.diagnostics.0.kind", "semantics"));
+    CHECK(tj_string_is(data, "data.diagnostics.0.diagnostic", "policy_not_stratifiable"));
+    CHECK(!tj_has(data, "data.diagnostics.0.budget") && !tj_has(data, "data.diagnostics.0.requested") &&
+          !tj_has(data, "data.diagnostics.0.limit"));
+    tj_release(data);
+
+    CHECK(test_remove_tree(root));
+    tj_release(schema);
+    return 1;
+}
+
 /* Test 15: one request through the command line, the agent and the API gives
  * one receipt; the request id is set alike on the three. */
 static int test_same_receipt(void) {
@@ -773,7 +909,9 @@ int main(void) {
     passed += test_validate_detail();
     passed += test_authorize_receipt();
     passed += test_same_receipt();
-    if (passed != 6) return 1;
+    passed += test_variable_identity();
+    passed += test_engine_capacities();
+    if (passed != 8) return 1;
     (void)printf("ok: %d CLI contract test groups passed\n", passed);
     return 0;
 }
