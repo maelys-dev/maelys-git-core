@@ -131,6 +131,7 @@ add_library(maelys_git_core STATIC
     src/shell/command.c
     src/policy/policy.c
     src/policy/grants.c
+    src/policy/slice.c
     src/repository/repository.c
     src/repository/lifecycle.c
     src/repository/mirror.c
@@ -374,6 +375,12 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_link_libraries(test-maelys-git-grants PRIVATE maelys_git_core maelys::cli maelys_git_build_flags)
     add_test(NAME maelys-git-grants COMMAND test-maelys-git-grants)
     set_tests_properties(maelys-git-grants PROPERTIES TIMEOUT 120)
+
+    add_executable(test-maelys-git-slice tests/test_slice.c)
+    target_include_directories(test-maelys-git-slice PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-maelys-git-slice PRIVATE maelys_git_core maelys_git_build_flags)
+    add_test(NAME maelys-git-slice COMMAND test-maelys-git-slice)
+    set_tests_properties(maelys-git-slice PROPERTIES TIMEOUT 120)
 
     add_executable(test-maelys-git-gitolite-budget tests/test_gitolite_budget.c)
     target_include_directories(test-maelys-git-gitolite-budget PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
