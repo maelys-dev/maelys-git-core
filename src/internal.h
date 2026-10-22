@@ -222,12 +222,24 @@ int mg_gitolite_pattern_is_valid(const char *pattern, int prefix, int deny);
 /* The '/'-terminated prefixes of a request's ref given as ref_prefix facts. */
 #define MG_REF_PREFIX_FACTS 16u
 
+struct mg_grants;
+
 /* maelys_git_policy_open on a manifest and the source of its single policy,
- * held in memory: the same loader contract and the same failure detail. */
+ * held in memory: the same loader contract and the same failure detail.
+ * The handle owns GRANTS (a parsed snapshot, or NULL) from this call on,
+ * whatever it returns. */
 maelys_git_result_t mg_policy_open_buffer(const char *manifest, size_t manifest_length,
                                           const char *policy_id, const char *source,
-                                          size_t source_length, maelys_git_policy_t **out_policy,
+                                          size_t source_length, struct mg_grants *grants,
+                                          maelys_git_policy_t **out_policy,
                                           maelys_git_error_t *error);
+/* maelys_git_migrate_gitolite, in the form of grants as data: the audited
+ * program (policy/program.h) as gitolite-migrated.dl, its manifest, and the
+ * configuration's grants as grants.json, maelys-git-grants/1. The plan judges
+ * the program, the groups of a user and the bounds of the snapshot. */
+maelys_git_result_t mg_migrate_gitolite_grants(const char *input_path, const char *output_directory, int apply,
+                                               maelys_git_gitolite_migration_result_t *out_result,
+                                               maelys_git_error_t *error);
 /* The compiled size of an open policy, or nothing for NULL, and the engine
  * bounds that apply to it. The worst cases of execution are the caller's. */
 maelys_git_result_t mg_policy_budget(const maelys_git_policy_t *policy,

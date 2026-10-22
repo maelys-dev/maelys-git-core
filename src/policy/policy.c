@@ -1,5 +1,9 @@
 #include "internal.h"
+#include "policy/grants.h"
+#include "policy/policy_grants.h"
 #include "policy/policy_reads.h"
+#include "policy/program.h"
+#include "policy/slice.h"
 
 #include <maelys/cli/digest.h>
 #include <maelys/datalog.h>
@@ -18,7 +22,9 @@ typedef enum {
     REQUEST_BOUND_NONE = 0,
     REQUEST_BOUND_EDB_FACTS,  /* the fact buffer, MAX_EDB_FACTS */
     REQUEST_BOUND_PATHS,      /* one fact per path, MAX_FACTS_PER_PRED */
-    REQUEST_BOUND_INTEGER     /* a value beyond INT64_MAX */
+    REQUEST_BOUND_INTEGER,    /* a value beyond INT64_MAX */
+    REQUEST_BOUND_SLICE,      /* the request's facts and its slice, MAX_EDB_FACTS */
+    REQUEST_BOUND_SLICE_PREDICATE /* one slice_* predicate, MAX_FACTS_PER_PRED */
 } request_bound_t;
 
 /* One enabled policy of the manifest: its session, kept for the life of the
@@ -27,19 +33,35 @@ typedef struct {
     maelys_datalog_session_t *session;
     char policy_id[MG_POLICY_ID_MAX];
     char fingerprint[MAELYS_DATALOG_PUBLIC_FINGERPRINT_BYTES];
+    int audited;       /* the audited Gitolite program: it alone receives the slice */
+    size_t last_facts; /* the facts its last solve received */
 } policy_entry_t;
 
 /* A policy handle is thread-confined. Its fact buffer and its sessions are
  * allocated once by maelys_git_policy_open(); an authorization allocates
- * nothing in this file. The capacities are read from the loaded engine. */
+ * nothing in this file but the slice of its grants, when the set has the
+ * audited program. The capacities are read from the loaded engine.
+ *
+ * The fact buffer holds the request's facts, the context every policy
+ * receives, then the slice, which only the audited program receives. */
 struct maelys_git_policy {
     policy_entry_t *entries;
     size_t count;
     maelys_datalog_fact_t *facts;
     size_t fact_capacity;
-    size_t fact_count;
+    size_t fact_count;   /* the context and the slice */
+    size_t context_count;
     size_t path_limit;
     request_bound_t exceeded; /* the bound that refused the last request facts */
+    mg_slice_predicate_t exceeded_predicate;
+    size_t exceeded_count;
+    /* The snapshot of grants the handle was opened with, owned; the slice of
+     * the last request, whose strings belong to it or to the request. */
+    mg_grants_t *grants;
+    int has_audited;
+    mg_slice_t slice;
+    mg_policy_slice_filter_t slice_filter;
+    void *slice_filter_context;
     char repository_copy[MAELYS_GIT_MAX_REPOSITORY];
     /* The first '/'-terminated prefixes of the request's ref, one string each. */
     char ref_prefixes[MG_REF_PREFIX_FACTS][MAELYS_GIT_MAX_REF];
@@ -168,6 +190,27 @@ static const maelys_datalog_predicate_t k_git_domain[] = {
     {"vref_count_exceeded", 2u, MAELYS_DATALOG_PREDICATE_IDB},
     {"vref_new_count_exceeded", 2u, MAELYS_DATALOG_PREDICATE_IDB},
     {"vref_new_binary_exceeded", 2u, MAELYS_DATALOG_PREDICATE_IDB},
+    /* The slice of a grants snapshot for one request (policy/slice.h), read
+     * by the audited Gitolite program only. */
+    {"slice_member", 2u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_nested", 2u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_access", 3u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_group_access", 3u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_ref_match", 3u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_group_ref_match", 3u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_ref_level", 3u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_group_ref_level", 3u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_namespace_creator", 2u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_group_namespace_creator", 2u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_owner_access", 2u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_vref_name", 3u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_group_vref_name", 3u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_vref_count", 3u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_group_vref_count", 3u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_vref_new_count", 3u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_group_vref_new_count", 3u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_vref_max_new_binary", 3u, MAELYS_DATALOG_PREDICATE_EDB},
+    {"slice_group_vref_max_new_binary", 3u, MAELYS_DATALOG_PREDICATE_EDB},
     {"allow", 1u, MAELYS_DATALOG_PREDICATE_IDB | MAELYS_DATALOG_PREDICATE_QUERY},
     {"deny", 1u, MAELYS_DATALOG_PREDICATE_IDB | MAELYS_DATALOG_PREDICATE_QUERY},
 };
@@ -360,16 +403,70 @@ static int policy_reads(mg_policy_reads_t reads, const maelys_datalog_policy_t *
     return reads(loaded, index, name, arity, &answer) != MAELYS_DATALOG_STATUS_OK || answer != 0;
 }
 
-/* Builds the handle of a loaded set and releases the set, whatever happens. */
+/* Whether the enabled policy at INDEX reads a slice_* predicate. */
+static int reads_slice(mg_policy_reads_t reads, const maelys_datalog_policy_t *loaded, size_t index) {
+    for (int p = 0; p < (int)MG_SLICE_PREDICATE_COUNT; ++p)
+        if (policy_reads(reads, loaded, index, mg_slice_predicate_name((mg_slice_predicate_t)p),
+                         mg_slice_predicate_arity((mg_slice_predicate_t)p)))
+            return 1;
+    return 0;
+}
+
+/* The audited consumer. A policy that reads a slice_* predicate must be the
+ * audited Gitolite program: its session fingerprint, the SHA-256 of the
+ * source the engine checked against its manifest, must be that of the
+ * canonical text. Only that program receives the slice. A set that has it
+ * needs a snapshot of grants, and a snapshot needs a set that has it. */
+static maelys_git_result_t audit_consumers(maelys_git_policy_t *policy, const maelys_datalog_policy_t *loaded,
+                                           mg_policy_reads_t reads, maelys_git_error_t *error) {
+    const char *program = mg_gitolite_program_sha256();
+    const char *reader = NULL;
+    for (size_t i = 0u; i < policy->count; ++i) {
+        policy_entry_t *entry = &policy->entries[i];
+        if (!reads_slice(reads, loaded, i)) continue;
+        if (strcmp(entry->fingerprint, program) != 0) {
+            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                         "policy %s reads slice facts but is not the audited Gitolite program (%s)",
+                         entry->policy_id, MG_GITOLITE_PROGRAM_FORMAT);
+            const maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_SEMANTICS};
+            mg_error_set_detail(error, &detail);
+            return MAELYS_GIT_ERR_POLICY;
+        }
+        entry->audited = 1;
+        policy->has_audited = 1;
+        if (!reader) reader = entry->policy_id;
+    }
+    if (reader && !policy->grants) {
+        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                     "policy %s reads a snapshot of grants: open the manifest with --grants FILE", reader);
+        const maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_MANIFEST};
+        mg_error_set_detail(error, &detail);
+        return MAELYS_GIT_ERR_POLICY;
+    }
+    if (!reader && policy->grants) {
+        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                     "a snapshot of grants was given, but no policy of the set is the audited Gitolite program");
+        const maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_MANIFEST};
+        mg_error_set_detail(error, &detail);
+        return MAELYS_GIT_ERR_POLICY;
+    }
+    return MAELYS_GIT_OK;
+}
+
+/* Builds the handle of a loaded set and releases the set, whatever happens.
+ * The handle owns GRANTS, which may be NULL, from this call on. */
 static maelys_git_result_t open_loaded(maelys_datalog_policy_t *loaded, mg_policy_reads_t reads,
-                                       maelys_git_policy_t **out_policy,
+                                       mg_grants_t *grants, maelys_git_policy_t **out_policy,
                                        maelys_git_error_t *error) {
     maelys_datalog_status_t status;
     maelys_git_result_t result = MAELYS_GIT_OK;
     maelys_git_policy_t *policy = calloc(1u, sizeof(*policy));
     if (!policy) {
+        mg_grants_free(grants);
         mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "unable to allocate policy engine");
         result = MAELYS_GIT_ERR_IO;
+    } else {
+        policy->grants = grants;
     }
     size_t count = 0u;
     if (result == MAELYS_GIT_OK) {
@@ -428,6 +525,7 @@ static maelys_git_result_t open_loaded(maelys_datalog_policy_t *loaded, mg_polic
         policy->emit_ref_prefix |= policy_reads(reads, loaded, i, "ref_prefix", 1u);
         policy->emit_ref_prefix_count |= policy_reads(reads, loaded, i, "ref_prefix_count", 1u);
     }
+    if (result == MAELYS_GIT_OK) result = audit_consumers(policy, loaded, reads, error);
     /* Sessions keep their own snapshot of the policy they were created from. */
     (void)maelys_datalog_policy_free(loaded);
     if (result != MAELYS_GIT_OK) {
@@ -441,12 +539,29 @@ static maelys_git_result_t open_loaded(maelys_datalog_policy_t *loaded, mg_polic
 maelys_git_result_t maelys_git_policy_open(const char *manifest_path,
                                             maelys_git_policy_t **out_policy,
                                             maelys_git_error_t *error) {
-    return mg_policy_open_reads(manifest_path, maelys_datalog_policy_reads_predicate, out_policy, error);
+    return mg_policy_open_with(manifest_path, NULL, maelys_datalog_policy_reads_predicate, out_policy, error);
+}
+
+maelys_git_result_t mg_policy_open_grants(const char *manifest_path, const char *grants_path,
+                                          maelys_git_policy_t **out_policy, maelys_git_error_t *error) {
+    if (!grants_path) {
+        maelys_git_error_clear(error);
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0, "a grants snapshot path is required");
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    return mg_policy_open_with(manifest_path, grants_path, maelys_datalog_policy_reads_predicate, out_policy,
+                               error);
 }
 
 maelys_git_result_t mg_policy_open_reads(const char *manifest_path, mg_policy_reads_t reads,
                                          maelys_git_policy_t **out_policy,
                                          maelys_git_error_t *error) {
+    return mg_policy_open_with(manifest_path, NULL, reads, out_policy, error);
+}
+
+maelys_git_result_t mg_policy_open_with(const char *manifest_path, const char *grants_path,
+                                        mg_policy_reads_t reads, maelys_git_policy_t **out_policy,
+                                        maelys_git_error_t *error) {
     maelys_git_error_clear(error);
     if (!manifest_path || !reads || !out_policy) {
         mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0, "manifest path and output are required");
@@ -462,21 +577,32 @@ maelys_git_result_t mg_policy_open_reads(const char *manifest_path, mg_policy_re
     maelys_datalog_status_t status = maelys_datalog_policy_load_manifest(
         manifest_path, MAELYS_DATALOG_PUBLIC_ALLOW_UNDECLARED_POLICY_ATOMS, &loaded, &diagnostic);
     if (status != MAELYS_DATALOG_STATUS_OK) return load_failure(error, status, &diagnostic);
-    return open_loaded(loaded, reads, out_policy, error);
+    /* Then the snapshot, read once: every decision of the handle uses it. */
+    mg_grants_t *grants = NULL;
+    if (grants_path && (result = mg_grants_load(grants_path, &grants, error)) != MAELYS_GIT_OK) {
+        (void)maelys_datalog_policy_free(loaded);
+        return result;
+    }
+    return open_loaded(loaded, reads, grants, out_policy, error);
 }
 
 maelys_git_result_t mg_policy_open_buffer(const char *manifest, size_t manifest_length,
                                           const char *policy_id, const char *source,
-                                          size_t source_length, maelys_git_policy_t **out_policy,
+                                          size_t source_length, mg_grants_t *grants,
+                                          maelys_git_policy_t **out_policy,
                                           maelys_git_error_t *error) {
     maelys_git_error_clear(error);
     if (!manifest || !policy_id || !source || !out_policy) {
+        mg_grants_free(grants);
         mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0, "manifest, policy and output are required");
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     }
     *out_policy = NULL;
     maelys_git_result_t result = register_domain(error);
-    if (result != MAELYS_GIT_OK) return result;
+    if (result != MAELYS_GIT_OK) {
+        mg_grants_free(grants);
+        return result;
+    }
     /* The loader contract of a manifest on disk, without its files. */
     const maelys_datalog_policy_bundle_entry_t bundle = {
         .policy_id = policy_id, .src = source, .src_len = source_length};
@@ -485,8 +611,11 @@ maelys_git_result_t mg_policy_open_buffer(const char *manifest, size_t manifest_
     maelys_datalog_status_t status = maelys_datalog_policy_load_manifest_buffer(
         manifest, manifest_length, &bundle, 1u, MAELYS_DATALOG_PUBLIC_ALLOW_UNDECLARED_POLICY_ATOMS,
         &loaded, &diagnostic);
-    if (status != MAELYS_DATALOG_STATUS_OK) return load_failure(error, status, &diagnostic);
-    return open_loaded(loaded, maelys_datalog_policy_reads_predicate, out_policy, error);
+    if (status != MAELYS_DATALOG_STATUS_OK) {
+        mg_grants_free(grants);
+        return load_failure(error, status, &diagnostic);
+    }
+    return open_loaded(loaded, maelys_datalog_policy_reads_predicate, grants, out_policy, error);
 }
 
 maelys_git_result_t mg_policy_budget(const maelys_git_policy_t *policy,
@@ -524,6 +653,25 @@ maelys_git_result_t maelys_git_policy_fingerprint(
     return MAELYS_GIT_OK;
 }
 
+const char *mg_policy_grants_sha256(const maelys_git_policy_t *policy) {
+    return policy && policy->grants ? mg_grants_sha256(policy->grants) : NULL;
+}
+
+void mg_policy_slice_counts(const maelys_git_policy_t *policy, size_t *out_context, size_t *out_slice) {
+    *out_context = policy ? policy->context_count : 0u;
+    *out_slice = policy ? policy->fact_count - policy->context_count : 0u;
+}
+
+size_t mg_policy_entry_facts(const maelys_git_policy_t *policy, size_t index) {
+    return policy && index < policy->count ? policy->entries[index].last_facts : 0u;
+}
+
+void mg_policy_set_slice_filter(maelys_git_policy_t *policy, mg_policy_slice_filter_t filter, void *context) {
+    if (!policy) return;
+    policy->slice_filter = filter;
+    policy->slice_filter_context = context;
+}
+
 void maelys_git_policy_close(maelys_git_policy_t *policy) {
     if (!policy) return;
     for (size_t i = 0u; policy->entries && i < policy->count; ++i)
@@ -531,6 +679,8 @@ void maelys_git_policy_close(maelys_git_policy_t *policy) {
             (void)maelys_datalog_session_free(policy->entries[i].session);
     free(policy->entries);
     free(policy->facts);
+    mg_slice_clear(&policy->slice);
+    mg_grants_free(policy->grants);
     free(policy->explanation_storage);
     free(policy->text);
     free(policy);
@@ -704,9 +854,56 @@ static int build_request_facts(maelys_git_policy_t *policy,
     return ok;
 }
 
+/* The slice of the handle's grants for the request, after its context, in
+ * the fact buffer; only the audited program's sessions read past the
+ * context. A slice is never truncated: a predicate beyond the engine's facts
+ * per predicate, or a slice the buffer cannot hold beside the context, is
+ * refused whole, and the handle says which bound refused it. */
+static maelys_git_result_t build_slice_facts(maelys_git_policy_t *policy,
+                                             const maelys_git_policy_request_t *request,
+                                             maelys_git_error_t *error) {
+    mg_slice_clear(&policy->slice);
+    const mg_slice_request_t wanted = {request->principal, request->repository, request->ref_name,
+                                       request->paths, request->path_count};
+    maelys_git_result_t result = mg_slice_extract(policy->grants, &wanted, &policy->slice, error);
+    if (result != MAELYS_GIT_OK) return result;
+    mg_slice_t *slice = &policy->slice;
+    if (policy->slice_filter) {
+        size_t kept = 0u;
+        for (size_t i = 0u; i < slice->count; ++i)
+            if (policy->slice_filter(&slice->facts[i], policy->slice_filter_context))
+                slice->facts[kept++] = slice->facts[i];
+        slice->count = kept;
+    }
+    size_t counts[MG_SLICE_PREDICATE_COUNT] = {0};
+    for (size_t i = 0u; i < slice->count; ++i) ++counts[slice->facts[i].predicate];
+    for (int p = 0; p < (int)MG_SLICE_PREDICATE_COUNT; ++p) {
+        if (counts[p] <= policy->path_limit) continue;
+        policy->exceeded = REQUEST_BOUND_SLICE_PREDICATE;
+        policy->exceeded_predicate = (mg_slice_predicate_t)p;
+        policy->exceeded_count = counts[p];
+        return MAELYS_GIT_ERR_POLICY;
+    }
+    if (slice->count > policy->fact_capacity - policy->fact_count) {
+        policy->exceeded = REQUEST_BOUND_SLICE;
+        policy->exceeded_count = policy->fact_count + slice->count;
+        return MAELYS_GIT_ERR_POLICY;
+    }
+    for (size_t i = 0u; i < slice->count; ++i) {
+        const mg_slice_fact_t *fact = &slice->facts[i];
+        size_t arity = mg_slice_predicate_arity(fact->predicate);
+        maelys_datalog_value_t terms[3];
+        for (size_t k = 0u; k < arity; ++k)
+            terms[k] = fact->text[k] ? symbol_value(fact->text[k]) : integer_value(fact->number);
+        (void)push_fact(policy, mg_slice_predicate_name(fact->predicate), terms, arity);
+    }
+    return MAELYS_GIT_OK;
+}
+
 /* The detail of refused request facts: the bound that refused them, its
  * engine name and the capacity read from the engine. The fact buffer reports,
- * as the engine does, the attempted count: one more than it holds. */
+ * as the engine does, the attempted count: one more than it holds. A slice
+ * reports its whole count, and the predicate that exceeded its bound. */
 static void set_request_detail(maelys_git_error_t *error, const maelys_git_policy_t *policy,
                                const maelys_git_policy_request_t *request) {
     maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_CAPACITY};
@@ -724,6 +921,18 @@ static void set_request_detail(maelys_git_error_t *error, const maelys_git_polic
         case REQUEST_BOUND_INTEGER:
             detail.kind = MAELYS_GIT_FAILURE_VALUE;
             break;
+        case REQUEST_BOUND_SLICE:
+            detail.requested = policy->exceeded_count;
+            detail.limit = policy->fact_capacity;
+            (void)mg_copy_string(detail.diagnostic, sizeof(detail.diagnostic), "input:slice");
+            break;
+        case REQUEST_BOUND_SLICE_PREDICATE:
+            budget = MAELYS_DATALOG_LIMIT_MAX_FACTS_PER_PRED;
+            detail.requested = policy->exceeded_count;
+            detail.limit = policy->path_limit;
+            (void)snprintf(detail.diagnostic, sizeof(detail.diagnostic), "input:%s",
+                           mg_slice_predicate_name(policy->exceeded_predicate));
+            break;
         case REQUEST_BOUND_NONE:
             return;
     }
@@ -739,14 +948,17 @@ static const char *request_identifier(const maelys_git_policy_request_t *request
 
 /* ---- evaluation ---------------------------------------------------------- */
 
-/* Solves one policy against the request facts of the handle. The result is
- * returned alive: the caller releases it before the next solve of the session. */
-static maelys_git_result_t solve_entry(maelys_git_policy_t *policy, const policy_entry_t *entry,
+/* Solves one policy against the request facts of the handle: the context
+ * and the slice for the audited program, the context alone for any other.
+ * The result is returned alive: the caller releases it before the next
+ * solve of the session. */
+static maelys_git_result_t solve_entry(maelys_git_policy_t *policy, policy_entry_t *entry,
                                        maelys_datalog_result_t **out_result,
                                        maelys_git_error_t *error) {
     maelys_datalog_diagnostic_t diagnostic = MAELYS_DATALOG_DIAGNOSTIC_INIT;
+    entry->last_facts = entry->audited ? policy->fact_count : policy->context_count;
     maelys_datalog_status_t status = maelys_datalog_session_solve(
-        entry->session, policy->facts, policy->fact_count, out_result, &diagnostic);
+        entry->session, policy->facts, entry->last_facts, out_result, &diagnostic);
     if (status == MAELYS_DATALOG_STATUS_OK) return MAELYS_GIT_OK;
     mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "policy solve failed: %s (%s)",
                  diagnostic.source == MAELYS_DATALOG_DIAGNOSTIC_NONE
@@ -799,15 +1011,24 @@ static maelys_git_result_t decide(maelys_git_policy_t *policy,
     memcpy(out_decision->policy_set_fingerprint, policy->fingerprint, sizeof(policy->fingerprint));
     const char *request_id = request_identifier(request);
     maelys_git_result_t result = MAELYS_GIT_OK;
-    if (!build_request_facts(policy, request, request_id)) {
+    int built = build_request_facts(policy, request, request_id);
+    policy->context_count = policy->fact_count;
+    if (!built) {
         mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
                      "request fact construction failed: a value or the fact count exceeds the engine limits");
         set_request_detail(error, policy, request);
         result = MAELYS_GIT_ERR_POLICY;
+    } else {
+        if (policy->has_audited) result = build_slice_facts(policy, request, error);
+        if (result == MAELYS_GIT_ERR_POLICY && policy->exceeded != REQUEST_BOUND_NONE) {
+            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                         "the slice of grants for this request exceeds the engine limits; it is never truncated");
+            set_request_detail(error, policy, request);
+        }
     }
     size_t allow_policy = SIZE_MAX;
     for (size_t i = 0u; result == MAELYS_GIT_OK && i < policy->count; ++i) {
-        const policy_entry_t *entry = &policy->entries[i];
+        policy_entry_t *entry = &policy->entries[i];
         maelys_datalog_result_t *solved = NULL;
         maelys_datalog_decision_t ranked = MAELYS_DATALOG_DECISION_DENY_DEFAULT;
         result = solve_entry(policy, entry, &solved, error);
@@ -994,7 +1215,7 @@ static maelys_git_result_t explain_decision(maelys_git_policy_t *policy,
     out->query = decision->explicit_deny ? "deny" : "allow";
     out->policy_index = why_true ? decision->matched_policy : policy->count - 1u;
     out->status = MAELYS_GIT_RECEIPT_STATUS_NOT_APPLICABLE;
-    const policy_entry_t *entry = &policy->entries[out->policy_index];
+    policy_entry_t *entry = &policy->entries[out->policy_index];
     maelys_datalog_explanation_kind_t kind = why_true ? MAELYS_DATALOG_EXPLAIN_TRUE : MAELYS_DATALOG_EXPLAIN_FALSE;
     maelys_datalog_status_t status = MAELYS_DATALOG_STATUS_OK;
     maelys_git_result_t result = explanation_storage(policy, entry->session, kind, &status, error);
@@ -1105,7 +1326,8 @@ maelys_git_result_t maelys_git_policy_authorize_receipt(
     maelys_git_result_t result = decide(policy, request, out_decision, &evaluated, error);
     if (result == MAELYS_GIT_ERR_INVALID_ARGUMENT) return result;
     memcpy(receipt->policy_set_fingerprint, policy->fingerprint, sizeof(policy->fingerprint));
-    receipt->edb_facts = policy->fact_count;
+    /* The context: what every policy received; the slice is the grants'. */
+    receipt->edb_facts = policy->context_count;
     receipt->evaluated_policies = evaluated;
     if (result != MAELYS_GIT_OK) {
         /* A failure denies; the receipt says so, and what kind of failure it was. */
