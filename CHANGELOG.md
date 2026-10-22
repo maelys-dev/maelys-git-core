@@ -19,6 +19,10 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
     strata as a capacity failure with the budget `MAX_STRATA`, five strata
     requested and four allowed. A negation cycle stays a semantic failure,
     without a budget. The bound itself does not change.
+- maelys-json is pinned to 0.3.1 (was 0.3.0). Its canonical check answers
+  without copying the document: the grants snapshot reader runs it on every
+  load, and on macOS forty reloads of a 4 MiB snapshot no longer raise the
+  resident peak from 120 MiB to 1.9 GiB. The answers are unchanged.
 - Jansson is no longer a dependency: maelys-json, already pinned, writes
   every JSON document the programs produce, and the build, the CI and the
   Linux image no longer install Jansson. The bytes written are those of the

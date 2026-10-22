@@ -2,8 +2,8 @@
 
 Décision d'architecture du **2026-10-18** (cycle GIT-C05), qui révoque la
 coexistence durable décidée le 2026-09-05 (voir [Historique](#historique)).
-Bibliothèque : maelys-json, tag **`v0.3.0`**, commit
-`d106890b02b3fbfd599ecd22bdeffb600db66123`, épinglé dans
+Bibliothèque : maelys-json, tag **`v0.3.1`**, commit
+`3cfef055ba900816f0ba71c98380cd8dd2c9f94c`, épinglé dans
 [`cmake/dependencies.cmake`](../cmake/dependencies.cmake).
 
 ## Décision
