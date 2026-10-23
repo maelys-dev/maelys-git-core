@@ -212,7 +212,7 @@ static int run_case(const grid_t *grid) {
     maelys_git_policy_t *old_policy = NULL, *new_policy = NULL;
     CHECK(maelys_git_policy_open(old_manifest, &old_policy, &error) == MAELYS_GIT_OK);
     maelys_git_gitolite_migration_result_t migration;
-    CHECK(maelys_git_migrate_gitolite(input, output, 1, &migration, &error) == MAELYS_GIT_OK);
+    CHECK(mg_migrate_gitolite_compiled(input, output, 1, &migration, &error) == MAELYS_GIT_OK);
     CHECK(migration.unsupported_count == 0u);
     maelys_git_gitolite_migration_result_clear(&migration);
     (void)snprintf(new_manifest, sizeof(new_manifest), "%s/manifest.json", output);

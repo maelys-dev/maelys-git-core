@@ -1,5 +1,6 @@
 #include "agent_internal.h"
 #include "maelys_git_receipt.h"
+#include "policy/policy_grants.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -414,6 +415,7 @@ static char *pr_result(const mg_agent_message_t *message, maelys_git_pr_check_re
     mg_json_string(&json, "merge_tree_oid", result->merge_tree_oid);
     mg_json_string(&json, "prepared_oid", result->prepared_oid);
     mg_json_string(&json, "policy_fingerprint", result->policy_fingerprint);
+    mg_json_string(&json, "grants_fingerprint", result->grants_fingerprint);
     mg_json_string(&json, "pr_id", result->pr_id);
     mg_json_string(&json, "pr_head_ref", result->pr_head_ref);
     mg_json_string(&json, "pr_merged_ref", result->pr_merged_ref);
@@ -478,7 +480,7 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
     static const char *const allowed[] = {
         "base_ref", "base_oid", "head_oid", "style", "message", "approvals",
         "required_approvals", "status_checks_passed", "blocking_review", "apply",
-        "expected_prepared_oid", "expected_policy_fingerprint", "pr_id",
+        "expected_prepared_oid", "expected_policy_fingerprint", "expected_grants_fingerprint", "pr_id",
         "source_repository", "source_ref", "max_source_objects", "max_source_bytes",
         "expected_source_identity", "expected_target_identity", NULL};
     const char *base_ref = required_string(message, "base_ref");
@@ -488,6 +490,7 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
     int valid = 1;
     const char *expected_prepared_oid = optional_string(message, "expected_prepared_oid", &valid);
     const char *expected_policy_fingerprint = optional_string(message, "expected_policy_fingerprint", &valid);
+    const char *expected_grants_fingerprint = optional_string(message, "expected_grants_fingerprint", &valid);
     const char *expected_target_identity = optional_string(message, "expected_target_identity", &valid);
     const char *pr_id = optional_string(message, "pr_id", &valid);
     const char *merge_message = optional_string(message, "message", &valid);
@@ -533,7 +536,8 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
         merge_message,
         message->principal, &gates, policy, pr_id, source,
         expected_target_identity, expected_prepared_oid,
-        expected_policy_fingerprint, apply, &merge, &judged.decision, &receipt, error);
+        expected_policy_fingerprint, expected_grants_fingerprint, 1, apply, &merge, &judged.decision,
+        &receipt, error);
     /* A policy denial is a decision with its receipt; the gates and the
      * mergeability refuse without one. */
     if (result == MAELYS_GIT_ERR_DENIED && receipt.decided) {
@@ -574,6 +578,13 @@ maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
             mg_json_string(&json, "version", MAELYS_GIT_VERSION);
             *out_result_json = mg_protocol_result_end(&json, error);
         }
+    } else if (mg_policy_refresh_grants(policy, error) != MAELYS_GIT_OK) {
+        /* Each command decides on the grants read before it, or not at all:
+         * this one and the next are refused until a reading succeeds. */
+        maelys_git_result_t code = error->code;
+        char reason[MAELYS_GIT_MAX_ERROR];
+        (void)snprintf(reason, sizeof(reason), "grants snapshot unavailable: %.900s", error->message);
+        *out_result_json = failure(message, "failed", code, reason, error);
     } else if (strcmp(message->command, "authorize") == 0) {
         *out_result_json = execute_authorize(policy, message, error);
     } else if (strcmp(message->command, "repository_info") == 0) {

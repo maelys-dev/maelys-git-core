@@ -364,6 +364,7 @@ if(MAELYS_GIT_BUILD_TESTS)
     add_test(NAME maelys-git-policy-golden COMMAND test-maelys-git-policy-golden)
 
     add_executable(test-maelys-git-policy-facade tests/test_policy_facade.c)
+    target_include_directories(test-maelys-git-policy-facade PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_definitions(test-maelys-git-policy-facade PRIVATE
         TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}"
         FIXTURE_DIR="${MAELYS_GIT_POLICY_FIXTURES}")
@@ -467,6 +468,12 @@ if(MAELYS_GIT_BUILD_TESTS)
         TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}"
         FIXTURE_DIR="${MAELYS_GIT_POLICY_FIXTURES}")
     add_test(NAME maelys-git-agent COMMAND test-maelys-git-agent)
+
+    add_executable(test-maelys-git-grants-streams tests/test_grants_streams.c)
+    target_include_directories(test-maelys-git-grants-streams PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-maelys-git-grants-streams PRIVATE
+        maelys_git_agent_core maelys::cli maelys_git_build_flags)
+    add_test(NAME maelys-git-grants-streams COMMAND test-maelys-git-grants-streams)
 
     add_executable(test-maelys-git-agent-config tests/test_agent_config.c)
     target_include_directories(test-maelys-git-agent-config PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

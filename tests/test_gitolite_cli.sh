@@ -25,16 +25,31 @@ test ! -e "$test_root/generated"
   "$test_root/generated" --apply --format json --compact >/dev/null
 test -f "$test_root/generated/manifest.json"
 test -f "$test_root/generated/gitolite-migrated.dl"
-grep -q 'group_member("alice", "developers")' "$test_root/generated/gitolite-migrated.dl"
-grep -q 'gitolite_access("admin", "example.git", "RW+")' "$test_root/generated/gitolite-migrated.dl"
-"$maelys_git_bin" validate "$test_root/generated/manifest.json" \
+test -f "$test_root/generated/grants.json"
+# The program is the same for every configuration; the grants are data.
+grep -q 'maelys-git-gitolite-program/1' "$test_root/generated/gitolite-migrated.dl"
+if grep -q 'alice' "$test_root/generated/gitolite-migrated.dl"; then
+  printf 'the migrated program names a principal of the configuration\n' >&2
+  exit 1
+fi
+grep -qF '["alice","developers"]' "$test_root/generated/grants.json"
+grep -qF '["user","admin","example.git","RW+"]' "$test_root/generated/grants.json"
+grants="--grants=$test_root/generated/grants.json"
+"$maelys_git_bin" validate "$test_root/generated/manifest.json" "$grants" \
   --format json --compact | grep -q '"valid":true'
+# Without its snapshot the program does not open, and says what it needs.
+"$maelys_git_bin" validate "$test_root/generated/manifest.json" \
+  --format json --compact > "$test_root/no-grants.json" || true
+grep -q '"valid":false' "$test_root/no-grants.json"
+grep -q 'with --grants FILE' "$test_root/no-grants.json"
 "$maelys_git_bin" authorize "$test_root/generated/manifest.json" \
-  guest example.git read --format json --compact | grep -q '"allowed":true'
+  guest example.git read "$grants" --format json --compact | grep -q '"allowed":true'
 "$maelys_git_bin" authorize "$test_root/generated/manifest.json" \
-  bob tools.git write --format json --compact | grep -q '"allowed":true'
+  bob tools.git write "$grants" --format json --compact | grep -q '"allowed":true'
 "$maelys_git_bin" authorize "$test_root/generated/manifest.json" \
-  guest tools.git write --format json --compact | grep -q '"allowed":false'
+  guest tools.git write "$grants" --format json --compact | grep -q '"allowed":false'
+"$maelys_git_bin" authorize "$test_root/generated/manifest.json" \
+  bob tools.git write "$grants" --format json --compact | grep -q '"version":2'
 
 printf '%s\n' \
   'repo example' \
@@ -69,22 +84,18 @@ printf '%s\n' "$vref_plan" | grep -q '"canApply":true'
 printf '%s\n' "$vref_plan" | grep -q '"vrefCount":4'
 "$maelys_git_bin" migrate gitolite "$test_root/vrefs.conf" \
   "$test_root/vrefs" --apply --format json --compact >/dev/null
-grep -q 'group_in_group("juniors", "developers")' \
-  "$test_root/vrefs/gitolite-migrated.dl"
-grep -q 'group_vref_deny_name("juniors", "guarded.git", "Makefile")' \
-  "$test_root/vrefs/gitolite-migrated.dl"
-grep -q 'group_vref_deny_count("juniors", "guarded.git", 5)' \
-  "$test_root/vrefs/gitolite-migrated.dl"
-grep -q 'group_vref_deny_new_count("juniors", "guarded.git", 2)' \
-  "$test_root/vrefs/gitolite-migrated.dl"
-grep -q 'group_vref_deny_max_new_binary("juniors", "guarded.git", 1024)' \
-  "$test_root/vrefs/gitolite-migrated.dl"
-"$maelys_git_bin" validate "$test_root/vrefs/manifest.json" \
+grants="--grants=$test_root/vrefs/grants.json"
+grep -qF '["juniors","developers"]' "$test_root/vrefs/grants.json"
+grep -qF '["group","juniors","guarded.git","Makefile"]' "$test_root/vrefs/grants.json"
+grep -qF '["group","juniors","guarded.git","count",5]' "$test_root/vrefs/grants.json"
+grep -qF '["group","juniors","guarded.git","new_count",2]' "$test_root/vrefs/grants.json"
+grep -qF '["group","juniors","guarded.git","max_new_binary",1024]' "$test_root/vrefs/grants.json"
+"$maelys_git_bin" validate "$test_root/vrefs/manifest.json" "$grants" \
   --format json --compact | grep -q '"valid":true'
 "$maelys_git_bin" authorize "$test_root/vrefs/manifest.json" \
-  alice guarded.git write --format json --compact | grep -q '"allowed":true'
+  alice guarded.git write "$grants" --format json --compact | grep -q '"allowed":true'
 "$maelys_git_bin" authorize "$test_root/vrefs/manifest.json" \
-  alice guarded.git push refs/heads/main Makefile --format json --compact | \
+  alice guarded.git push refs/heads/main "$grants" --format json --compact -- Makefile | \
   grep -q '"explicitDeny":true'
 
 printf '%s\n' \
@@ -99,20 +110,19 @@ wild_plan=$(
 printf '%s\n' "$wild_plan" | grep -q '"canApply":true'
 "$maelys_git_bin" migrate gitolite "$test_root/wild.conf" \
   "$test_root/wild" --apply --format json --compact >/dev/null
-grep -q 'group_namespace_creator("creators", "users")' \
-  "$test_root/wild/gitolite-migrated.dl"
-grep -q 'owner_namespace_access("users", "RW+")' \
-  "$test_root/wild/gitolite-migrated.dl"
-"$maelys_git_bin" validate "$test_root/wild/manifest.json" \
+grants="--grants=$test_root/wild/grants.json"
+grep -qF '["group","creators","users"]' "$test_root/wild/grants.json"
+grep -qF '["users","RW+"]' "$test_root/wild/grants.json"
+"$maelys_git_bin" validate "$test_root/wild/manifest.json" "$grants" \
   --format json --compact | grep -q '"valid":true'
 "$maelys_git_bin" authorize "$test_root/wild/manifest.json" \
-  alice users/alice/project.git create --format json --compact | \
+  alice users/alice/project.git create "$grants" --format json --compact | \
   grep -q '"allowed":true'
 "$maelys_git_bin" authorize "$test_root/wild/manifest.json" \
-  bob users/alice/project.git create --format json --compact | \
+  bob users/alice/project.git create "$grants" --format json --compact | \
   grep -q '"allowed":false'
 "$maelys_git_bin" authorize "$test_root/wild/manifest.json" \
-  alice users/alice/project.git write --format json --compact | \
+  alice users/alice/project.git write "$grants" --format json --compact | \
   grep -q '"allowed":true'
 
 printf '%s\n' \
@@ -122,19 +132,17 @@ printf '%s\n' \
   '    - refs/heads/main = mallory' > "$test_root/refs.conf"
 "$maelys_git_bin" migrate gitolite "$test_root/refs.conf" \
   "$test_root/refs" --apply --format json --compact >/dev/null
-grep -q 'gitolite_ref_access("alice", "refs.git", "refs/heads/main", "RW")' \
-  "$test_root/refs/gitolite-migrated.dl"
-grep -q 'gitolite_ref_access("bob", "refs.git", "refs/heads/release", "RW+")' \
-  "$test_root/refs/gitolite-migrated.dl"
+refs_grants="$test_root/refs/grants.json"
+grep -qF '["user","alice","refs.git","exact","refs/heads/main","RW"]' "$refs_grants"
+grep -qF '["user","bob","refs.git","exact","refs/heads/release","RW+"]' "$refs_grants"
 # A bare literal denies as a prefix, as Gitolite does; grants stay exact.
-grep -qF 'effective_ref_deny("mallory", "refs.git", F) :- user("mallory"), repository("refs.git"), ref(F), starts_with(F, "refs/heads/main").' \
-  "$test_root/refs/gitolite-migrated.dl"
-"$maelys_git_bin" validate "$test_root/refs/manifest.json" \
+grep -qF '["user","mallory","refs.git","prefix","refs/heads/main","-"]' "$refs_grants"
+"$maelys_git_bin" validate "$test_root/refs/manifest.json" --grants "$refs_grants" \
   --format json --compact | grep -q '"valid":true'
 "$maelys_git_bin" authorize "$test_root/refs/manifest.json" \
-  alice refs.git write --format json --compact | grep -q '"allowed":true'
+  alice refs.git write --grants "$refs_grants" --format json --compact | grep -q '"allowed":true'
 "$maelys_git_bin" authorize "$test_root/refs/manifest.json" \
-  mallory refs.git push refs/heads/main --format json --compact | \
+  mallory refs.git push refs/heads/main --grants "$refs_grants" --format json --compact | \
   grep -q '"explicitDeny":true'
 
 git init -q --bare "$test_root/refrepo.git"
@@ -155,11 +163,11 @@ git --git-dir "$test_root/refrepo.git" fetch -q "$test_root/refwork" \
   "$new_oid:refs/maelys-test/candidate"
 printf '%s %s %s\n' "$old_oid" "$new_oid" refs/heads/main | \
   "$maelys_hook_bin" pre-receive --repository refs.git \
-    --manifest "$test_root/refs/manifest.json" --user alice \
+    --manifest "$test_root/refs/manifest.json" --grants "$refs_grants" --user alice \
     --git-dir "$test_root/refrepo.git" >/dev/null
 if printf '%s %s %s\n' "$old_oid" "$new_oid" refs/heads/main | \
      "$maelys_hook_bin" pre-receive --repository refs.git \
-       --manifest "$test_root/refs/manifest.json" --user bob \
+       --manifest "$test_root/refs/manifest.json" --grants "$refs_grants" --user bob \
        --git-dir "$test_root/refrepo.git" >/dev/null 2>/dev/null; then
   printf 'ref-scoped Gitolite migration allowed the wrong principal\n' >&2
   exit 1
@@ -167,7 +175,7 @@ fi
 zero_oid=0000000000000000000000000000000000000000
 printf '%s %s %s\n' "$zero_oid" "$new_oid" refs/heads/release | \
   "$maelys_hook_bin" pre-receive --repository refs.git \
-    --manifest "$test_root/refs/manifest.json" --user bob \
+    --manifest "$test_root/refs/manifest.json" --grants "$refs_grants" --user bob \
     --git-dir "$test_root/refrepo.git" >/dev/null
 
 # Prefixes: a real push through the hook, on the namespace and beside it.
@@ -180,18 +188,18 @@ plan=$("$maelys_git_bin" migrate gitolite "$test_root/prefix.conf" \
 printf '%s\n' "$plan" | grep -q '"canApply":true'
 "$maelys_git_bin" migrate gitolite "$test_root/prefix.conf" \
   "$test_root/prefix" --apply --format json --compact >/dev/null
-grep -qF 'gitolite_ref_access("alice", "refs.git", "refs/heads/release/", "RW").' \
-  "$test_root/prefix/gitolite-migrated.dl"
-"$maelys_git_bin" validate "$test_root/prefix/manifest.json" \
+prefix_grants="$test_root/prefix/grants.json"
+grep -qF '["user","alice","refs.git","prefix","refs/heads/release/","RW"]' "$prefix_grants"
+"$maelys_git_bin" validate "$test_root/prefix/manifest.json" --grants "$prefix_grants" \
   --format json --compact | grep -q '"valid":true'
 printf '%s %s %s\n' "$zero_oid" "$new_oid" refs/heads/release/1.0 | \
   "$maelys_hook_bin" pre-receive --repository refs.git \
-    --manifest "$test_root/prefix/manifest.json" --user alice \
+    --manifest "$test_root/prefix/manifest.json" --grants "$prefix_grants" --user alice \
     --git-dir "$test_root/refrepo.git" >/dev/null
 for neighbour in refs/heads/release-evil refs/heads/releases refs/heads/release; do
   if printf '%s %s %s\n' "$zero_oid" "$new_oid" "$neighbour" | \
        "$maelys_hook_bin" pre-receive --repository refs.git \
-         --manifest "$test_root/prefix/manifest.json" --user alice \
+         --manifest "$test_root/prefix/manifest.json" --grants "$prefix_grants" --user alice \
          --git-dir "$test_root/refrepo.git" >/dev/null 2>/dev/null; then
     printf 'prefix migration allowed %s, which is outside the namespace\n' "$neighbour" >&2
     exit 1
@@ -199,7 +207,7 @@ for neighbour in refs/heads/release-evil refs/heads/releases refs/heads/release;
 done
 if printf '%s %s %s\n' "$zero_oid" "$new_oid" refs/heads/release/1.0 | \
      "$maelys_hook_bin" pre-receive --repository refs.git \
-       --manifest "$test_root/prefix/manifest.json" --user bob \
+       --manifest "$test_root/prefix/manifest.json" --grants "$prefix_grants" --user bob \
        --git-dir "$test_root/refrepo.git" >/dev/null 2>/dev/null; then
   printf 'prefix migration allowed the wrong principal\n' >&2
   exit 1
@@ -243,30 +251,48 @@ assert set(budget["required"]) == {"compiled", "rules", "ruleLimit", "facts", "f
 import json, sys
 budget = json.load(sys.stdin)["data"]["budget"]
 assert budget["compiled"] is True and budget["failure"] is None, budget
-assert budget["facts"] == 8 and 0 < budget["rules"] <= budget["ruleLimit"], budget
+# The audited program: no fact, the same rules for every configuration.
+assert budget["facts"] == 0 and 0 < budget["rules"] <= budget["ruleLimit"], budget
 assert budget["derivedPerPredicate"] == 4, budget
 '
-"$maelys_git_bin" migrate gitolite "$test_root/facts.conf" "$test_root/budget-refused" \
+# 129 grants: beyond the facts a compiled policy held, decided as grants.
+"$maelys_git_bin" migrate gitolite "$test_root/facts.conf" "$test_root/facts" \
   --format json --compact | python3 -I -c '
 import json, sys
 data = json.load(sys.stdin)["data"]
-budget = data["budget"]
-assert data["canApply"] is False, data
-assert data["unsupported"] == ["line 130: policy budget exceeded: MAX_RULE_FACTS 129 requested, limit 128"], data
-assert budget["compiled"] is False and budget["rules"] is None and budget["facts"] is None, budget
-failure = budget["failure"]
-assert failure["kind"] == "capacity" and failure["budget"] == "MAX_RULE_FACTS", failure
-assert failure["requested"] == 129 and failure["limit"] == 128, failure
+assert data["canApply"] is True and data["unsupported"] == [], data
 '
-if "$maelys_git_bin" migrate gitolite "$test_root/facts.conf" "$test_root/budget-refused" \
-     --apply --format json --compact >/dev/null 2>"$test_root/budget-refused.err"; then
-  printf 'a migration beyond its fact budget was applied\n' >&2
+"$maelys_git_bin" migrate gitolite "$test_root/facts.conf" "$test_root/facts" \
+  --apply --format json --compact >/dev/null
+"$maelys_git_bin" authorize "$test_root/facts/manifest.json" u129 app.git write \
+  --grants "$test_root/facts/grants.json" --format json --compact | grep -q '"allowed":true'
+# A member of 65 groups: beyond the direct groups a snapshot holds.
+{
+  i=1
+  while [ "$i" -le 65 ]; do printf '@g%s = alice\n' "$i"; i=$((i + 1)); done
+  printf 'repo app\n    R = @g1\n'
+} > "$test_root/groups.conf"
+"$maelys_git_bin" migrate gitolite "$test_root/groups.conf" "$test_root/groups-refused" \
+  --format json --compact | python3 -I -c '
+import json, sys
+data = json.load(sys.stdin)["data"]
+assert data["canApply"] is False, data
+assert any("grants snapshot refused" in entry and "more than 64 groups" in entry
+           for entry in data["unsupported"]), data["unsupported"]
+'
+if "$maelys_git_bin" migrate gitolite "$test_root/groups.conf" "$test_root/groups-refused" \
+     --apply --format json --compact >/dev/null 2>"$test_root/groups-refused.err"; then
+  printf 'a migration beyond its snapshot bounds was applied\n' >&2
   exit 1
 fi
-python3 -I -c '
-import json, sys
-error = json.load(open(sys.argv[1]))["error"]
-assert error["code"] == "POLICY_FAILED", error
-assert "MAX_RULE_FACTS 129 requested, limit 128" in error["message"], error
-' "$test_root/budget-refused.err"
-test ! -e "$test_root/budget-refused"
+test ! -e "$test_root/groups-refused"
+
+# The options of grants, as describe exposes them.
+for command in authorize validate pr.merge; do
+  "$maelys_git_bin" describe "$command" --format json --compact --non-interactive | \
+    grep -q '"long":"--grants"'
+done
+"$maelys_git_bin" describe pr.merge --format json --compact --non-interactive | \
+  grep -q '"long":"--expected-grants-fingerprint"'
+"$maelys_hook_bin" describe pre-receive --format json --compact --non-interactive | \
+  grep -q '"long":"--grants"'

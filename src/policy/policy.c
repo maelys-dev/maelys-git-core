@@ -58,6 +58,7 @@ struct maelys_git_policy {
     /* The snapshot of grants the handle was opened with, owned; the slice of
      * the last request, whose strings belong to it or to the request. */
     mg_grants_t *grants;
+    char *grants_path; /* where the snapshot is read again, by a stream */
     int has_audited;
     mg_slice_t slice;
     mg_policy_slice_filter_t slice_filter;
@@ -577,13 +578,24 @@ maelys_git_result_t mg_policy_open_with(const char *manifest_path, const char *g
     maelys_datalog_status_t status = maelys_datalog_policy_load_manifest(
         manifest_path, MAELYS_DATALOG_PUBLIC_ALLOW_UNDECLARED_POLICY_ATOMS, &loaded, &diagnostic);
     if (status != MAELYS_DATALOG_STATUS_OK) return load_failure(error, status, &diagnostic);
-    /* Then the snapshot, read once: every decision of the handle uses it. */
+    /* Then the snapshot: every decision of the handle uses it, until a
+     * stream reads it again (mg_policy_refresh_grants). */
     mg_grants_t *grants = NULL;
     if (grants_path && (result = mg_grants_load(grants_path, &grants, error)) != MAELYS_GIT_OK) {
         (void)maelys_datalog_policy_free(loaded);
         return result;
     }
-    return open_loaded(loaded, reads, grants, out_policy, error);
+    char *path_copy = grants_path ? strdup(grants_path) : NULL;
+    if (grants_path && !path_copy) {
+        mg_grants_free(grants);
+        (void)maelys_datalog_policy_free(loaded);
+        mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "unable to allocate policy engine");
+        return MAELYS_GIT_ERR_IO;
+    }
+    result = open_loaded(loaded, reads, grants, out_policy, error);
+    if (result == MAELYS_GIT_OK) (*out_policy)->grants_path = path_copy;
+    else free(path_copy);
+    return result;
 }
 
 maelys_git_result_t mg_policy_open_buffer(const char *manifest, size_t manifest_length,
@@ -657,6 +669,40 @@ const char *mg_policy_grants_sha256(const maelys_git_policy_t *policy) {
     return policy && policy->grants ? mg_grants_sha256(policy->grants) : NULL;
 }
 
+maelys_git_result_t maelys_git_policy_open_grants(const char *manifest_path, const char *grants_path,
+                                                  maelys_git_policy_t **out_policy, maelys_git_error_t *error) {
+    return mg_policy_open_grants(manifest_path, grants_path, out_policy, error);
+}
+
+maelys_git_result_t maelys_git_policy_grants_fingerprint(const maelys_git_policy_t *policy, char out_hex[65],
+                                                         maelys_git_error_t *error) {
+    maelys_git_error_clear(error);
+    if (!policy || !out_hex) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    const char *sha256 = mg_policy_grants_sha256(policy);
+    (void)mg_copy_string(out_hex, 65u, sha256 ? sha256 : "");
+    return MAELYS_GIT_OK;
+}
+
+maelys_git_result_t mg_policy_refresh_grants(maelys_git_policy_t *policy, maelys_git_error_t *error) {
+    if (!policy) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    if (!policy->grants_path) return MAELYS_GIT_OK;
+    mg_grants_t *fresh = NULL;
+    maelys_git_result_t result = mg_grants_reload(policy->grants_path, policy->grants, &fresh, error);
+    if (result != MAELYS_GIT_OK) {
+        /* Never the former snapshot after a failure: the handle refuses
+         * until a reading succeeds. */
+        mg_grants_free(policy->grants);
+        policy->grants = NULL;
+        return result;
+    }
+    if (fresh) {
+        mg_slice_clear(&policy->slice); /* its strings were the former snapshot's */
+        mg_grants_free(policy->grants);
+        policy->grants = fresh;
+    }
+    return MAELYS_GIT_OK;
+}
+
 void mg_policy_slice_counts(const maelys_git_policy_t *policy, size_t *out_context, size_t *out_slice) {
     *out_context = policy ? policy->context_count : 0u;
     *out_slice = policy ? policy->fact_count - policy->context_count : 0u;
@@ -681,6 +727,7 @@ void maelys_git_policy_close(maelys_git_policy_t *policy) {
     free(policy->facts);
     mg_slice_clear(&policy->slice);
     mg_grants_free(policy->grants);
+    free(policy->grants_path);
     free(policy->explanation_storage);
     free(policy->text);
     free(policy);
@@ -1018,6 +1065,10 @@ static maelys_git_result_t decide(maelys_git_policy_t *policy,
                      "request fact construction failed: a value or the fact count exceeds the engine limits");
         set_request_detail(error, policy, request);
         result = MAELYS_GIT_ERR_POLICY;
+    } else if (policy->has_audited && !policy->grants) {
+        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                     "the grants snapshot could not be read again; requests are refused until it reads");
+        result = MAELYS_GIT_ERR_POLICY;
     } else {
         if (policy->has_audited) result = build_slice_facts(policy, request, error);
         if (result == MAELYS_GIT_ERR_POLICY && policy->exceeded != REQUEST_BOUND_NONE) {
@@ -1328,7 +1379,7 @@ maelys_git_result_t maelys_git_policy_authorize_receipt(
     memcpy(receipt->policy_set_fingerprint, policy->fingerprint, sizeof(policy->fingerprint));
     /* The context: what every policy received; the slice is the grants'. */
     receipt->edb_facts = policy->context_count;
-    if (policy->has_audited) {
+    if (policy->has_audited && policy->grants) {
         receipt->grants.present = 1;
         (void)mg_copy_string(receipt->grants.sha256, sizeof(receipt->grants.sha256), mg_grants_sha256(policy->grants));
         receipt->grants.facts = policy->fact_count - policy->context_count;

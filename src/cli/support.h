@@ -11,6 +11,12 @@
 #define MAELYS_GIT_CLI_DEFAULT_GIT "/usr/bin/git"
 #define MAELYS_GIT_CLI_PATH_MAX 4096u
 
+/* The snapshot of grants a policy set reads, for every command that opens a
+ * manifest. */
+#define MAELYS_GIT_CLI_GRANTS_OPTION \
+    {MAELYS_CLI_PATH("grants", "FILE", \
+     "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads.")}
+
 /* Summary shared by every --git option. */
 #define MAELYS_GIT_CLI_GIT_OPTION \
     {MAELYS_CLI_ABSOLUTE_PATH("git", "FILE", "Absolute Git executable path."), \
@@ -34,11 +40,13 @@ int maelys_git_cli_stream_error(
     maelys_git_result_t result,
     const maelys_git_error_t *error);
 
-/* Opens a policy manifest; on failure the envelope is emitted and the exit
- * code returned, otherwise 0. */
+/* Opens a policy manifest, with the snapshot of grants GRANTS_PATH when it
+ * is not NULL; on failure the envelope is emitted and the exit code
+ * returned, otherwise 0. */
 int maelys_git_cli_open_policy(
     maelys_cli_context_t *context,
     const char *manifest_path,
+    const char *grants_path,
     maelys_git_policy_t **out_policy);
 
 /* Resolves REPOSITORY below ROOT; same contract as maelys_git_cli_open_policy. */

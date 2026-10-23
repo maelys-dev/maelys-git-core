@@ -126,9 +126,21 @@ maelys_git_result_t mg_grants_parse(const void *bytes, size_t size, mg_grants_t 
 /* Reads the file at PATH as a trusted file, owned by root or the caller,
  * not writable by others, in a directory only root or the caller may change
  * (links are followed and their target's directory is judged), then parses
- * it. A refused file is MAELYS_GIT_ERR_IO with the errno of the check. */
+ * it. A refused file is MAELYS_GIT_ERR_DENIED, _NOT_FOUND, _LIMIT or _IO,
+ * by the errno of the check; a file that changed while it was read (its
+ * descriptor observed before and after) is MAELYS_GIT_ERR_IO. */
 maelys_git_result_t mg_grants_load(const char *path, mg_grants_t **out, maelys_git_error_t *error);
+/* Reads the file at PATH again, as mg_grants_load reads it, and hashes its
+ * bytes: *out is NULL when they are those of CURRENT, the new snapshot
+ * otherwise. A failure leaves *out NULL and says nothing of CURRENT, which
+ * the caller must not use again (directive GIT-C06, D4). */
+maelys_git_result_t mg_grants_reload(const char *path, const mg_grants_t *current, mg_grants_t **out,
+                                     maelys_git_error_t *error);
 void mg_grants_free(mg_grants_t *grants);
+
+/* Tests only: called between the read of a snapshot and the second
+ * observation of its descriptor, to change the file there. */
+extern void (*mg_grants_test_between_reads)(const char *path);
 
 /* The SHA-256 of the bytes the snapshot was parsed from, in hex. */
 const char *mg_grants_sha256(const mg_grants_t *grants);

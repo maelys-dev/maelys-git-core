@@ -185,10 +185,11 @@ maelys_git_result_t mg_receive_authorize(
     maelys_git_policy_decision_t *out_decision, mg_receive_receipt_t *out_receipt,
     maelys_git_error_t *error);
 
-/* maelys_git_pr_merge_with_source for the agent: the optional outputs expose
- * the last policy decision and the decisive receipt. A refusal of the gates,
- * of an empty or unmergeable pull request or of a changed plan is not the
- * policy's and leaves `decided` 0. */
+/* maelys_git_pr_merge_grants for the agent: the optional outputs expose the
+ * last policy decision and the decisive receipt. A refusal of the gates, of
+ * an empty or unmergeable pull request or of a changed plan is not the
+ * policy's and leaves `decided` 0. GRANTS_CHECKED is 0 for the entry points
+ * that predate grants: they refuse to apply on a handle with a snapshot. */
 maelys_git_result_t mg_pr_merge(
     const char *git, const char *repository_path, const char *repository_name,
     const char *base_ref, const char *base_oid, const char *head_oid,
@@ -196,8 +197,8 @@ maelys_git_result_t mg_pr_merge(
     const maelys_git_pr_gates_t *gates, maelys_git_policy_t *policy, const char *pr_id,
     const maelys_git_pr_source_t *source,
     const char *expected_target_identity, const char *expected_prepared_oid,
-    const char *expected_policy_fingerprint, int apply,
-    maelys_git_pr_check_result_t *out_result,
+    const char *expected_policy_fingerprint, const char *expected_grants_fingerprint,
+    int grants_checked, int apply, maelys_git_pr_check_result_t *out_result,
     maelys_git_policy_decision_t *out_decision, mg_receive_receipt_t *out_receipt,
     maelys_git_error_t *error);
 
@@ -233,13 +234,19 @@ maelys_git_result_t mg_policy_open_buffer(const char *manifest, size_t manifest_
                                           size_t source_length, struct mg_grants *grants,
                                           maelys_git_policy_t **out_policy,
                                           maelys_git_error_t *error);
-/* maelys_git_migrate_gitolite, in the form of grants as data: the audited
- * program (policy/program.h) as gitolite-migrated.dl, its manifest, and the
- * configuration's grants as grants.json, maelys-git-grants/1. The plan judges
- * the program, the groups of a user and the bounds of the snapshot. */
+/* maelys_git_migrate_gitolite: the audited program (policy/program.h) as
+ * gitolite-migrated.dl, its manifest, and the configuration's grants as
+ * grants.json, maelys-git-grants/1. The plan judges the program, the groups
+ * of a user and the bounds of the snapshot. */
 maelys_git_result_t mg_migrate_gitolite_grants(const char *input_path, const char *output_directory, int apply,
                                                maelys_git_gitolite_migration_result_t *out_result,
                                                maelys_git_error_t *error);
+/* The compiled encoding of GIT-C03, which the migration wrote before: one
+ * fact per elementary grant in the policy's text. Tests compare the grants
+ * as data with it, loaded by the same binary. */
+maelys_git_result_t mg_migrate_gitolite_compiled(const char *input_path, const char *output_directory,
+                                                 int apply, maelys_git_gitolite_migration_result_t *out_result,
+                                                 maelys_git_error_t *error);
 /* The compiled size of an open policy, or nothing for NULL, and the engine
  * bounds that apply to it. The worst cases of execution are the caller's. */
 maelys_git_result_t mg_policy_budget(const maelys_git_policy_t *policy,

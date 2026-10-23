@@ -30,6 +30,9 @@ static const maelys_cli_option_t run_options[] = {
 
 static const maelys_cli_option_t serve_options[] = {
     {MAELYS_CLI_PATH("manifest", "FILE", "Datalog manifest path."), .required = 1},
+    {MAELYS_CLI_PATH("grants", "FILE",
+     "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads; "
+     "read again before each command.")},
     {MAELYS_CLI_PATH("root", "DIR", "Repository root."), .required = 1},
     MAELYS_GIT_CLI_GIT_OPTION,
 };
@@ -92,9 +95,11 @@ static int command_run(maelys_cli_context_t *context) {
 
 static int serve(maelys_cli_context_t *context, maelys_git_explain_mode_t denial_mode) {
     maelys_git_error_t error = {0};
+    const char *manifest = maelys_cli_option(context, "manifest");
+    const char *grants = maelys_cli_option(context, "grants");
     maelys_git_policy_t *policy = NULL;
-    maelys_git_result_t result = maelys_git_policy_open(
-        maelys_cli_option(context, "manifest"), &policy, &error);
+    maelys_git_result_t result = grants ? maelys_git_policy_open_grants(manifest, grants, &policy, &error)
+                                        : maelys_git_policy_open(manifest, &policy, &error);
     if (result == MAELYS_GIT_OK)
         result = mg_agent_serve(policy, maelys_git_cli_git(context),
                                 maelys_cli_option(context, "root"),

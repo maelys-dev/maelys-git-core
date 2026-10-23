@@ -69,9 +69,12 @@ int maelys_git_cli_stream_error(
 int maelys_git_cli_open_policy(
     maelys_cli_context_t *context,
     const char *manifest_path,
+    const char *grants_path,
     maelys_git_policy_t **out_policy) {
     maelys_git_error_t error = {0};
-    maelys_git_result_t result = maelys_git_policy_open(manifest_path, out_policy, &error);
+    maelys_git_result_t result = grants_path
+        ? maelys_git_policy_open_grants(manifest_path, grants_path, out_policy, &error)
+        : maelys_git_policy_open(manifest_path, out_policy, &error);
     return result == MAELYS_GIT_OK ? 0 : maelys_git_cli_fail_result(context, result, &error);
 }
 

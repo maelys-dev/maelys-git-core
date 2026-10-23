@@ -19,8 +19,8 @@ reste indiquée par `describe` dans chaque binaire.
 | describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
-| validate | `validate MANIFEST` | read | json-envelope | Validate a Datalog policy manifest. |
-| authorize | `authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...] [--explain]` | read | json-envelope | Evaluate one authorization request. |
+| validate | `validate MANIFEST [--grants FILE]` | read | json-envelope | Validate a Datalog policy manifest. |
+| authorize | `authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...] [--explain] [--grants FILE]` | read | json-envelope | Evaluate one authorization request. |
 | parse-ssh | `parse-ssh COMMAND` | read | json-envelope | Parse a forced SSH Git command. |
 | repo.init | `repo init ROOT REPOSITORY [--git FILE] [--apply]` | preview then apply with --apply | json-envelope | Plan or create a bare repository. |
 | repo.list | `repo list ROOT [--include-stored]` | read | json-envelope | Inventory active repositories and optionally recoverable stored repositories. |
@@ -35,7 +35,7 @@ reste indiquée par `describe` dans chaque binaire.
 | keys.compile | `keys compile KEY_DIRECTORY OUTPUT SHELL ROOT MANIFEST [--apply]` | preview then apply with --apply | json-envelope | Plan or atomically compile forced-command SSH keys. |
 | migrate.gitolite | `migrate gitolite INPUT OUTPUT [--apply]` | preview then apply with --apply | json-envelope | Compile the safe Gitolite ACL subset and report every incompatible entry. |
 | pr.check | `pr check ROOT REPOSITORY BASE_OID HEAD_OID --style ff\|merge\|squash [--git FILE] [--message TEXT] [--source-repository REPOSITORY] [--source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES]` | read | json-envelope | Compute merge-base, conflicts, emptiness and a prepared result in an isolated quarantine. |
-| pr.merge | `pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff\|merge\|squash --approvals COUNT --required-approvals COUNT [--git FILE] [--message TEXT] [--status-checks-passed] [--blocking-review] [--pr-id ID] [--source-repository REPOSITORY] [--source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--expected-source-identity IDENTITY] [--expected-target-identity IDENTITY] [--expected-prepared-oid OID] [--expected-policy-fingerprint SHA256] [--apply]` | preview then apply with --apply | json-envelope | Plan or execute a gated, reauthorized pull request merge with reviewed repository identities and compare-and-swap. |
+| pr.merge | `pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff\|merge\|squash --approvals COUNT --required-approvals COUNT [--git FILE] [--grants FILE] [--expected-grants-fingerprint SHA256] [--message TEXT] [--status-checks-passed] [--blocking-review] [--pr-id ID] [--source-repository REPOSITORY] [--source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--expected-source-identity IDENTITY] [--expected-target-identity IDENTITY] [--expected-prepared-oid OID] [--expected-policy-fingerprint SHA256] [--apply]` | preview then apply with --apply | json-envelope | Plan or execute a gated, reauthorized pull request merge with reviewed repository identities and compare-and-swap. |
 
 Options globales :
 
@@ -62,7 +62,7 @@ Options globales :
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
 | provision | `provision --config FILE --agent-id ID --authority HOST[:PORT] --ca FILE --token FILE --database FILE --manifest FILE --root DIR --executor FILE [--apply]` | preview then apply with --apply | json-envelope | Plan or create an agent configuration. |
 | run | `run --config FILE [--once]` | execute | json-envelope | Run the persistent Cloud synchronization loop. |
-| stdio | `stdio --manifest FILE --root DIR [--git FILE]` | stream | protocol-stream (maelys-git-agent/1) | Serve the executor JSONL protocol on stdio. |
+| stdio | `stdio --manifest FILE --root DIR [--grants FILE] [--git FILE]` | stream | protocol-stream (maelys-git-agent/1) | Serve the executor JSONL protocol on stdio. |
 
 Options globales :
 
@@ -87,7 +87,7 @@ Options globales :
 | describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
-| serve | `serve --manifest FILE --root DIR [--git FILE]` | stream | protocol-stream (maelys-git-agent/1) | Serve one-command-at-a-time JSONL execution. |
+| serve | `serve --manifest FILE --root DIR [--grants FILE] [--git FILE]` | stream | protocol-stream (maelys-git-agent/1) | Serve one-command-at-a-time JSONL execution. |
 
 Options globales :
 
@@ -112,7 +112,7 @@ Options globales :
 | describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
-| serve | `serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE] [--restrict-repository NAME] [--read-only]` | stream | protocol-stream (git-smart) | Authorize SSH_ORIGINAL_COMMAND then replace the process with Git. |
+| serve | `serve --user PRINCIPAL --root DIR --manifest FILE [--grants FILE] [--git FILE] [--restrict-repository NAME] [--read-only]` | stream | protocol-stream (git-smart) | Authorize SSH_ORIGINAL_COMMAND then replace the process with Git. |
 
 Options globales :
 
@@ -137,7 +137,7 @@ Options globales :
 | describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
-| pre-receive | `pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES] [--receipts FILE]` | stream | protocol-stream (git-hook) | Authorize a quota-bounded Git receive transaction from stdin. |
+| pre-receive | `pre-receive --repository NAME --manifest FILE [--grants FILE] [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES] [--receipts FILE]` | stream | protocol-stream (git-hook) | Authorize a quota-bounded Git receive transaction from stdin. |
 | post-receive | `post-receive --repository NAME [--user PRINCIPAL] [--events FILE]` | stream | protocol-stream (maelys-git-events/1) | Convert received refs into JSONL events. |
 
 Options globales :

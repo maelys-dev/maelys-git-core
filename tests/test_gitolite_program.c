@@ -99,7 +99,7 @@ static int migrate_both(const char *name, const char *configuration, maelys_git_
     maelys_git_gitolite_migration_result_t migration;
     maelys_git_error_t error;
     *out_compiled = *out_grants = NULL;
-    if (maelys_git_migrate_gitolite(input, compiled, 1, &migration, &error) == MAELYS_GIT_OK) {
+    if (mg_migrate_gitolite_compiled(input, compiled, 1, &migration, &error) == MAELYS_GIT_OK) {
         (void)snprintf(manifest, sizeof(manifest), "%s/manifest.json", compiled);
         CHECK(maelys_git_policy_open(manifest, out_compiled, &error) == MAELYS_GIT_OK);
     }

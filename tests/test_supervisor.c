@@ -84,6 +84,22 @@ static int executor_mode(const char *executable, const char *marker) {
     return 0;
 }
 
+/* An executor that records its arguments, one per line, beside its marker,
+ * then answers. */
+static int record_arguments(int argc, char **argv) {
+    char request[64];
+    if (!fgets(request, sizeof(request), stdin)) return 2;
+    char path[4200];
+    (void)snprintf(path, sizeof(path), "%s.arguments", argv[3]);
+    FILE *file = fopen(path, "w");
+    if (!file) return 2;
+    for (int i = 1; i < argc; ++i) (void)fprintf(file, "%s\n", argv[i]);
+    if (fclose(file) != 0) return 2;
+    (void)fputs(valid_result, stdout);
+    (void)fputc('\n', stdout);
+    return 0;
+}
+
 static int fail(const char *message) {
     fprintf(stderr, "test_supervisor: %s\n", message);
     return 1;
@@ -98,7 +114,7 @@ int main(int argc, char **argv) {
     }
     if (argc >= 4 && strcmp(argv[1], "serve") == 0 &&
         strcmp(argv[2], "--manifest") == 0)
-        return executor_mode(argv[0], argv[3]);
+        return ends_with(argv[3], "/arguments") ? record_arguments(argc, argv) : executor_mode(argv[0], argv[3]);
 
     char executable[4096];
     if (!realpath(argv[0], executable)) return fail("cannot resolve test executable");
@@ -205,6 +221,29 @@ int main(int argc, char **argv) {
     }
     free(wire);
     if (unlink(config.manifest_path) != 0) return fail("cannot remove response fixture");
+
+    /* The executor receives the snapshot of grants the configuration names,
+     * and no --grants without one. */
+    (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/arguments", directory);
+    char recorded[4200];
+    (void)snprintf(recorded, sizeof(recorded), "%s.arguments", config.manifest_path);
+    for (int with_grants = 0; with_grants < 2; ++with_grants) {
+        (void)snprintf(config.grants_path, sizeof(config.grants_path), "%s",
+                       with_grants ? "/srv/maelys/grants.json" : "");
+        response = NULL;
+        result = mg_supervisor_execute(&config, &command, "{}", &response, &succeeded, &error);
+        free(response);
+        if (result != MAELYS_GIT_OK) return fail("the recording executor failed");
+        char arguments[8192] = "";
+        FILE *file = fopen(recorded, "rb");
+        size_t size = file ? fread(arguments, 1u, sizeof(arguments) - 1u, file) : 0u;
+        if (file) (void)fclose(file);
+        arguments[size] = '\0';
+        int named = strstr(arguments, "\n--grants\n/srv/maelys/grants.json\n") != NULL;
+        if (named != with_grants || (!with_grants && strstr(arguments, "--grants")))
+            return fail("the executor did not receive the configured snapshot of grants");
+        if (unlink(recorded) != 0) return fail("cannot remove recorded arguments");
+    }
     if (rmdir(directory) != 0) return fail("cannot remove temporary directory");
     return 0;
 }

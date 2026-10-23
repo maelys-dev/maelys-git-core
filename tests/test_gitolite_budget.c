@@ -3,6 +3,7 @@
  * worst cases of execution the generator computes, and the capacities that
  * follow, proven by effective authorizations at their bounds. */
 #include "maelys_git.h"
+#include "internal.h"
 #include "policy/policy_reads.h"
 #include "test_support.h"
 
@@ -44,7 +45,7 @@ static maelys_git_result_t migrate(const char *name, const char *configuration, 
     (void)snprintf(input, sizeof(input), "%s/%s.conf", g_root, name);
     (void)snprintf(output, sizeof(output), "%s/%s", g_root, name);
     if (!write_text(input, configuration)) return MAELYS_GIT_ERR_IO;
-    return maelys_git_migrate_gitolite(input, output, apply, migration, error);
+    return mg_migrate_gitolite_compiled(input, output, apply, migration, error);
 }
 
 static maelys_git_policy_t *open_migrated(const char *name) {

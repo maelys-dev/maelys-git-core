@@ -28,6 +28,26 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   - A policy of more rules than the engine holds is refused with the message
     "rule capacity exceeded"; the engine used to attribute it to the
     expansion of OR. Its code, its location and its capacity do not change.
+- `migrate gitolite` writes the audited Gitolite program,
+  `maelys-git-gitolite-program/1`, whose text no longer depends on the
+  configuration, and the configuration's grants as `grants.json`,
+  `maelys-git-grants/1`. Granting or revoking a right no longer changes the
+  policy or its fingerprint; publishing rights is publishing that file, by a
+  rename. The program reads, for each request, the slice of the snapshot the
+  request needs; a configuration beyond the 128 facts a compiled policy held
+  is decided, and a request whose slice exceeds the engine's bounds is a
+  capacity denial, never a truncated slice.
+- `--grants FILE` on `authorize`, `validate`, `pr merge`, `maelys-git-hook
+  pre-receive`, `maelys-git-shell serve`, `maelys-git-executor serve` and
+  `maelys-git-agent stdio`, and `grants_path`, optional, in the agent's
+  configuration. The program refuses to open without it. A stream reads the
+  snapshot again before each command, and refuses commands while it cannot
+  read it; a file changed while it is read is refused. The public API adds
+  `maelys_git_policy_open_grants` and `maelys_git_policy_grants_fingerprint`.
+- `pr merge` returns `grantsFingerprint` and applies with
+  `--expected-grants-fingerprint`; grants changed since the plan are refused.
+  `maelys_git_pr_merge_grants` carries that precondition; the former entry
+  points still plan, and refuse to apply on a policy with a snapshot.
 - Authorization receipts gain version 2: a decision that used a snapshot of
   grants carries `grants`, the digest of the snapshot, the number of facts of
   its slice and the formats of the snapshot, the slice and the audited

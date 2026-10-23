@@ -8,6 +8,8 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 /* The parse limits of a snapshot: its bytes, three levels (the object, a
  * section, a tuple), and the values its schema allows, keys included: the
@@ -493,26 +495,94 @@ maelys_git_result_t mg_grants_parse(const void *bytes, size_t size, mg_grants_t 
     return MAELYS_GIT_OK;
 }
 
+void (*mg_grants_test_between_reads)(const char *path);
+
+/* Whether two observations of one descriptor show the same file, unchanged:
+ * its identity, its size, its change and modification times. */
+static int same_file(const struct stat *a, const struct stat *b) {
+#ifdef __APPLE__
+    const struct timespec *ac = &a->st_ctimespec, *bc = &b->st_ctimespec;
+    const struct timespec *am = &a->st_mtimespec, *bm = &b->st_mtimespec;
+#else
+    const struct timespec *ac = &a->st_ctim, *bc = &b->st_ctim;
+    const struct timespec *am = &a->st_mtim, *bm = &b->st_mtim;
+#endif
+    return a->st_dev == b->st_dev && a->st_ino == b->st_ino && a->st_size == b->st_size &&
+           ac->tv_sec == bc->tv_sec && ac->tv_nsec == bc->tv_nsec && am->tv_sec == bm->tv_sec &&
+           am->tv_nsec == bm->tv_nsec;
+}
+
+/* The bytes of the file at PATH, read as a trusted file: links followed and
+ * their target's directory judged. The descriptor read is observed before
+ * and after the read; a file that changed meanwhile is refused for this
+ * read. That guard detects a writer that broke the contract of publication
+ * (an immutable file, replaced by a rename); it proves nothing more. */
+static maelys_git_result_t read_snapshot(const char *path, unsigned char **out_bytes, size_t *out_size,
+                                         maelys_git_error_t *error) {
+    *out_bytes = NULL;
+    *out_size = 0u;
+    int descriptor = -1;
+    const char *reason = NULL;
+    struct stat before, after;
+    int failed = maelys_cli_open_trusted(path,
+                                         MAELYS_CLI_FILE_REGULAR | MAELYS_CLI_FILE_OWNER_TRUSTED |
+                                             MAELYS_CLI_FILE_NOT_WRITABLE_BY_OTHERS |
+                                             MAELYS_CLI_FILE_TRUSTED_DIRECTORY,
+                                         &descriptor, &reason) != 0;
+    if (!failed && fstat(descriptor, &before) != 0) failed = 1;
+    if (!failed && maelys_cli_read_descriptor(descriptor, MG_GRANTS_MAX_BYTES, out_bytes, out_size) != 0)
+        failed = 1;
+    if (!failed && *out_size == 0u) {
+        errno = EFBIG;
+        failed = 1;
+    }
+    int saved = errno;
+    if (!failed && mg_grants_test_between_reads) mg_grants_test_between_reads(path);
+    int changed = !failed && (fstat(descriptor, &after) != 0 || !same_file(&before, &after));
+    if (descriptor >= 0) (void)close(descriptor);
+    if (failed) {
+        free(*out_bytes);
+        *out_bytes = NULL;
+        maelys_git_result_t code = saved == EPERM || saved == EACCES ? MAELYS_GIT_ERR_DENIED
+                                 : saved == ENOENT ? MAELYS_GIT_ERR_NOT_FOUND
+                                 : saved == EFBIG ? MAELYS_GIT_ERR_LIMIT : MAELYS_GIT_ERR_IO;
+        mg_error_set(error, code, saved, "grants snapshot %s refused: %s", path,
+                     reason ? reason : saved == EFBIG ? "empty, or larger than 4 MiB" : strerror(saved));
+        return code;
+    }
+    if (changed) {
+        free(*out_bytes);
+        *out_bytes = NULL;
+        mg_error_set(error, MAELYS_GIT_ERR_IO, 0,
+                     "grants snapshot %s changed while it was read: publish it by renaming a new file", path);
+        return MAELYS_GIT_ERR_IO;
+    }
+    return MAELYS_GIT_OK;
+}
+
 maelys_git_result_t mg_grants_load(const char *path, mg_grants_t **out, maelys_git_error_t *error) {
     if (!path || !out) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     *out = NULL;
     unsigned char *bytes = NULL;
     size_t size = 0u;
-    const char *reason = NULL;
-    if (maelys_cli_read_trusted_file(path,
-                                     MAELYS_CLI_FILE_REGULAR | MAELYS_CLI_FILE_OWNER_TRUSTED |
-                                         MAELYS_CLI_FILE_NOT_WRITABLE_BY_OTHERS |
-                                         MAELYS_CLI_FILE_TRUSTED_DIRECTORY,
-                                     1u, MG_GRANTS_MAX_BYTES, &bytes, &size, &reason) != 0) {
-        int saved = errno;
-        maelys_git_result_t code = saved == EPERM || saved == EACCES ? MAELYS_GIT_ERR_DENIED
-                                 : saved == ENOENT ? MAELYS_GIT_ERR_NOT_FOUND
-                                 : saved == EFBIG ? MAELYS_GIT_ERR_LIMIT : MAELYS_GIT_ERR_IO;
-        mg_error_set(error, code, saved, "grants snapshot %s refused: %s", path,
-                     reason ? reason : strerror(saved));
-        return code;
-    }
-    maelys_git_result_t result = mg_grants_parse(bytes, size, out, error);
+    maelys_git_result_t result = read_snapshot(path, &bytes, &size, error);
+    if (result != MAELYS_GIT_OK) return result;
+    result = mg_grants_parse(bytes, size, out, error);
+    free(bytes);
+    return result;
+}
+
+maelys_git_result_t mg_grants_reload(const char *path, const mg_grants_t *current, mg_grants_t **out,
+                                     maelys_git_error_t *error) {
+    if (!path || !out) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    *out = NULL;
+    unsigned char *bytes = NULL;
+    size_t size = 0u;
+    maelys_git_result_t result = read_snapshot(path, &bytes, &size, error);
+    if (result != MAELYS_GIT_OK) return result;
+    char sha256[MAELYS_CLI_SHA256_HEX_SIZE];
+    maelys_cli_sha256_hex(bytes, size, sha256);
+    if (!current || strcmp(sha256, current->sha256) != 0) result = mg_grants_parse(bytes, size, out, error);
     free(bytes);
     return result;
 }

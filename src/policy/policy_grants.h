@@ -18,6 +18,12 @@
 maelys_git_result_t mg_policy_open_grants(const char *manifest_path, const char *grants_path,
                                           maelys_git_policy_t **out_policy, maelys_git_error_t *error);
 
+/* Reads the handle's snapshot again, for a stream, before each command: the
+ * same bytes keep the index; other bytes replace it; a failure leaves the
+ * handle without a snapshot, refusing every request until a reading
+ * succeeds. A handle opened without grants is left as it is. */
+maelys_git_result_t mg_policy_refresh_grants(maelys_git_policy_t *policy, maelys_git_error_t *error);
+
 /* The SHA-256 of the snapshot's bytes, or NULL for a handle without one. */
 const char *mg_policy_grants_sha256(const maelys_git_policy_t *policy);
 

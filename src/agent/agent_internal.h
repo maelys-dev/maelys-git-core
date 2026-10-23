@@ -21,7 +21,10 @@
 #define MG_CONFIG_MAX_BYTES (64u * 1024u)
 #define MG_CONFIG_MAX_DEPTH 1u
 #define MG_CONFIG_FIELD_COUNT 14u
-#define MG_CONFIG_MAX_TOKENS (1u + 2u * MG_CONFIG_FIELD_COUNT)
+/* grants_path, the one optional member: a configuration of version 1 holds
+ * 14 members, or 15 with it. */
+#define MG_CONFIG_OPTIONAL_FIELDS 1u
+#define MG_CONFIG_MAX_TOKENS (1u + 2u * (MG_CONFIG_FIELD_COUNT + MG_CONFIG_OPTIONAL_FIELDS))
 
 /* Explicit protocol budgets; tokens include object keys and containers.
  * The token ceiling admits every JSON shape fitting the 64 KiB byte cap. */
@@ -64,6 +67,7 @@ struct maelys_git_agent_config {
     char repository_root[4096];
     char git_executable[4096];
     char executor_path[4096];
+    char grants_path[4096]; /* empty without a snapshot of grants */
     char command_target[MG_TARGET_MAX];
     char event_target[MG_TARGET_MAX];
     uint64_t poll_timeout_ms;

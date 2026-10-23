@@ -322,9 +322,22 @@
                 "variadic": false
               }
             ],
-            "options": [],
+            "options": [
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--grants",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads."
+              }
+            ],
             "passthrough": false,
-            "synopsis": "validate MANIFEST"
+            "synopsis": "validate MANIFEST [--grants FILE]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -409,7 +422,7 @@
             "validate"
           ],
           "purpose": "Validate a Datalog policy manifest.",
-          "usage": "validate MANIFEST"
+          "usage": "validate MANIFEST [--grants FILE]"
         },
         {
           "available": true,
@@ -470,10 +483,22 @@
                 "required": false,
                 "requires": [],
                 "summary": "Attach the engine's explanation document of the decision; write it before --."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--grants",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads."
               }
             ],
             "passthrough": false,
-            "synopsis": "authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...] [--explain]"
+            "synopsis": "authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...] [--explain] [--grants FILE]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -855,7 +880,7 @@
             "authorize"
           ],
           "purpose": "Evaluate one authorization request.",
-          "usage": "authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...] [--explain]"
+          "usage": "authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...] [--explain] [--grants FILE]"
         },
         {
           "available": true,
@@ -2794,6 +2819,11 @@
               "event": {
                 "type": "object"
               },
+              "grantsFingerprint": {
+                "description": "SHA-256 of the snapshot of grants the policy was opened with; empty without one, and for pr check. Apply requires it back as --expected-grants-fingerprint.",
+                "pattern": "^([0-9a-f]{64})?$",
+                "type": "string"
+              },
               "mergeBaseOid": {
                 "type": "string"
               },
@@ -2878,6 +2908,7 @@
               "mergeTreeOid",
               "preparedOid",
               "policyFingerprint",
+              "grantsFingerprint",
               "prId",
               "prHeadRef",
               "prMergedRef",
@@ -2910,6 +2941,13 @@
           "id": "pr.merge",
           "input": {
             "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-grants-fingerprint",
+                  "--grants"
+                ]
+              },
               {
                 "kind": "requires",
                 "options": [
@@ -3022,6 +3060,33 @@
                 "required": false,
                 "requires": [],
                 "summary": "Absolute Git executable path."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--grants",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads."
+              },
+              {
+                "argument": {
+                  "digits": 64,
+                  "name": "SHA256",
+                  "type": "hex"
+                },
+                "conflictsWith": [],
+                "long": "--expected-grants-fingerprint",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--grants"
+                ],
+                "summary": "Grants fingerprint returned by the reviewed plan; required to apply with --grants."
               },
               {
                 "argument": {
@@ -3237,7 +3302,7 @@
               }
             ],
             "passthrough": false,
-            "synopsis": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--git FILE] [--message TEXT] [--status-checks-passed] [--blocking-review] [--pr-id ID] [--source-repository REPOSITORY] [--source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--expected-source-identity IDENTITY] [--expected-target-identity IDENTITY] [--expected-prepared-oid OID] [--expected-policy-fingerprint SHA256] [--apply]"
+            "synopsis": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--git FILE] [--grants FILE] [--expected-grants-fingerprint SHA256] [--message TEXT] [--status-checks-passed] [--blocking-review] [--pr-id ID] [--source-repository REPOSITORY] [--source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--expected-source-identity IDENTITY] [--expected-target-identity IDENTITY] [--expected-prepared-oid OID] [--expected-policy-fingerprint SHA256] [--apply]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -3263,6 +3328,11 @@
               },
               "event": {
                 "type": "object"
+              },
+              "grantsFingerprint": {
+                "description": "SHA-256 of the snapshot of grants the policy was opened with; empty without one, and for pr check. Apply requires it back as --expected-grants-fingerprint.",
+                "pattern": "^([0-9a-f]{64})?$",
+                "type": "string"
               },
               "mergeBaseOid": {
                 "type": "string"
@@ -3348,6 +3418,7 @@
               "mergeTreeOid",
               "preparedOid",
               "policyFingerprint",
+              "grantsFingerprint",
               "prId",
               "prHeadRef",
               "prMergedRef",
@@ -3362,7 +3433,7 @@
             "merge"
           ],
           "purpose": "Plan or execute a gated, reauthorized pull request merge with reviewed repository identities and compare-and-swap.",
-          "usage": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--git FILE] [--message TEXT] [--status-checks-passed] [--blocking-review] [--pr-id ID] [--source-repository REPOSITORY] [--source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--expected-source-identity IDENTITY] [--expected-target-identity IDENTITY] [--expected-prepared-oid OID] [--expected-policy-fingerprint SHA256] [--apply]"
+          "usage": "pr merge ROOT REPOSITORY BASE_REF BASE_OID HEAD_OID MANIFEST PRINCIPAL --style ff|merge|squash --approvals COUNT --required-approvals COUNT [--git FILE] [--grants FILE] [--expected-grants-fingerprint SHA256] [--message TEXT] [--status-checks-passed] [--blocking-review] [--pr-id ID] [--source-repository REPOSITORY] [--source-ref REF] [--max-source-objects COUNT] [--max-source-bytes BYTES] [--expected-source-identity IDENTITY] [--expected-target-identity IDENTITY] [--expected-prepared-oid OID] [--expected-policy-fingerprint SHA256] [--apply]"
         }
       ],
       "contract": "agent-cli/v2",
@@ -4107,6 +4178,18 @@
               },
               {
                 "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--grants",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads; read again before each command."
+              },
+              {
+                "argument": {
                   "name": "DIR",
                   "type": "path"
                 },
@@ -4132,7 +4215,7 @@
               }
             ],
             "passthrough": false,
-            "synopsis": "stdio --manifest FILE --root DIR [--git FILE]"
+            "synopsis": "stdio --manifest FILE --root DIR [--grants FILE] [--git FILE]"
           },
           "outputMode": "protocol-stream",
           "outputSchema": {
@@ -4145,7 +4228,7 @@
           ],
           "protocol": "maelys-git-agent/1",
           "purpose": "Serve the executor JSONL protocol on stdio.",
-          "usage": "stdio --manifest FILE --root DIR [--git FILE]"
+          "usage": "stdio --manifest FILE --root DIR [--grants FILE] [--git FILE]"
         }
       ],
       "contract": "agent-cli/v2",
@@ -4632,6 +4715,18 @@
               },
               {
                 "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--grants",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads; read again before each command."
+              },
+              {
+                "argument": {
                   "name": "DIR",
                   "type": "path"
                 },
@@ -4657,7 +4752,7 @@
               }
             ],
             "passthrough": false,
-            "synopsis": "serve --manifest FILE --root DIR [--git FILE]"
+            "synopsis": "serve --manifest FILE --root DIR [--grants FILE] [--git FILE]"
           },
           "outputMode": "protocol-stream",
           "outputSchema": {
@@ -4670,7 +4765,7 @@
           ],
           "protocol": "maelys-git-agent/1",
           "purpose": "Serve one-command-at-a-time JSONL execution.",
-          "usage": "serve --manifest FILE --root DIR [--git FILE]"
+          "usage": "serve --manifest FILE --root DIR [--grants FILE] [--git FILE]"
         }
       ],
       "contract": "agent-cli/v2",
@@ -5169,6 +5264,18 @@
               },
               {
                 "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--grants",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads."
+              },
+              {
+                "argument": {
                   "name": "PRINCIPAL",
                   "type": "string"
                 },
@@ -5277,7 +5384,7 @@
               }
             ],
             "passthrough": false,
-            "synopsis": "pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES] [--receipts FILE]"
+            "synopsis": "pre-receive --repository NAME --manifest FILE [--grants FILE] [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES] [--receipts FILE]"
           },
           "outputMode": "protocol-stream",
           "outputSchema": {
@@ -5290,7 +5397,7 @@
           ],
           "protocol": "git-hook",
           "purpose": "Authorize a quota-bounded Git receive transaction from stdin.",
-          "usage": "pre-receive --repository NAME --manifest FILE [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES] [--receipts FILE]"
+          "usage": "pre-receive --repository NAME --manifest FILE [--grants FILE] [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES] [--receipts FILE]"
         },
         {
           "available": true,
@@ -5878,6 +5985,18 @@
               {
                 "argument": {
                   "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--grants",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads."
+              },
+              {
+                "argument": {
+                  "name": "FILE",
                   "type": "absolute-path"
                 },
                 "conflictsWith": [],
@@ -5912,7 +6031,7 @@
               }
             ],
             "passthrough": false,
-            "synopsis": "serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE] [--restrict-repository NAME] [--read-only]"
+            "synopsis": "serve --user PRINCIPAL --root DIR --manifest FILE [--grants FILE] [--git FILE] [--restrict-repository NAME] [--read-only]"
           },
           "outputMode": "protocol-stream",
           "outputSchema": {
@@ -5925,7 +6044,7 @@
           ],
           "protocol": "git-smart",
           "purpose": "Authorize SSH_ORIGINAL_COMMAND then replace the process with Git.",
-          "usage": "serve --user PRINCIPAL --root DIR --manifest FILE [--git FILE] [--restrict-repository NAME] [--read-only]"
+          "usage": "serve --user PRINCIPAL --root DIR --manifest FILE [--grants FILE] [--git FILE] [--restrict-repository NAME] [--read-only]"
         }
       ],
       "contract": "agent-cli/v2",

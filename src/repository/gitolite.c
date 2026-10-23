@@ -1180,6 +1180,18 @@ maelys_git_result_t maelys_git_migrate_gitolite(
     int apply,
     maelys_git_gitolite_migration_result_t *out_result,
     maelys_git_error_t *error) {
+    return mg_migrate_gitolite_grants(input_path, output_directory, apply, out_result, error);
+}
+
+/* The compiled encoding of GIT-C03: one fact per elementary grant, a rule
+ * per prefix beyond the facts, in a policy whose text is the configuration.
+ * Kept to judge the grants as data against it (GIT-C06, D1). */
+maelys_git_result_t mg_migrate_gitolite_compiled(
+    const char *input_path,
+    const char *output_directory,
+    int apply,
+    maelys_git_gitolite_migration_result_t *out_result,
+    maelys_git_error_t *error) {
     maelys_git_error_clear(error);
     if (!input_path || !*input_path || !output_directory || !*output_directory || !out_result)
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;

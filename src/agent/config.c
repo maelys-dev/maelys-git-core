@@ -187,10 +187,16 @@ maelys_git_result_t mg_config_load(const char *path,
     maelys_json_value_t root = maelys_json_document_root(document);
     size_t fields = 0u;
     uint64_t version = 0u;
-    /* Unique keys, exactly 14 members and all required getters together
-     * reject both missing and unknown fields without a second key catalog. */
+    /* Unique keys, exactly 14 members (15 with grants_path, the optional
+     * one) and all required getters together reject both missing and
+     * unknown fields without a second key catalog. */
+    maelys_json_value_t grants = 0;
+    int has_grants = maelys_json_object_get(document, root, "grants_path", &grants) == MAELYS_JSON_OK;
     int valid = maelys_json_object_size(document, root, &fields) == MAELYS_JSON_OK &&
-                fields == MG_CONFIG_FIELD_COUNT &&
+                fields == MG_CONFIG_FIELD_COUNT + (has_grants ? 1u : 0u) &&
+                (!has_grants || (copy_config_string(document, root, "grants_path", config->grants_path,
+                                                    sizeof(config->grants_path)) &&
+                                 absolute_path(config->grants_path))) &&
                 maelys_json_object_get_u64(document, root, "version", &version) == MAELYS_JSON_OK &&
                 version == 1u &&
                 copy_config_string(document, root, "agent_id", config->agent_id, sizeof(config->agent_id)) &&
@@ -224,7 +230,8 @@ maelys_git_result_t mg_config_load(const char *path,
     }
     if (!secure_regular_file(config->token_file, FILE_TRUST_SECRET, error) ||
         !secure_regular_file(config->ca_file, FILE_TRUST_SYSTEM, error) ||
-        !secure_regular_file(config->manifest_path, FILE_TRUST_SYSTEM, error)) {
+        !secure_regular_file(config->manifest_path, FILE_TRUST_SYSTEM, error) ||
+        (config->grants_path[0] && !secure_regular_file(config->grants_path, FILE_TRUST_SYSTEM, error))) {
         free(config);
         return error ? error->code : MAELYS_GIT_ERR_DENIED;
     }

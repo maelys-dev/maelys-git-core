@@ -146,8 +146,13 @@ maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *confi
     char *argv[] = {
         (char *)config->executor_path, "serve", "--manifest", (char *)config->manifest_path,
         "--root", (char *)config->repository_root, "--git",
-        (char *)config->git_executable, NULL
+        (char *)config->git_executable, NULL, NULL, NULL
     };
+    /* The snapshot of grants, when the configuration names one. */
+    if (config->grants_path[0]) {
+        argv[8] = "--grants";
+        argv[9] = (char *)config->grants_path;
+    }
     pid_t child = -1;
     maelys_git_result_t spawn_result = mg_spawn_executor(
         &child, config->executor_path, &actions, argv, error);

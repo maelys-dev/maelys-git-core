@@ -24,9 +24,13 @@ static const maelys_cli_operand_t authorize_operands[] = {
     {MAELYS_CLI_OPERAND_OPTIONAL("REF", "Optional full Git reference, or '-' when omitted.")},
     {MAELYS_CLI_OPERAND_REST("PATH", "Zero or more changed paths.")},
 };
+static const maelys_cli_option_t validate_options[] = {
+    MAELYS_GIT_CLI_GRANTS_OPTION,
+};
 static const maelys_cli_option_t authorize_options[] = {
     {MAELYS_CLI_FLAG("explain",
      "Attach the engine's explanation document of the decision; write it before --.")},
+    MAELYS_GIT_CLI_GRANTS_OPTION,
 };
 static const maelys_cli_operand_t parse_ssh_operands[] = {
     {MAELYS_CLI_OPERAND("COMMAND", "Complete SSH_ORIGINAL_COMMAND value.")},
@@ -183,6 +187,10 @@ static const maelys_cli_option_t pr_check_options[] = {
 };
 static const maelys_cli_option_t pr_merge_options[] = {
     MAELYS_GIT_CLI_GIT_OPTION,
+    MAELYS_GIT_CLI_GRANTS_OPTION,
+    {MAELYS_CLI_HEX("expected-grants-fingerprint", "SHA256",
+     "Grants fingerprint returned by the reviewed plan; required to apply with --grants.", 64u),
+     .depends_on = "grants"},
     {MAELYS_CLI_CHOICE("style", "Merge strategy to execute.", merge_styles),
      .required = 1},
     {MAELYS_CLI_STRING("message", "TEXT", "Prepared merge commit message.")},
@@ -229,8 +237,10 @@ static int fail_with_result(maelys_cli_context_t *context, maelys_git_result_t c
 static int command_validate(maelys_cli_context_t *context) {
     const char *manifest = maelys_cli_operand(context, 0u);
     maelys_git_error_t error = {0};
+    const char *grants = maelys_cli_option(context, "grants");
     maelys_git_policy_t *policy = NULL;
-    maelys_git_result_t result = maelys_git_policy_open(manifest, &policy, &error);
+    maelys_git_result_t result = grants ? maelys_git_policy_open_grants(manifest, grants, &policy, &error)
+                                        : maelys_git_policy_open(manifest, &policy, &error);
     maelys_git_policy_close(policy);
     if (result != MAELYS_GIT_OK && result != MAELYS_GIT_ERR_POLICY)
         return maelys_git_cli_fail_result(context, result, &error);
@@ -259,7 +269,8 @@ static int command_validate(maelys_cli_context_t *context) {
 
 static int command_authorize(maelys_cli_context_t *context) {
     maelys_git_policy_t *policy = NULL;
-    int failed = maelys_git_cli_open_policy(context, maelys_cli_operand(context, 0u), &policy);
+    int failed = maelys_git_cli_open_policy(context, maelys_cli_operand(context, 0u),
+                                            maelys_cli_option(context, "grants"), &policy);
     if (failed) return failed;
     const char *ref_name = maelys_cli_operand(context, 4u);
     if (ref_name && !strcmp(ref_name, "-")) ref_name = NULL;
@@ -791,6 +802,7 @@ static int emit_pr_result(maelys_cli_context_t *context,
     mg_json_string(&data, "mergeTreeOid", result->merge_tree_oid);
     mg_json_string(&data, "preparedOid", result->prepared_oid);
     mg_json_string(&data, "policyFingerprint", result->policy_fingerprint);
+    mg_json_string(&data, "grantsFingerprint", result->grants_fingerprint);
     mg_json_string(&data, "prId", result->pr_id);
     mg_json_string(&data, "prHeadRef", result->pr_head_ref);
     mg_json_string(&data, "prMergedRef", result->pr_merged_ref);
@@ -899,18 +911,19 @@ static int command_pr_merge(maelys_cli_context_t *context) {
     const char *expected_target_identity =
         maelys_cli_option(context, "expected-target-identity");
     maelys_git_policy_t *policy = NULL;
-    failed = maelys_git_cli_open_policy(context, maelys_cli_operand(context, 5u), &policy);
+    failed = maelys_git_cli_open_policy(context, maelys_cli_operand(context, 5u),
+                                        maelys_cli_option(context, "grants"), &policy);
     if (failed) return failed;
     maelys_git_error_t error = {0};
     maelys_git_pr_check_result_t check;
-    maelys_git_result_t result = maelys_git_pr_merge_with_source(
+    maelys_git_result_t result = maelys_git_pr_merge_grants(
         maelys_git_cli_git(context), repository_path, maelys_cli_operand(context, 1u),
         maelys_cli_operand(context, 2u), maelys_cli_operand(context, 3u),
         maelys_cli_operand(context, 4u), merge_style(context),
         maelys_cli_option(context, "message"), maelys_cli_operand(context, 6u),
         &gates, policy, maelys_cli_option(context, "pr-id"), source,
         expected_target_identity, expected_prepared_oid, expected_policy_fingerprint,
-        apply, &check, &error);
+        maelys_cli_option(context, "expected-grants-fingerprint"), apply, &check, &error);
     maelys_git_policy_close(policy);
     if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
     return emit_pr_result(context, mode_name(apply), apply, &check);
@@ -921,7 +934,7 @@ static int command_pr_merge(maelys_cli_context_t *context) {
 static const maelys_cli_command_t commands[] = {
     {MAELYS_CLI_READ("validate", "validate", "Validate a Datalog policy manifest.",
      command_validate),
-     MAELYS_CLI_OPERANDS(validate_operands),
+     MAELYS_CLI_OPERANDS(validate_operands), MAELYS_CLI_OPTIONS(validate_options),
      MAELYS_CLI_SCHEMA(maelys_git_schema_validate)},
     {MAELYS_CLI_READ("authorize", "authorize", "Evaluate one authorization request.",
      command_authorize),
