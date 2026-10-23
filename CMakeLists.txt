@@ -391,6 +391,11 @@ if(MAELYS_GIT_BUILD_TESTS)
         maelys_git_core maelys::cli maelys_git_build_flags)
     add_test(NAME maelys-git-gitolite-budget COMMAND test-maelys-git-gitolite-budget)
 
+    add_executable(test-maelys-git-engine-contract tests/test_engine_contract.c)
+    target_link_libraries(test-maelys-git-engine-contract PRIVATE
+        maelys_datalog maelys::cli maelys_git_build_flags)
+    add_test(NAME maelys-git-engine-contract COMMAND test-maelys-git-engine-contract)
+
     add_executable(test-maelys-git-gitolite-program tests/test_gitolite_program.c)
     target_include_directories(test-maelys-git-gitolite-program PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(test-maelys-git-gitolite-program PRIVATE

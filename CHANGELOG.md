@@ -5,7 +5,8 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
-- maelys-datalog is pinned to 0.25.0 (was 0.23.1), which includes 0.24.0.
+- maelys-datalog is pinned to 0.26.0 (was 0.23.1), which includes 0.24.0 and
+  0.25.0.
   - The engine identifies a named variable by its complete name within its
     rule; it used to identify it by its first letter, so that `Ab` and `Ac`,
     or `G1` and `G2`, were one variable. No policy of this repository, and no
@@ -19,6 +20,14 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
     strata as a capacity failure with the budget `MAX_STRATA`, five strata
     requested and four allowed. A negation cycle stays a semantic failure,
     without a budget. The bound itself does not change.
+  - A request refused because its input symbols exceed the engine's count
+    of symbols (`MAX_SYMBOLS`) or its pool of text (`STRING_POOL_BYTES`) is a
+    capacity denial that names that budget, with the attempted count and the
+    bound; it was a failure of the engine without a budget. The decision, a
+    denial, does not change.
+  - A policy of more rules than the engine holds is refused with the message
+    "rule capacity exceeded"; the engine used to attribute it to the
+    expansion of OR. Its code, its location and its capacity do not change.
 - maelys-json is pinned to 0.3.1 (was 0.3.0). Its canonical check answers
   without copying the document: the grants snapshot reader runs it on every
   load, and on macOS forty reloads of a 4 MiB snapshot no longer raise the

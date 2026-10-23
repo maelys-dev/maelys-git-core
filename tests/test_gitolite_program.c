@@ -716,7 +716,8 @@ static int test_quotas(void) {
 }
 
 /* The engine's own bounds on a slice: strings it cannot pool are a
- * capacity failure of the solve, never a truncated slice. */
+ * capacity failure of the solve that names its budget, never a truncated
+ * slice. */
 static int test_engine_bounds(void) {
     char *json = malloc(200000u);
     CHECK(json);
@@ -752,22 +753,20 @@ static int test_engine_bounds(void) {
     size_t context = 0u, slice = 0u;
     mg_policy_slice_counts(policy, &context, &slice);
     CHECK(slice == 128u); /* whole: 64 memberships, 64 group grants */
-    /* A profile whose pool holds them decides; one whose pool does not
-     * refuses the request whole. The engine (0.25.0) reports that refusal
-     * as operation_rejected, without the capacity section that would name
-     * its session quota: Git Core reports what it is given. */
-    if (result == MAELYS_GIT_OK) {
-        CHECK(decision.allowed);
-        (void)printf("engine bounds hold a slice of 128 facts of 999-byte names\n");
-    } else {
-        CHECK(result == MAELYS_GIT_ERR_POLICY);
-        CHECK((error.detail.kind == MAELYS_GIT_FAILURE_CAPACITY && error.detail.budget[0]) ||
-              (error.detail.kind == MAELYS_GIT_FAILURE_ENGINE &&
-               !strcmp(error.detail.diagnostic, "operation_rejected")));
-        (void)printf("engine refusal of a slice of 128 facts of 999-byte names: %s %s\n",
-                     maelys_git_failure_kind_name(error.detail.kind),
-                     error.detail.budget[0] ? error.detail.budget : error.detail.diagnostic);
-    }
+    /* 64 names of 999 bytes do not fit the engine's pool of input text: the
+     * request is refused whole, as a capacity that names the bound, the
+     * attempted bytes above it (engine 0.26.0). */
+    size_t pool = 0u;
+    CHECK(maelys_datalog_limit_get(MAELYS_DATALOG_LIMIT_STRING_POOL_BYTES, &pool) == MAELYS_DATALOG_STATUS_OK);
+    CHECK(pool < 64u * 1000u);
+    CHECK(result == MAELYS_GIT_ERR_POLICY && error.detail.kind == MAELYS_GIT_FAILURE_CAPACITY);
+    CHECK(!strcmp(error.detail.budget, "STRING_POOL_BYTES"));
+    CHECK(error.detail.limit == pool && error.detail.requested > pool);
+    maelys_git_receipt_t receipt;
+    CHECK(maelys_git_policy_authorize_receipt(policy, &read, MAELYS_GIT_EXPLAIN_NEVER, NULL, 0u, &decision,
+                                              &receipt, &error) == MAELYS_GIT_ERR_POLICY);
+    CHECK(receipt.decision == MAELYS_GIT_RECEIPT_DENY_ERROR && !strcmp(receipt.error_kind, "capacity") &&
+          !strcmp(receipt.error_budget, "STRING_POOL_BYTES"));
     maelys_git_policy_close(policy);
     return 1;
 }
