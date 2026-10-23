@@ -502,7 +502,31 @@
               },
               "receipt": {
                 "additionalProperties": false,
-                "description": "Authorization receipt v1, Maelys Canonical JSON v1 once rewritten; its SHA-256 is receiptSha256.",
+                "description": "Authorization receipt v1 or v2, Maelys Canonical JSON v1 once rewritten; its SHA-256 is receiptSha256.",
+                "oneOf": [
+                  {
+                    "description": "Version 1: no grants member.",
+                    "properties": {
+                      "grants": {
+                        "type": "null"
+                      },
+                      "version": {
+                        "const": 1
+                      }
+                    }
+                  },
+                  {
+                    "description": "Version 2: version 1 and the grants member.",
+                    "properties": {
+                      "version": {
+                        "const": 2
+                      }
+                    },
+                    "required": [
+                      "grants"
+                    ]
+                  }
+                ],
                 "properties": {
                   "decision": {
                     "enum": [
@@ -670,6 +694,39 @@
                     ],
                     "type": "object"
                   },
+                  "grants": {
+                    "additionalProperties": false,
+                    "description": "The snapshot of grants the decision used: present in version 2 only, when a policy of the set read it.",
+                    "properties": {
+                      "facts": {
+                        "description": "Distinct tuples of the slice of grants given to the engine for this request.",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "format": {
+                        "const": "maelys-git-grants/1"
+                      },
+                      "program": {
+                        "const": "maelys-git-gitolite-program/1"
+                      },
+                      "sha256": {
+                        "description": "SHA-256 of the bytes of the snapshot of grants the decision used.",
+                        "pattern": "^[0-9a-f]{64}$",
+                        "type": "string"
+                      },
+                      "slice": {
+                        "const": "maelys-git-slice/1"
+                      }
+                    },
+                    "required": [
+                      "facts",
+                      "format",
+                      "program",
+                      "sha256",
+                      "slice"
+                    ],
+                    "type": "object"
+                  },
                   "matched": {
                     "oneOf": [
                       {
@@ -758,7 +815,10 @@
                     "type": "object"
                   },
                   "version": {
-                    "const": 1
+                    "enum": [
+                      1,
+                      2
+                    ]
                   }
                 },
                 "required": [

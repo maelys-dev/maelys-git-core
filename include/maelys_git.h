@@ -287,6 +287,17 @@ typedef struct {
     char text_sha256[65];
 } maelys_git_receipt_explanation_t;
 
+/* The snapshot of grants a decision used: present when a policy of the set
+ * read it, which only the audited Gitolite program may (receipt version 2).
+ * Its format, the format of the slice and that of the program are fixed by
+ * that version: maelys-git-grants/1, maelys-git-slice/1 and
+ * maelys-git-gitolite-program/1. */
+typedef struct {
+    int present;
+    char sha256[65]; /* of the snapshot's bytes */
+    size_t facts;    /* distinct tuples of the slice given to the engine */
+} maelys_git_receipt_grants_t;
+
 /* The record of one decision, built by the code path that authorizes. It
  * holds a bounded summary of the engine's explanation, never its text: the
  * text travels beside the receipt, which keeps its size and SHA-256. Every
@@ -306,6 +317,7 @@ typedef struct {
     size_t edb_facts;          /* request facts given to the engine */
     size_t evaluated_policies; /* policies solved before the decision */
     maelys_git_receipt_explanation_t explanation;
+    maelys_git_receipt_grants_t grants;
 } maelys_git_receipt_t;
 
 /* Authorizes as maelys_git_policy_authorize does and fills the receipt of

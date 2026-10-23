@@ -296,11 +296,71 @@
             }
           }
         },
+        "grants": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "facts",
+            "format",
+            "program",
+            "sha256",
+            "slice"
+          ],
+          "properties": {
+            "facts": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Distinct tuples of the slice of grants given to the engine for this request."
+            },
+            "format": {
+              "const": "maelys-git-grants/1"
+            },
+            "program": {
+              "const": "maelys-git-gitolite-program/1"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "SHA-256 of the bytes of the snapshot of grants the decision used."
+            },
+            "slice": {
+              "const": "maelys-git-slice/1"
+            }
+          },
+          "description": "The snapshot of grants the decision used: present in version 2 only, when a policy of the set read it."
+        },
         "version": {
-          "const": 1
+          "enum": [
+            1,
+            2
+          ]
         }
       },
-      "description": "Authorization receipt v1, Maelys Canonical JSON v1 once rewritten; its SHA-256 is receiptSha256."
+      "oneOf": [
+        {
+          "properties": {
+            "grants": {
+              "type": "null"
+            },
+            "version": {
+              "const": 1
+            }
+          },
+          "description": "Version 1: no grants member."
+        },
+        {
+          "required": [
+            "grants"
+          ],
+          "properties": {
+            "version": {
+              "const": 2
+            }
+          },
+          "description": "Version 2: version 1 and the grants member."
+        }
+      ],
+      "description": "Authorization receipt v1 or v2, Maelys Canonical JSON v1 once rewritten; its SHA-256 is receiptSha256."
     },
     "receiptSha256": {
       "type": "string",

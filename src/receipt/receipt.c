@@ -1,8 +1,12 @@
 /* Authorization receipts as bytes. maelys-json is their only writer and
  * reader: the writer produces Maelys Canonical JSON v1, and verification
- * demands that form back, with the closed shape of version 1. */
+ * demands that form back, with the closed shape of version 1, or of version
+ * 2 when the decision used a snapshot of grants. */
 #include "receipt/receipt_internal.h"
 #include "internal.h"
+#include "policy/grants.h"
+#include "policy/program.h"
+#include "policy/slice.h"
 
 #include <maelys/cli/digest.h>
 
@@ -10,6 +14,7 @@
 #include <string.h>
 
 #define RECEIPT_VERSION 1u
+#define RECEIPT_VERSION_GRANTS 2u
 #define RECEIPT_DEPTH 4u
 #define RECEIPT_TOKENS 512u
 
@@ -120,6 +125,19 @@ static maelys_json_result_t write_explanation(maelys_json_writer_t *writer,
     return status;
 }
 
+/* The snapshot a decision used, by its digest; the formats of version 2. */
+static maelys_json_result_t write_grants(maelys_json_writer_t *writer, const maelys_git_receipt_grants_t *grants) {
+    maelys_json_result_t status = maelys_json_writer_key_cstr(writer, "grants");
+    if (status == MAELYS_JSON_OK) status = maelys_json_writer_object_begin(writer);
+    if (status == MAELYS_JSON_OK) status = key_u64(writer, "facts", grants->facts);
+    if (status == MAELYS_JSON_OK) status = key_string(writer, "format", MG_GRANTS_FORMAT);
+    if (status == MAELYS_JSON_OK) status = key_string(writer, "program", MG_GITOLITE_PROGRAM_FORMAT);
+    if (status == MAELYS_JSON_OK) status = key_string(writer, "sha256", grants->sha256);
+    if (status == MAELYS_JSON_OK) status = key_string(writer, "slice", MG_SLICE_FORMAT);
+    if (status == MAELYS_JSON_OK) status = maelys_json_writer_object_end(writer);
+    return status;
+}
+
 static maelys_json_result_t write_receipt(maelys_json_writer_t *writer, const maelys_git_receipt_t *receipt) {
     maelys_json_result_t status = maelys_json_writer_object_begin(writer);
     if (status == MAELYS_JSON_OK) status = key_string(writer, "decision", k_decisions[receipt->decision - 1]);
@@ -127,6 +145,7 @@ static maelys_json_result_t write_receipt(maelys_json_writer_t *writer, const ma
     if (status == MAELYS_JSON_OK) status = key_optional(writer, "errorCode", receipt->error_code);
     if (status == MAELYS_JSON_OK) status = key_optional(writer, "errorKind", receipt->error_kind);
     if (status == MAELYS_JSON_OK) status = write_explanation(writer, receipt);
+    if (status == MAELYS_JSON_OK && receipt->grants.present) status = write_grants(writer, &receipt->grants);
     if (status == MAELYS_JSON_OK) status = maelys_json_writer_key_cstr(writer, "matched");
     if (status == MAELYS_JSON_OK && !receipt->matched) status = maelys_json_writer_null(writer);
     else if (status == MAELYS_JSON_OK) {
@@ -153,7 +172,8 @@ static maelys_json_result_t write_receipt(maelys_json_writer_t *writer, const ma
     if (status == MAELYS_JSON_OK) status = key_u64(writer, "edbFacts", receipt->edb_facts);
     if (status == MAELYS_JSON_OK) status = key_u64(writer, "evaluatedPolicies", receipt->evaluated_policies);
     if (status == MAELYS_JSON_OK) status = maelys_json_writer_object_end(writer);
-    if (status == MAELYS_JSON_OK) status = key_u64(writer, "version", RECEIPT_VERSION);
+    if (status == MAELYS_JSON_OK)
+        status = key_u64(writer, "version", receipt->grants.present ? RECEIPT_VERSION_GRANTS : RECEIPT_VERSION);
     if (status == MAELYS_JSON_OK) status = maelys_json_writer_object_end(writer);
     return status;
 }
@@ -325,13 +345,44 @@ static void check_explanation(shape_t *shape, maelys_json_value_t explanation, m
     text->text_sha256[64] = '\0';
 }
 
+/* A string member equal to VALUE. */
+static void constant(shape_t *shape, maelys_json_value_t value, const char *expected) {
+    maelys_json_view_t view = string_value(shape, value);
+    if (shape->ok && (view.size != strlen(expected) || memcmp(view.data, expected, view.size))) shape->ok = 0;
+}
+
+static void check_grants(shape_t *shape, maelys_json_value_t grants) {
+    static const char *const keys[] = {"facts", "format", "program", "sha256", "slice"};
+    closed_object(shape, grants, keys, COUNT(keys));
+    (void)unsigned_value(shape, member(shape, grants, "facts"));
+    constant(shape, member(shape, grants, "format"), MG_GRANTS_FORMAT);
+    constant(shape, member(shape, grants, "program"), MG_GITOLITE_PROGRAM_FORMAT);
+    sha256_hex(shape, member(shape, grants, "sha256"));
+    constant(shape, member(shape, grants, "slice"), MG_SLICE_FORMAT);
+}
+
+/* Version 1, or version 2: version 1 and the member grants. */
 static int receipt_shape(const maelys_json_document_t *document, mg_receipt_text_t *text) {
     shape_t shape = {document, 1};
     maelys_json_value_t root = maelys_json_document_root(document);
     static const char *const keys[] = {"decision", "errorBudget", "errorCode", "errorKind", "explanation",
                                        "matched", "policySetFingerprint", "request", "stats", "version"};
-    closed_object(&shape, root, keys, COUNT(keys));
-    if (unsigned_value(&shape, member(&shape, root, "version")) != RECEIPT_VERSION) shape.ok = 0;
+    static const char *const keys_with_grants[] = {"decision", "errorBudget", "errorCode", "errorKind",
+                                                   "explanation", "grants", "matched", "policySetFingerprint",
+                                                   "request", "stats", "version"};
+    maelys_json_value_t version = 0;
+    uint64_t number = 0u;
+    if (maelys_json_value_type(document, root) != MAELYS_JSON_TYPE_OBJECT ||
+        maelys_json_object_get(document, root, "version", &version) != MAELYS_JSON_OK ||
+        maelys_json_value_u64(document, version, &number) != MAELYS_JSON_OK ||
+        (number != RECEIPT_VERSION && number != RECEIPT_VERSION_GRANTS))
+        return 0;
+    if (number == RECEIPT_VERSION_GRANTS) {
+        closed_object(&shape, root, keys_with_grants, COUNT(keys_with_grants));
+        check_grants(&shape, member(&shape, root, "grants"));
+    } else {
+        closed_object(&shape, root, keys, COUNT(keys));
+    }
     size_t decision = one_of(&shape, member(&shape, root, "decision"), k_decisions, COUNT(k_decisions));
     maelys_json_value_t code = member(&shape, root, "errorCode");
     maelys_json_value_t kind = member(&shape, root, "errorKind");
@@ -394,7 +445,7 @@ static maelys_git_result_t verify_bytes(const void *bytes, size_t size, char out
     if (status != MAELYS_JSON_OK) return writer_failure(status, "receipt canonical check", error);
     if (!canonical || !shaped) {
         mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
-                     canonical ? "receipt does not have the shape of version 1"
+                     canonical ? "receipt does not have the shape of version 1 or 2"
                                : "receipt is not in canonical form");
         return MAELYS_GIT_ERR_PROTOCOL;
     }

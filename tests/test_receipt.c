@@ -5,12 +5,16 @@
  *   test-maelys-git-receipt                       compare with the corpus
  *   MG_RECORD_RECEIPTS=FILE test-maelys-git-receipt   write the corpus to FILE
  *
- * The corpus is the byte contract of receipt version 1. It is regenerated
+ * The corpus is the byte contract of receipt version 1; version 2, the
+ * receipt of a decision that used a snapshot of grants, is held by
+ * test_version_two. The corpus is regenerated
  * only in a commit that explains every line it changes; an engine upgrade
  * that changes a fingerprint regenerates it in a commit of its own, never in
  * the commit of a feature. */
 #include "internal.h"
 #include "maelys_git_receipt.h"
+#include "policy/policy_grants.h"
+#include "policy/program.h"
 #include "receipt/receipt_internal.h"
 #include "test_support.h"
 
@@ -290,6 +294,9 @@ static int test_budget(void) {
     explanation->has_text = 1;
     explanation->text_bytes = SIZE_MAX;
     fill(explanation->text_sha256, sizeof(explanation->text_sha256), 'e');
+    receipt.grants.present = 1;
+    receipt.grants.facts = SIZE_MAX;
+    fill(receipt.grants.sha256, sizeof(receipt.grants.sha256), 'f');
     char *bytes = NULL;
     size_t size = 0u;
     char sha[65];
@@ -477,6 +484,137 @@ static int test_single_path(void) {
     return 1;
 }
 
+/* ---- GIT-C06 test 15: receipt version 2 ------------------------------------- */
+
+static int write_file(const char *path, const char *text) {
+    FILE *file = fopen(path, "w");
+    if (!file) return 0;
+    int ok = fputs(text, file) >= 0;
+    return fclose(file) == 0 && ok;
+}
+
+/* The audited program and a snapshot in DIRECTORY, opened. */
+static maelys_git_policy_t *open_program(const char *directory) {
+    char path[512], manifest[2048], digest[MAELYS_CLI_SHA256_HEX_SIZE];
+    size_t length = 0u;
+    const char *program = mg_gitolite_program_text(&length);
+    maelys_cli_sha256_hex(program, length, digest);
+    (void)snprintf(path, sizeof(path), "%s/program.dl", directory);
+    if (!write_file(path, program)) return NULL;
+    (void)snprintf(manifest, sizeof(manifest),
+        "{\"policy_set_id\":\"test.receipt-v2\",\"policy_set_version\":\"1\",\"manifest_version\":\"1\","
+        "\"default_profile\":\"enforce\",\"created_for\":\"maelys-git-core-tests\",\"strict_loading\":true,"
+        "\"fail_closed\":true,\"capabilities\":[],\"policies\":[{\"policy_id\":\"test.receipt-v2.program\","
+        "\"domain\":\"maelys_git\",\"file\":\"program.dl\",\"sha256\":\"%s\",\"mode\":\"enforce\","
+        "\"enabled\":true,\"description\":\"test\","
+        "\"queries\":[{\"name\":\"allow\",\"arity\":1},{\"name\":\"deny\",\"arity\":1}]}]}\n", digest);
+    (void)snprintf(path, sizeof(path), "%s/manifest.json", directory);
+    if (!write_file(path, manifest)) return NULL;
+    char grants[512];
+    (void)snprintf(grants, sizeof(grants), "%s/grants.json", directory);
+    if (!write_file(grants,
+            "{\"access\":[[\"group\",\"devs\",\"app.git\",\"RW\"]],\"format\":\"maelys-git-grants/1\","
+            "\"members\":[[\"alice\",\"devs\"]],\"namespace_creators\":[],\"nested\":[],\"owner_access\":[],"
+            "\"refs\":[],\"vref_limits\":[],\"vref_names\":[]}"))
+        return NULL;
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_error_t error;
+    if (mg_policy_open_grants(path, grants, &policy, &error) != MAELYS_GIT_OK) {
+        (void)fprintf(stderr, "open program: %s\n", error.message);
+        return NULL;
+    }
+    return policy;
+}
+
+/* A decision of the audited program carries grants, in version 2; the
+ * receipt verifies, is rewritten from an envelope and written as a line;
+ * version 2 without grants, or grants in version 1, do not verify. */
+static int test_version_two(void) {
+    char template[] = "/tmp/maelys_git_receipt_v2_XXXXXX";
+    char *root = mkdtemp(template);
+    CHECK(root);
+    maelys_git_policy_t *policy = open_program(root);
+    CHECK(policy != NULL);
+    maelys_git_policy_request_t write = {.request_id = "v2", .principal = "alice", .repository = "app.git",
+                                         .operation = "write"};
+    produced_t produced;
+    CHECK(produce(policy, &write, MAELYS_GIT_EXPLAIN_NEVER, NULL, 0u, &produced));
+    CHECK(produced.result == MAELYS_GIT_OK && produced.receipt.decision == MAELYS_GIT_RECEIPT_ALLOW);
+    const maelys_git_receipt_grants_t *grants = &produced.receipt.grants;
+    CHECK(grants->present && grants->facts == 2u && !strcmp(grants->sha256, mg_policy_grants_sha256(policy)));
+    char expected[512];
+    (void)snprintf(expected, sizeof(expected),
+                   "\"grants\":{\"facts\":2,\"format\":\"maelys-git-grants/1\","
+                   "\"program\":\"maelys-git-gitolite-program/1\",\"sha256\":\"%s\","
+                   "\"slice\":\"maelys-git-slice/1\"},\"matched\":", grants->sha256);
+    CHECK(strstr(produced.bytes, expected) != NULL);
+    CHECK(produced.size > 12u && !strcmp(produced.bytes + produced.size - 12u, "\"version\":2}"));
+    CHECK(canonical(produced.bytes, produced.size));
+    maelys_git_error_t error;
+    char sha[65];
+    CHECK(maelys_git_receipt_verify(produced.bytes, produced.size, sha, &error) == MAELYS_GIT_OK);
+    CHECK(!strcmp(sha, produced.sha256));
+    /* The paths of the agent and the audit (a receipt read inside another
+     * document), and of the hook (a line). */
+    maelys_json_document_t *document = NULL;
+    CHECK(maelys_json_document_parse(produced.bytes, produced.size, MAELYS_JSON_PROFILE_RFC8259, NULL, &document,
+                                     NULL) == MAELYS_JSON_OK);
+    char *rewritten = NULL;
+    size_t rewritten_size = 0u;
+    mg_receipt_text_t vouched;
+    CHECK(mg_receipt_rewrite(document, maelys_json_document_root(document), &rewritten, &rewritten_size, sha,
+                             &vouched, &error) == MAELYS_GIT_OK);
+    CHECK(rewritten_size == produced.size && !memcmp(rewritten, produced.bytes, produced.size));
+    free(rewritten);
+    maelys_json_document_release(document);
+    char *line = NULL;
+    size_t line_size = 0u;
+    FILE *stream = open_memstream(&line, &line_size);
+    CHECK(stream && mg_receipt_write_line(stream, &produced.receipt, NULL, &error) == MAELYS_GIT_OK);
+    CHECK(fclose(stream) == 0 && strstr(line, expected) != NULL);
+    free(line);
+    /* Strict: each member of grants, and grants against the version. */
+    const char *bytes = produced.bytes;
+    char sha63[80];
+    (void)snprintf(sha63, sizeof(sha63), "\"sha256\":\"%.63s\"", grants->sha256);
+    char sha64[80];
+    (void)snprintf(sha64, sizeof(sha64), "\"sha256\":\"%s\"", grants->sha256);
+    CHECK(refused(bytes, "\"version\":2}", "\"version\":1}"));                             /* grants in v1 */
+    CHECK(refused(bytes, "\"version\":2}", "\"version\":3}"));                             /* unknown version */
+    CHECK(refused(bytes, "\"facts\":2", "\"facts\":-2"));                                   /* negative */
+    CHECK(refused(bytes, "\"facts\":2", "\"facts\":2.0"));                                  /* fraction */
+    CHECK(refused(bytes, "\"maelys-git-grants/1\"", "\"maelys-git-grants/2\""));            /* format */
+    CHECK(refused(bytes, "\"maelys-git-slice/1\"", "\"maelys-git-slice/2\""));              /* slice */
+    CHECK(refused(bytes, "\"maelys-git-gitolite-program/1\"", "\"maelys-git-gitolite-program/2\""));
+    CHECK(refused(bytes, sha64, sha63));                                                     /* 63 digits */
+    CHECK(refused(bytes, "\"slice\":\"maelys-git-slice/1\"}",
+                  "\"slice\":\"maelys-git-slice/1\",\"zzz\":1}"));                          /* unknown key */
+    char *without = replaced(bytes, expected, "\"matched\":");
+    CHECK(without != NULL);
+    CHECK(maelys_git_receipt_verify(without, strlen(without), NULL, &error) == MAELYS_GIT_ERR_PROTOCOL);
+    free(without);
+    free(produced.bytes);
+    /* A request refused before its slice is a deny_error of version 2 that
+     * counts no fact: more paths than a predicate holds, in either profile. */
+    maelys_git_policy_request_t push = {.request_id = "v2", .principal = "alice", .repository = "app.git",
+                                        .operation = "push", .paths = g_paths, .path_count = MANY_PATHS};
+    CHECK(produce(policy, &push, MAELYS_GIT_EXPLAIN_NEVER, NULL, 0u, &produced));
+    CHECK(produced.receipt.decision == MAELYS_GIT_RECEIPT_DENY_ERROR && produced.receipt.grants.present);
+    CHECK(produced.receipt.grants.facts == 0u);
+    CHECK(maelys_git_receipt_verify(produced.bytes, produced.size, NULL, &error) == MAELYS_GIT_OK);
+    free(produced.bytes);
+    maelys_git_policy_close(policy);
+    /* A policy without slice_* keeps version 1. */
+    policy = open_policy(TEST_MANIFEST_FILE);
+    CHECK(policy && produce(policy, &g_cases[0].request, MAELYS_GIT_EXPLAIN_NEVER, NULL, 0u, &produced));
+    CHECK(!produced.receipt.grants.present && strstr(produced.bytes, "\"grants\"") == NULL);
+    CHECK(!strcmp(produced.bytes + produced.size - 12u, "\"version\":1}"));
+    free(produced.bytes);
+    maelys_git_policy_close(policy);
+    CHECK(test_remove_tree(root));
+    return 1;
+}
+
 /* ---- test 22: the path without a receipt ------------------------------------ */
 
 static int test_hot_path(void) {
@@ -509,7 +647,9 @@ int main(void) {
     g_cases[4].request.paths = g_paths;
     int ok = test_corpus() && test_decisions() && test_determinism() && test_budget() &&
              test_strict_verification() && test_text_buffer() && test_summary() &&
-             test_single_path() && test_hot_path();
-    if (ok) puts("receipts: corpus, decisions, canonical form, budget, verification, summary and hot path: ok");
+             test_single_path() && test_hot_path() && test_version_two();
+    if (ok)
+        puts("receipts: corpus, decisions, canonical form, budget, verification, summary, hot path and "
+             "version 2: ok");
     return ok ? 0 : 1;
 }

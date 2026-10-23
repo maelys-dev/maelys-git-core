@@ -1328,6 +1328,11 @@ maelys_git_result_t maelys_git_policy_authorize_receipt(
     memcpy(receipt->policy_set_fingerprint, policy->fingerprint, sizeof(policy->fingerprint));
     /* The context: what every policy received; the slice is the grants'. */
     receipt->edb_facts = policy->context_count;
+    if (policy->has_audited) {
+        receipt->grants.present = 1;
+        (void)mg_copy_string(receipt->grants.sha256, sizeof(receipt->grants.sha256), mg_grants_sha256(policy->grants));
+        receipt->grants.facts = policy->fact_count - policy->context_count;
+    }
     receipt->evaluated_policies = evaluated;
     if (result != MAELYS_GIT_OK) {
         /* A failure denies; the receipt says so, and what kind of failure it was. */

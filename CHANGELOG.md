@@ -28,6 +28,12 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   - A policy of more rules than the engine holds is refused with the message
     "rule capacity exceeded"; the engine used to attribute it to the
     expansion of OR. Its code, its location and its capacity do not change.
+- Authorization receipts gain version 2: a decision that used a snapshot of
+  grants carries `grants`, the digest of the snapshot, the number of facts of
+  its slice and the formats of the snapshot, the slice and the audited
+  Gitolite program. Without a snapshot a receipt stays version 1, byte for
+  byte; `maelys_git_receipt_verify` accepts both. The output schema of
+  `authorize` admits both.
 - maelys-json is pinned to 0.3.1 (was 0.3.0). Its canonical check answers
   without copying the document: the grants snapshot reader runs it on every
   load, and on macOS forty reloads of a 4 MiB snapshot no longer raise the
