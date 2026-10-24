@@ -5,6 +5,11 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- The slice of a request finds the groups its user reaches through an index
+  on their names instead of a scan of those already reached: the closure of
+  G groups costs about G lookups instead of G squared comparisons. For a
+  snapshot at its bounds of 4,096 groups, extracting a slice goes from about
+  35 ms to under 2 ms; slices and decisions are unchanged.
 - An executor started with `--expected-grants-fingerprint` decides the first
   command of its stream, whatever it is, on the snapshot it verified at
   startup, without reading the file again; every later command reads it

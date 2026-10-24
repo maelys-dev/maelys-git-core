@@ -349,8 +349,57 @@ static int test_oracle(void) {
     return 1;
 }
 
+/* Hundreds of groups and a cycle: alice belongs to 64 groups, each nested
+ * in 8 others, each of those in one of 16 more, the first of which closes a
+ * cycle back to a group of alice; bob belongs to one group in the middle.
+ * The index of the groups reached grows several times and its slots
+ * collide; the slices must still be the full scan's. */
+static int test_many_groups(void) {
+    text_t members = {0}, nested = {0}, access = {0};
+    int ok = 1;
+    for (unsigned d = 0u; ok && d < 64u; ++d)
+        ok = append(&members, "%s[\"alice\",\"d%02u\"]", d ? "," : "", d);
+    ok = ok && append(&members, ",[\"bob\",\"p100\"]");
+    for (unsigned d = 0u; ok && d < 64u; ++d)
+        for (unsigned k = 0u; ok && k < 8u; ++k)
+            ok = append(&nested, "%s[\"d%02u\",\"p%03u\"]", nested.length ? "," : "", d, d * 8u + k);
+    for (unsigned q = 0u; ok && q < 512u; ++q) ok = append(&nested, ",[\"p%03u\",\"t%02u\"]", q, q % 16u);
+    ok = ok && append(&nested, ",[\"t00\",\"d00\"]");
+    for (unsigned q = 0u; ok && q < 512u; q += 7u)
+        ok = append(&access, "%s[\"group\",\"p%03u\",\"app.git\",\"R\"]", access.length ? "," : "", q);
+    for (unsigned t = 0u; ok && t < 16u; ++t) ok = append(&access, ",[\"group\",\"t%02u\",\"app.git\",\"RW\"]", t);
+    CHECK(ok);
+    char *text = snapshot(access.data, members.data, NULL, nested.data, NULL, NULL, NULL, NULL);
+    free(members.data);
+    free(nested.data);
+    free(access.data);
+    mg_grants_t *grants = load(text);
+    free(text);
+    CHECK(grants);
+    static const char *const users[] = {"alice", "bob", "nobody"};
+    static const char *const repos[] = {"app.git", "other.git"};
+    size_t alice_nested = 0u;
+    for (size_t u = 0u; u < COUNT(users); ++u)
+        for (size_t r = 0u; r < COUNT(repos); ++r) {
+            mg_slice_request_t request = {users[u], repos[r], "refs/heads/main", NULL, 0u};
+            mg_slice_t indexed, reference;
+            maelys_git_error_t error = {0};
+            CHECK(mg_slice_extract(grants, &request, &indexed, &error) == MAELYS_GIT_OK);
+            CHECK(reference_slice(grants, &request, &reference));
+            CHECK(same_slice(&indexed, &reference));
+            if (u == 0u && r == 0u)
+                for (size_t i = 0u; i < indexed.count; ++i) alice_nested += indexed.facts[i].predicate == MG_SLICE_NESTED;
+            mg_slice_clear(&indexed);
+            mg_slice_clear(&reference);
+        }
+    /* alice reaches 64 + 512 + 16 groups: every edge, the cycle's included. */
+    CHECK(alice_nested == 512u + 512u + 1u);
+    mg_grants_free(grants);
+    return 1;
+}
+
 int main(void) {
-    int ok = test_written_slice() && test_matches() && test_oracle();
-    if (ok) puts("grants slice: written slice, matches, oracle against the full scan: ok");
+    int ok = test_written_slice() && test_matches() && test_oracle() && test_many_groups();
+    if (ok) puts("grants slice: written slice, matches, oracle against the full scan, many groups: ok");
     return ok ? 0 : 1;
 }
