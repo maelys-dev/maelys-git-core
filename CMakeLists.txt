@@ -564,6 +564,7 @@ if(MAELYS_GIT_BUILD_TESTS)
             -DMAELYS_AGENT_BIN=$<TARGET_FILE:maelys-git-agent>
             -DMAELYS_EXECUTOR_BIN=$<TARGET_FILE:maelys-git-executor>
             -DMAELYS_SHELL_BIN=$<TARGET_FILE:maelys-git-shell>
+            -DMAELYS_HOOK_BIN=$<TARGET_FILE:maelys-git-hook>
             -DTEST_MANIFEST=${MAELYS_GIT_TEST_MANIFEST}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cli_integration.cmake)
 

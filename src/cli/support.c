@@ -57,6 +57,10 @@ int maelys_git_cli_stream_error(
     const char *operation,
     maelys_git_result_t result,
     const maelys_git_error_t *error) {
+    /* A stream refuses --format, so the json mode can only come from
+     * MAELYS_CLI_FORMAT: the framework then writes the failure envelope. */
+    if (maelys_cli_json_mode(context))
+        return maelys_git_cli_fail_result(context, result, error);
     FILE *err = context && context->err ? context->err : stderr;
     const char *program = context && context->app ? context->app->program : "maelys-git";
     (void)fprintf(err, "%s %s error [%s]: %s\n", program, operation,

@@ -178,9 +178,12 @@ exceptions à l'enveloppe :
 | `maelys-git-hook post-receive` | `maelys-git-events/1` : événements JSONL |
 | `maelys-git-agent stdio`, `maelys-git-executor serve` | `maelys-git-agent/1` en JSONL |
 
-Elles refusent les options de rendu JSON. Les diagnostics vont sur stderr sous
+Elles refusent les options de rendu JSON. Leurs échecs vont sur stderr sous
 la forme `PROGRAMME OPÉRATION error [résultat]: message` et aucun texte
-auxiliaire ne peut être injecté dans leur stdout.
+auxiliaire ne peut être injecté dans leur stdout. Avec `MAELYS_CLI_FORMAT=json`
+dans l'environnement, le même échec est l'enveloppe d'échec JSON ci-dessus, sur
+stderr, avec le même `error.code` qu'une commande à enveloppe ; c'est la seule
+manière d'obtenir du JSON d'une commande `stream`.
 
 ## Preuve d'implémentation
 
