@@ -55,7 +55,9 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   gives the executor in a content-addressed store beside its journal,
   `grants-store/<sha256>.json`: a directory private to its account, each file
   written once, read-only, synced with its directory, and read back when it
-  already exists. The executor runs on that file with
+  already exists. Every use syncs the store, an existing file and their
+  directories again, so that an attempt whose sync failed is made durable by
+  the next one. The executor runs on that file with
   `--expected-grants-fingerprint` (new on `maelys-git-executor serve` and
   `maelys-git-agent stdio`), which refuses a reading with other bytes, at its
   opening and before each command. A snapshot that cannot be kept starts no
