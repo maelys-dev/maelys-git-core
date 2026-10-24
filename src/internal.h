@@ -78,6 +78,9 @@ maelys_git_result_t mg_write_file_exclusive(const char *path,
                                             size_t length,
                                             mode_t mode,
                                             maelys_git_error_t *error);
+/* fsyncs the directory at PATH, so that the entries created, renamed or
+ * removed in it are durable; 0 with errno set on failure. */
+int mg_sync_directory(const char *path);
 int mg_remove_tree(const char *path);
 maelys_git_result_t mg_repository_ensure_parent_directories(
     const char *root,

@@ -1,6 +1,6 @@
 /* File-system primitives shared by the repository modules: canonical
  * directories, directory identities, no-replace renames, private temporary
- * directories and exclusive file creation. */
+ * directories, exclusive file creation and directory syncs. */
 #include "internal.h"
 
 #include <dirent.h>
@@ -139,6 +139,16 @@ maelys_git_result_t mg_write_file_exclusive(const char *path,
         return MAELYS_GIT_ERR_IO;
     }
     return MAELYS_GIT_OK;
+}
+
+int mg_sync_directory(const char *path) {
+    int descriptor = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (descriptor < 0) return 0;
+    int synced = fsync(descriptor) == 0;
+    int saved = errno;
+    (void)close(descriptor);
+    errno = saved;
+    return synced;
 }
 
 int mg_remove_tree(const char *path) {

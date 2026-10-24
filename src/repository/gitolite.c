@@ -1086,6 +1086,16 @@ typedef struct {
     size_t length;
 } output_file_t;
 
+/* The directory that holds PATH, in OUT: "." for a bare name, "/" at the
+ * root. */
+static const char *parent_of(const char *path, char *out, size_t size) {
+    const char *slash = strrchr(path, '/');
+    if (!slash) return ".";
+    if (slash == path) return "/";
+    (void)snprintf(out, size, "%.*s", (int)(slash - path), path);
+    return out;
+}
+
 /* Writes FILES into a transaction directory beside OUTPUT_DIRECTORY, loads
  * the manifest as production will (with the snapshot of grants.json when
  * WITH_GRANTS), then publishes the directory by one rename: no file of a
@@ -1124,12 +1134,24 @@ static maelys_git_result_t publish(const char *output_directory, const output_fi
         }
         maelys_git_policy_close(generated);
     }
+    /* Each file was synced as it was written; the directory that names them
+     * is synced before its rename, and its parent after it. */
+    if (result == MAELYS_GIT_OK && !mg_sync_directory(temporary)) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "cannot make migration output durable: %s", strerror(errno));
+        result = MAELYS_GIT_ERR_IO;
+    }
     if (result == MAELYS_GIT_OK && rename(temporary, output_directory) != 0) {
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
                      "cannot publish migration output: %s", strerror(errno));
         result = MAELYS_GIT_ERR_IO;
     }
     if (result != MAELYS_GIT_OK) (void)mg_remove_tree(temporary);
+    if (result == MAELYS_GIT_OK && !mg_sync_directory(parent_of(output_directory, path, sizeof(path)))) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "migration output published, but its directory could not be synced: %s", strerror(errno));
+        result = MAELYS_GIT_ERR_IO;
+    }
     return result;
 }
 

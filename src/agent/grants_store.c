@@ -7,7 +7,6 @@
 #include <maelys/cli/files.h>
 
 #include <errno.h>
-#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -19,16 +18,6 @@ static maelys_git_result_t code_of(int saved) {
     return saved == EACCES || saved == EPERM ? MAELYS_GIT_ERR_DENIED
          : saved == ENOENT || saved == ENOTDIR ? MAELYS_GIT_ERR_NOT_FOUND
          : saved == EFBIG ? MAELYS_GIT_ERR_LIMIT : MAELYS_GIT_ERR_IO;
-}
-
-static int sync_directory(const char *path) {
-    int descriptor = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (descriptor < 0) return 0;
-    int synced = fsync(descriptor) == 0;
-    int saved = errno;
-    (void)close(descriptor);
-    errno = saved;
-    return synced;
 }
 
 /* The store's directory, beside the journal: created private on first use,
@@ -44,7 +33,7 @@ static maelys_git_result_t open_store(const char *database_path, char out[4096],
         return MAELYS_GIT_ERR_LIMIT;
     }
     if (mkdir(out, 0700) == 0) {
-        if (!sync_directory(parent[0] ? parent : "/")) {
+        if (!mg_sync_directory(parent[0] ? parent : "/")) {
             int saved = errno;
             mg_error_set(error, MAELYS_GIT_ERR_IO, saved, "cannot make grants store %s durable: %s", out,
                          strerror(saved));
@@ -113,7 +102,7 @@ maelys_git_result_t mg_grants_store_archive(const char *grants_path, const char 
      * read again rather than trusted by its name. */
     if (result == MAELYS_GIT_OK) {
         if (maelys_cli_write_file_atomic(path, bytes, size, 0400, MAELYS_CLI_WRITE_NO_REPLACE) == 0) {
-            if (!sync_directory(directory)) {
+            if (!mg_sync_directory(directory)) {
                 int saved = errno;
                 mg_error_set(error, MAELYS_GIT_ERR_IO, saved, "cannot make grants store entry %s durable: %s",
                              path, strerror(saved));

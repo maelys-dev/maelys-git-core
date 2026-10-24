@@ -48,6 +48,9 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   `--expected-grants-fingerprint`; grants changed since the plan are refused.
   `maelys_git_pr_merge_grants` carries that precondition; the former entry
   points still plan, and refuse to apply on a policy with a snapshot.
+- `migrate gitolite --apply` syncs the directory of its output before
+  renaming it into place, and the parent directory after: the published
+  output is durable, not only atomic.
 - The Cloud agent keeps, before each command, the snapshot of grants it
   gives the executor in a content-addressed store beside its journal,
   `grants-store/<sha256>.json`: a directory private to its account, each file

@@ -12,6 +12,7 @@
 
 #include <maelys/cli/digest.h>
 
+#include <errno.h>
 #include <stdint.h>
 
 static char g_root[256];
@@ -369,8 +370,16 @@ static int test_written_snapshot(void) {
         "repo users/CREATOR/..*\n    C = @creators\n    RW+ = CREATOR\n", &compiled, &grants));
     maelys_git_policy_close(compiled);
     maelys_git_policy_close(grants);
+    /* Published durably: the files, the directory that names them and its
+     * parent are synced; the primitive refuses what is not a directory. */
     char path[512];
+    (void)snprintf(path, sizeof(path), "%s/written-grants", g_root);
+    CHECK(mg_sync_directory(path) && mg_sync_directory(g_root));
+    (void)snprintf(path, sizeof(path), "%s/missing", g_root);
+    errno = 0;
+    CHECK(!mg_sync_directory(path) && errno == ENOENT);
     (void)snprintf(path, sizeof(path), "%s/written-grants/grants.json", g_root);
+    CHECK(!mg_sync_directory(path));
     size_t size = 0u;
     char *bytes = read_file(path, &size);
     CHECK(bytes);
