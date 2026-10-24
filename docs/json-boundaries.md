@@ -2,8 +2,8 @@
 
 Décision d'architecture du **2026-10-18** (cycle GIT-C05), qui révoque la
 coexistence durable décidée le 2026-09-05 (voir [Historique](#historique)).
-Bibliothèque : maelys-json, tag **`v0.3.0`**, commit
-`d106890b02b3fbfd599ecd22bdeffb600db66123`, épinglé dans
+Bibliothèque : maelys-json, tag **`v0.3.1`**, commit
+`3cfef055ba900816f0ba71c98380cd8dd2c9f94c`, épinglé dans
 [`cmake/dependencies.cmake`](../cmake/dependencies.cmake).
 
 ## Décision
@@ -53,7 +53,7 @@ maelys-json ne fait pas pour une erreur d'argument.
 | `MG_JSON_DATA`, données d'une commande CLI | plafond de la bibliothèque, `SIZE_MAX / 2 - 1` | 32 | plafond, `SIZE_MAX / 256` | ASCII, compacte |
 | `MG_JSON_PROTOCOL_LINE`, résultat, événement, erreur, décision | 65 536 octets de JSON, séparateur exclu | 32 | 32 768 | ASCII, compacte, LF écrit après |
 | `MG_JSON_DEDUPLICATION`, forme v2 | 65 536 | 32 | 32 768 | ASCII, compacte, sans LF |
-| `MG_JSON_CONFIGURATION`, configuration générée | 65 536, comme son lecteur | 1 | 29 | indentée, LF écrit après |
+| `MG_JSON_CONFIGURATION`, configuration générée | 65 536, comme son lecteur | 1 | 31 | indentée, LF écrit après |
 | reçu (`receipt.c`) | 8 192 au plus (`MAELYS_GIT_RECEIPT_MAX_BYTES`) | 4 | 512 | canonique, sans drapeau |
 | ligne JSONL d'un reçu et de son texte (`receipt.c`) | reçu, plus six fois le texte de 32 768 octets, plus 256 | 5 | 520 | UTF-8, LF final compté |
 | résultat publié sans texte (`store.c`) | 65 536 | 32 | 32 768 | UTF-8 non échappé, compacte |
@@ -80,7 +80,7 @@ son reçu inchangé : l'empreinte du texte reste dans le reçu.
 
 | Module et opération actuelle | Origine et état actuel | Cible et couture |
 |---|---|---|
-| [`src/agent/config.c`](../src/agent/config.c), `mg_config_load` | **Migré** : fichier ouvert une fois, contrôlé par `fstat` puis lu sur ce descripteur ; parse maelys-json limité à 65 536 octets, profondeur 1 et 29 valeurs. | Validation des 14 champs scalaires requis, des chemins et des plages numériques ; copie dans `maelys_git_agent_config_t`, puis libération du document. |
+| [`src/agent/config.c`](../src/agent/config.c), `mg_config_load` | **Migré** : fichier ouvert une fois, contrôlé par `fstat` puis lu sur ce descripteur ; parse maelys-json limité à 65 536 octets, profondeur 1 et 31 valeurs. | Validation des 14 champs scalaires requis et de `grants_path`, optionnel, des chemins et des plages numériques ; copie dans `maelys_git_agent_config_t`, puis libération du document. |
 | [`src/protocol/protocol.c`](../src/protocol/protocol.c), `mg_protocol_parse` | **Migré** : maelys-json `RFC8259`, 65 536 octets, profondeur 32, 32 768 tokens ; validation de l’enveloppe et des horodatages entiers signés sur 64 bits. | Le message possède ensemble le document et le handle `maelys_json_value_t` du payload. Les lectures typées de l’exécuteur utilisent ce document jusqu’à `mg_protocol_message_clear` ; aucune vue empruntée ne lui survit. |
 | [`src/agent/agent.c`](../src/agent/agent.c), `maelys_git_agent_serve` | **Migré** : cadrage borné par comptage d’octets ; le parseur reçoit la longueur exacte, NUL compris. | 65 536 octets de JSON, hors un LF ou CRLF final obligatoire. Ligne malformée complète : erreur puis poursuite ; dépassement ou ligne non terminée : erreur et arrêt du flux. |
 | [`src/agent/cloud.c`](../src/agent/cloud.c), `poll_commands` / `process_command` | **Migré** : parse maelys-json du corps HTTP exact, 65 536 octets, profondeur 34 et 32 768 tokens ; schéma du lot et domaine numérique contrôlés avant la boucle. | 32 commandes au plus, curseur inférieur à 1 024 octets. La forme de déduplication v2 de chaque commande est écrite depuis ce document ; chaque commande possède ensuite son document, vérifie son destinataire et suit ses propres validations. Le document du lot garde le curseur vivant jusqu’à sa persistance. |
@@ -108,7 +108,8 @@ puis parse du tampon avec sa longueur exacte. `parse_file` rouvrirait le chemin
 et séparerait de nouveau le contrôle de la lecture ; il ne convient pas à cette
 séquence. L'ouverture est non bloquante afin de pouvoir refuser un FIFO avant
 toute lecture. Les trois limites sont explicites : 65 536 octets, profondeur
-1 et 29 valeurs (la racine, 14 clés et 14 scalaires). Une configuration valide
+1 et 31 valeurs (la racine, 15 clés et 15 scalaires : les 14 champs requis et
+`grants_path`, optionnel depuis GIT-C06). Une configuration valide
 d'exactement 65 536 octets reste acceptée, blancs compris ; un octet de plus
 est refusé. Les champs numériques sont lus comme entiers sans fraction ni
 exposant, puis contrôlés : `version` vaut 1, les deux délais sont compris entre

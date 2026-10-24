@@ -1,6 +1,7 @@
 /* The policy engine as Maelys Git Core uses it: vocabulary local to a policy,
  * engine limits, Gitolite prefixes, explanations and identities. */
 #include "maelys_git.h"
+#include "internal.h"
 #include "test_support.h"
 
 #include <maelys/cli/digest.h>
@@ -282,7 +283,7 @@ static int migrate(const char *name, const char *configuration, int apply,
     (void)snprintf(output, sizeof(output), "%s/%s", g_root, name);
     CHECK(write_text(input, configuration));
     maelys_git_error_t error;
-    maelys_git_result_t result = maelys_git_migrate_gitolite(input, output, apply, migration, &error);
+    maelys_git_result_t result = mg_migrate_gitolite_compiled(input, output, apply, migration, &error);
     if (!out_policy) return result == MAELYS_GIT_OK;
     CHECK(result == MAELYS_GIT_OK);
     (void)snprintf(manifest, sizeof(manifest), "%s/manifest.json", output);
@@ -573,7 +574,7 @@ static char *literal_policy(size_t length) {
     if (!source) return NULL;
     int prefix = snprintf(source, length + 64u, "allow(R) :- request(R), user(\"");
     memset(source + prefix, 'a', length);
-    (void)snprintf(source + (size_t)prefix + length, 64u, "\").\n");
+    (void)snprintf(source + (size_t)prefix + length, length + 64u - ((size_t)prefix + length), "\").\n");
     return source;
 }
 
@@ -782,7 +783,7 @@ static int test_capacity_details(const refusal_t refusals[REFUSAL_COUNT]) {
     CHECK(source != NULL);
     int prefix = snprintf(source, limit + 64u, "allow(R) :- request(R), user(\"");
     memset(source + prefix, 'b', limit);
-    (void)snprintf(source + (size_t)prefix + limit, 64u, "\").\n");
+    (void)snprintf(source + (size_t)prefix + limit, limit + 64u - ((size_t)prefix + limit), "\").\n");
     CHECK(loads("bound-atom-bytes", source));
 
     const refusal_t *atoms = &refusals[REFUSAL_POLICY_ATOMS];

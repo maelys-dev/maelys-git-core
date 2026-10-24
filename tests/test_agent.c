@@ -326,6 +326,135 @@ static int test_denial_audit(void) {
     return 1;
 }
 
+
+static int write_file(const char *path, const char *contents, mode_t mode);
+
+/* The syncs the store makes, as the test hook sees them: each path, and
+ * the one to fail once. */
+static char g_synced[16][4200];
+static size_t g_sync_count;
+static char g_fail_sync[4200];
+
+static int record_sync(const char *path) {
+    if (g_sync_count < 16u) (void)snprintf(g_synced[g_sync_count++], sizeof(g_synced[0]), "%s", path);
+    if (g_fail_sync[0] && !strcmp(path, g_fail_sync)) {
+        g_fail_sync[0] = '\0';
+        return 1;
+    }
+    return 0;
+}
+
+static int synced(const char *path) {
+    for (size_t i = 0u; i < g_sync_count; ++i)
+        if (!strcmp(g_synced[i], path)) return 1;
+    return 0;
+}
+
+/* GIT-C06 test 12, durability: a sync that fails leaves a file or a
+ * directory in place; the next attempt finds it and syncs it again, rather
+ * than taking right bytes for durable ones. */
+static int test_grants_store_retry(void) {
+    char template[] = "/tmp/maelys_git_store_retry_XXXXXX";
+    char *root = mkdtemp(template);
+    CHECK(root != NULL);
+    char database[4096], source[4096], store[4200], entry[4300], sha256[65];
+    (void)snprintf(database, sizeof(database), "%s/agent.sqlite3", root);
+    (void)snprintf(source, sizeof(source), "%s/grants.json", root);
+    (void)snprintf(store, sizeof(store), "%s/grants-store", root);
+    static const char bytes[] = "grants kept durably";
+    CHECK(write_file(source, bytes, 0644));
+    maelys_cli_sha256_hex(bytes, strlen(bytes), sha256);
+    (void)snprintf(entry, sizeof(entry), "%s/%s.json", store, sha256);
+    mg_grants_archive_t archive;
+    maelys_git_error_t error;
+    mg_sync_test_failure = record_sync;
+    /* The store's parent, after its mkdir; then the entry's directory, after
+     * the entry is written. */
+    const char *failures[] = {root, store};
+    for (size_t f = 0u; f < 2u; ++f) {
+        g_sync_count = 0u;
+        (void)snprintf(g_fail_sync, sizeof(g_fail_sync), "%s", failures[f]);
+        CHECK(mg_grants_store_archive(source, database, &archive, &error) == MAELYS_GIT_ERR_IO);
+        CHECK(strstr(error.message, "durable") != NULL && !archive.sha256[0]);
+        CHECK(access(f == 0u ? store : entry, F_OK) == 0); /* left in place */
+        g_sync_count = 0u;
+        CHECK(mg_grants_store_archive(source, database, &archive, &error) == MAELYS_GIT_OK);
+        CHECK(!strcmp(archive.sha256, sha256));
+        /* Synced again: the parent, the entry and its directory. */
+        CHECK(synced(root) && synced(store));
+        CHECK(f == 0u || synced(entry));
+    }
+    mg_sync_test_failure = NULL;
+    CHECK(test_remove_tree(root));
+    return 1;
+}
+
+/* GIT-C06 test 12, the audit: the agent records the snapshot it gave the
+ * executor with the completion, and refuses a receipt that names other
+ * grants, or names grants when none were given. */
+static int test_grants_audit(void) {
+    static const char kept[] = "/var/lib/maelys/grants-store/";
+    char sha256[65], other[65];
+    memset(sha256, 'a', 64u); sha256[64] = '\0';
+    memset(other, 'b', 64u); other[64] = '\0';
+    mg_grants_archive_t archive = {{0}, {0}}, none = {{0}, {0}};
+    (void)snprintf(archive.sha256, sizeof(archive.sha256), "%s", sha256);
+    (void)snprintf(archive.path, sizeof(archive.path), "%s%s.json", kept, sha256);
+    char v2[256], v2_other[256];
+    (void)snprintf(v2, sizeof(v2), "{\"grants\":{\"facts\":1,\"sha256\":\"%s\"},\"version\":2}", sha256);
+    (void)snprintf(v2_other, sizeof(v2_other), "{\"grants\":{\"facts\":1,\"sha256\":\"%s\"},\"version\":2}", other);
+    maelys_git_error_t error = {0};
+    struct { const char *receipt; const mg_grants_archive_t *archive; maelys_git_result_t expected; int event; } cases[] = {
+        {NULL, &archive, MAELYS_GIT_OK, 1},                   /* no decision, grants given */
+        {"{\"version\":1}", &archive, MAELYS_GIT_OK, 1},      /* no audited program */
+        {v2, &archive, MAELYS_GIT_OK, 1},
+        {v2_other, &archive, MAELYS_GIT_ERR_PROTOCOL, 0},
+        {v2, &none, MAELYS_GIT_ERR_PROTOCOL, 0},
+        {"{\"version\":1}", &none, MAELYS_GIT_OK, 0},
+        {NULL, &none, MAELYS_GIT_OK, 0},
+    };
+    for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        mg_receipt_events_t events = {0};
+        if (cases[i].receipt) CHECK((events.receipt = strdup(cases[i].receipt)) != NULL);
+        CHECK(mg_receipt_events_add_grants(&events, cases[i].archive, &error) == cases[i].expected);
+        CHECK((events.grants != NULL) == cases[i].event);
+        if (cases[i].expected != MAELYS_GIT_OK) CHECK(strstr(error.message, "other than those") != NULL);
+        mg_receipt_events_clear(&events);
+    }
+
+    /* Audited with the completion, in its transaction. */
+    char directory[] = "/tmp/maelys_git_grants_audit_XXXXXX";
+    CHECK(mkdtemp(directory) != NULL);
+    char database[4096];
+    (void)snprintf(database, sizeof(database), "%s/agent.sqlite3", directory);
+    maelys_git_agent_store_t *store = NULL;
+    CHECK(mg_store_open(database, &store, &error) == MAELYS_GIT_OK);
+    char *raw = command_for("grants-1", "repository_info", "alice", "{}");
+    mg_agent_message_t message;
+    CHECK(raw && mg_protocol_parse(raw, strlen(raw), &message, &error) == MAELYS_GIT_OK);
+    mg_store_command_state_t state;
+    char *stored = NULL;
+    CHECK(mg_store_record_command(store, &message, raw, &state, &stored, &error) == MAELYS_GIT_OK);
+    CHECK(mg_store_mark_running(store, message.message_id, &error) == MAELYS_GIT_OK);
+    mg_receipt_events_t events = {0};
+    CHECK(mg_receipt_events_add_grants(&events, &archive, &error) == MAELYS_GIT_OK);
+    CHECK(mg_store_complete_command(store, message.message_id, 1, "{\"status\":\"ok\"}", &events, mg_now_ms(),
+                                    &error) == MAELYS_GIT_OK);
+    char *audited = audit_payload(database, "grants:grants-1");
+    maelys_json_document_t *document = tj_parse(audited);
+    CHECK(document && tj_size(document, "") == 2u && tj_string_is(document, "sha256", sha256) &&
+          tj_string_is(document, "path", archive.path));
+    tj_release(document);
+    free(audited);
+    mg_receipt_events_clear(&events);
+    mg_protocol_message_clear(&message);
+    free(raw);
+    free(stored);
+    mg_store_close(store);
+    CHECK(test_remove_tree(directory));
+    return 1;
+}
+
 /* The local front-end publishes what it executes and keeps no audit: the
  * denial of a repository change carries its receipt, without an explanation
  * and without its summary, exactly as the Cloud agent would publish it. */
@@ -553,6 +682,27 @@ static int test_provision_and_token_security(void) {
     CHECK(stat(config, &status) == 0 && (status.st_mode & 0777u) == 0600u);
     maelys_git_agent_config_t *loaded = NULL;
     CHECK(mg_config_load(config, &loaded, &error) == MAELYS_GIT_OK);
+    CHECK(loaded->grants_path[0] == '\0');
+    mg_config_free(loaded);
+    /* With a snapshot of grants: an absolute path to a trusted file, read
+     * back as grants_path. */
+    char grants[4096], with_grants[4096];
+    (void)snprintf(grants, sizeof(grants), "%s/grants.json", directory);
+    (void)snprintf(with_grants, sizeof(with_grants), "%s/agent-grants.json", directory);
+    CHECK(maelys_git_agent_validate_provision_grants(with_grants, "agent-1", "forge.example.test", ca, token,
+        database, TEST_MANIFEST_FILE, "grants.json", directory, "/usr/bin/true", &error) ==
+          MAELYS_GIT_ERR_INVALID_ARGUMENT);
+    CHECK(maelys_git_agent_provision_grants(with_grants, "agent-1", "forge.example.test", ca, token,
+        database, TEST_MANIFEST_FILE, grants, directory, "/usr/bin/true", &error) == MAELYS_GIT_ERR_NOT_FOUND);
+    CHECK(write_file(grants, "{}", 0666));
+    CHECK(maelys_git_agent_provision_grants(with_grants, "agent-1", "forge.example.test", ca, token,
+        database, TEST_MANIFEST_FILE, grants, directory, "/usr/bin/true", &error) == MAELYS_GIT_ERR_DENIED);
+    CHECK(access(with_grants, F_OK) != 0);
+    CHECK(chmod(grants, 0644) == 0);
+    CHECK(maelys_git_agent_provision_grants(with_grants, "agent-1", "forge.example.test", ca, token,
+        database, TEST_MANIFEST_FILE, grants, directory, "/usr/bin/true", &error) == MAELYS_GIT_OK);
+    CHECK(mg_config_load(with_grants, &loaded, &error) == MAELYS_GIT_OK);
+    CHECK(!strcmp(loaded->grants_path, grants));
     mg_config_free(loaded);
     char value[MG_TOKEN_MAX];
     CHECK(mg_token_load(token, value, sizeof(value), &error) == MAELYS_GIT_OK);
@@ -574,7 +724,9 @@ int main(void) {
     passed += test_denial_audit();
     passed += test_stdio_denial();
     passed += test_diff_beyond_line();
-    if (passed != 9) return 1;
+    passed += test_grants_audit();
+    passed += test_grants_store_retry();
+    if (passed != 11) return 1;
     (void)printf("ok: %d agent test groups passed\n", passed);
     return 0;
 }

@@ -949,7 +949,23 @@ maelys_git_result_t maelys_git_pr_merge_with_source(
     return mg_pr_merge(git, repository_path, repository_name, base_ref, base_oid, head_oid,
                        style, message, principal, gates, policy, pr_id, source,
                        expected_target_identity, expected_prepared_oid,
-                       expected_policy_fingerprint, apply, out_result, NULL, NULL, error);
+                       expected_policy_fingerprint, NULL, 0, apply, out_result, NULL, NULL, error);
+}
+
+maelys_git_result_t maelys_git_pr_merge_grants(
+    const char *git, const char *repository_path, const char *repository_name,
+    const char *base_ref, const char *base_oid, const char *head_oid,
+    maelys_git_merge_style_t style, const char *message, const char *principal,
+    const maelys_git_pr_gates_t *gates, maelys_git_policy_t *policy, const char *pr_id,
+    const maelys_git_pr_source_t *source,
+    const char *expected_target_identity, const char *expected_prepared_oid,
+    const char *expected_policy_fingerprint, const char *expected_grants_fingerprint, int apply,
+    maelys_git_pr_check_result_t *out_result, maelys_git_error_t *error) {
+    return mg_pr_merge(git, repository_path, repository_name, base_ref, base_oid, head_oid,
+                       style, message, principal, gates, policy, pr_id, source,
+                       expected_target_identity, expected_prepared_oid,
+                       expected_policy_fingerprint, expected_grants_fingerprint, 1, apply, out_result,
+                       NULL, NULL, error);
 }
 
 static maelys_git_result_t merge(
@@ -959,7 +975,8 @@ static maelys_git_result_t merge(
     const maelys_git_pr_gates_t *gates, maelys_git_policy_t *policy, const char *pr_id,
     const maelys_git_pr_source_t *source,
     const char *expected_target_identity, const char *expected_prepared_oid,
-    const char *expected_policy_fingerprint, int apply,
+    const char *expected_policy_fingerprint, const char *expected_grants_fingerprint,
+    int grants_checked, int apply,
     maelys_git_pr_check_result_t *out_result, pr_auth_context_t *auth,
     maelys_git_error_t *error) {
     maelys_git_error_clear(error);
@@ -1012,6 +1029,8 @@ static maelys_git_result_t merge(
     }
     result = maelys_git_policy_fingerprint(policy, prepared.result.policy_fingerprint,
                                            error);
+    if (result == MAELYS_GIT_OK)
+        result = maelys_git_policy_grants_fingerprint(policy, prepared.result.grants_fingerprint, error);
     if (result != MAELYS_GIT_OK) {
         prepared_clear(&prepared);
         return result;
@@ -1038,6 +1057,27 @@ static maelys_git_result_t merge(
                         prepared.result.policy_fingerprint) != 0) {
         mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
                      "policy set changed; run a new pull request plan");
+        prepared_clear(&prepared);
+        return MAELYS_GIT_ERR_PROCESS;
+    }
+    /* The grants are a precondition of their own: a caller that does not
+     * know them never applies on a handle that has them. */
+    const char *grants = prepared.result.grants_fingerprint;
+    if (apply && grants[0] && !grants_checked) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0,
+                     "apply on a policy with a snapshot of grants requires maelys_git_pr_merge_grants");
+        prepared_clear(&prepared);
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    if (apply && grants[0] && (!expected_grants_fingerprint || !*expected_grants_fingerprint)) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0,
+                     "apply requires the grants fingerprint returned by plan");
+        prepared_clear(&prepared);
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    if (apply && grants_checked && expected_grants_fingerprint && *expected_grants_fingerprint &&
+        strcmp(expected_grants_fingerprint, grants) != 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0, "grants changed; run a new pull request plan");
         prepared_clear(&prepared);
         return MAELYS_GIT_ERR_PROCESS;
     }
@@ -1111,8 +1151,8 @@ maelys_git_result_t mg_pr_merge(
     const maelys_git_pr_gates_t *gates, maelys_git_policy_t *policy, const char *pr_id,
     const maelys_git_pr_source_t *source,
     const char *expected_target_identity, const char *expected_prepared_oid,
-    const char *expected_policy_fingerprint, int apply,
-    maelys_git_pr_check_result_t *out_result,
+    const char *expected_policy_fingerprint, const char *expected_grants_fingerprint,
+    int grants_checked, int apply, maelys_git_pr_check_result_t *out_result,
     maelys_git_policy_decision_t *out_decision, mg_receive_receipt_t *out_receipt,
     maelys_git_error_t *error) {
     if (out_receipt) {
@@ -1125,7 +1165,8 @@ maelys_git_result_t mg_pr_merge(
     maelys_git_result_t result = merge(
         git, repository_path, repository_name, base_ref, base_oid, head_oid, style, message,
         principal, gates, policy, pr_id, source, expected_target_identity,
-        expected_prepared_oid, expected_policy_fingerprint, apply, out_result, &auth, error);
+        expected_prepared_oid, expected_policy_fingerprint, expected_grants_fingerprint, grants_checked,
+        apply, out_result, &auth, error);
     /* The receipt is the outcome's only when the outcome is the last decision:
      * an accepted merge, or the denial that stopped it. */
     if (out_receipt)

@@ -202,7 +202,25 @@ maelys_git_result_t maelys_git_policy_open(
     const char *manifest_path,
     maelys_git_policy_t **out_policy,
     maelys_git_error_t *error);
+/* maelys_git_policy_open with a snapshot of Gitolite grants,
+ * maelys-git-grants/1, read once as a trusted file: links are followed and
+ * the directory of their target judged; the descriptor read is observed
+ * before and after the read. A set whose policy reads the snapshot (the
+ * audited Gitolite program, the only one allowed to) must be opened so; a
+ * snapshot needs such a set. A snapshot is published by renaming a new,
+ * complete file over the path, never by writing the published one. */
+maelys_git_result_t maelys_git_policy_open_grants(
+    const char *manifest_path,
+    const char *grants_path,
+    maelys_git_policy_t **out_policy,
+    maelys_git_error_t *error);
 void maelys_git_policy_close(maelys_git_policy_t *policy);
+/* The SHA-256 of the bytes of the handle's snapshot of grants; an empty
+ * string for a handle opened without one. */
+maelys_git_result_t maelys_git_policy_grants_fingerprint(
+    const maelys_git_policy_t *policy,
+    char out_hex[65],
+    maelys_git_error_t *error);
 maelys_git_result_t maelys_git_policy_fingerprint(
     const maelys_git_policy_t *policy,
     char out_hex[65],
@@ -287,6 +305,17 @@ typedef struct {
     char text_sha256[65];
 } maelys_git_receipt_explanation_t;
 
+/* The snapshot of grants a decision used: present when a policy of the set
+ * read it, which only the audited Gitolite program may (receipt version 2).
+ * Its format, the format of the slice and that of the program are fixed by
+ * that version: maelys-git-grants/1, maelys-git-slice/1 and
+ * maelys-git-gitolite-program/1. */
+typedef struct {
+    int present;
+    char sha256[65]; /* of the snapshot's bytes */
+    size_t facts;    /* distinct tuples of the slice given to the engine */
+} maelys_git_receipt_grants_t;
+
 /* The record of one decision, built by the code path that authorizes. It
  * holds a bounded summary of the engine's explanation, never its text: the
  * text travels beside the receipt, which keeps its size and SHA-256. Every
@@ -306,6 +335,7 @@ typedef struct {
     size_t edb_facts;          /* request facts given to the engine */
     size_t evaluated_policies; /* policies solved before the decision */
     maelys_git_receipt_explanation_t explanation;
+    maelys_git_receipt_grants_t grants;
 } maelys_git_receipt_t;
 
 /* Authorizes as maelys_git_policy_authorize does and fills the receipt of
@@ -612,6 +642,9 @@ typedef struct {
     char pr_merged_ref[MAELYS_GIT_MAX_REF];
     maelys_git_path_list_t conflict_paths;
     maelys_git_change_summary_t changes;
+    /* The SHA-256 of the policy handle's snapshot of grants; empty without
+     * one, and for pr check, which decides nothing. */
+    char grants_fingerprint[65];
 } maelys_git_pr_check_result_t;
 
 typedef struct {
@@ -681,6 +714,33 @@ maelys_git_result_t maelys_git_pr_merge_with_source(
     maelys_git_pr_check_result_t *out_result,
     maelys_git_error_t *error);
 
+/* maelys_git_pr_merge_with_source with the precondition on grants: apply
+ * on a handle opened with a snapshot of grants requires the grants
+ * fingerprint the plan returned, and refuses other grants with "grants
+ * changed; run a new pull request plan". The two entry points above plan
+ * on such a handle, and refuse to apply on it. */
+maelys_git_result_t maelys_git_pr_merge_grants(
+    const char *git_executable,
+    const char *repository_path,
+    const char *repository_name,
+    const char *base_ref,
+    const char *base_oid,
+    const char *head_oid,
+    maelys_git_merge_style_t style,
+    const char *message,
+    const char *principal,
+    const maelys_git_pr_gates_t *gates,
+    maelys_git_policy_t *policy,
+    const char *pr_id,
+    const maelys_git_pr_source_t *source,
+    const char *expected_target_identity,
+    const char *expected_prepared_oid,
+    const char *expected_policy_fingerprint,
+    const char *expected_grants_fingerprint,
+    int apply,
+    maelys_git_pr_check_result_t *out_result,
+    maelys_git_error_t *error);
+
 typedef maelys_git_result_t (*maelys_git_inspector_fn)(
     const maelys_git_receive_update_t *update,
     const maelys_git_change_t *change,
@@ -743,6 +803,14 @@ typedef struct {
 
 void maelys_git_gitolite_migration_result_clear(
     maelys_git_gitolite_migration_result_t *result);
+/* Migrates the safe subset of a Gitolite configuration into OUTPUT_DIRECTORY,
+ * which must not exist: the audited Gitolite program,
+ * maelys-git-gitolite-program/1, as gitolite-migrated.dl, its manifest, and
+ * the configuration's grants as grants.json, maelys-git-grants/1, which the
+ * program reads with --grants (maelys_git_policy_open_grants). The program
+ * does not depend on the configuration: its budget is fixed; the plan judges
+ * the groups of a user and the bounds of the snapshot. Apply publishes the
+ * directory by one rename, after the engine loaded it with its snapshot. */
 maelys_git_result_t maelys_git_migrate_gitolite(
     const char *input_path,
     const char *output_directory,

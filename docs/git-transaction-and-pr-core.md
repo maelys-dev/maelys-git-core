@@ -153,6 +153,30 @@ other repository patterns, positive VREFs and unknown VREFs remain explicit
 violations. Every incompatible source line is reported rather than silently
 weakened.
 
+The output holds three files: `gitolite-migrated.dl`, the audited Gitolite
+program `maelys-git-gitolite-program/1`, whose text is the same for every
+configuration; `manifest.json`; and `grants.json`, the configuration's grants
+as data, `maelys-git-grants/1`. Every command that opens the manifest takes
+the snapshot with `--grants FILE`: `authorize`, `validate`, `pr merge`, the
+hook, the shell, `executor serve` and `agent stdio`, and the agent's
+configuration names it as `grants_path`. A snapshot is published by renaming
+a complete new file over the published one, never by writing the published
+file: a stream reads it again before each command, decides on what it read,
+and refuses every command while it cannot read it. A plan of `pr merge`
+returns `grantsFingerprint`, which its apply requires back as
+`--expected-grants-fingerprint`.
+
+The Cloud agent never starts an executor on the configured path. Before each
+command it reads the snapshot, keeps its bytes in its store beside the
+journal, `grants-store/<sha256>.json` (a directory private to its account, a
+file written once, read-only, synced with its directory; an existing file is
+read back and must hold the bytes its name says), and starts the executor on
+that file with `--expected-grants-fingerprint <sha256>`: every reading with
+other bytes refuses. A snapshot that cannot be kept starts no executor. The
+journal audits the digest with the completion, and a receipt that names other
+grants fails the command. `agent provision --grants FILE` writes
+`grants_path`.
+
 All Git subprocess capture paths have a 120-second execution deadline and
 bounded output. Large tree, diff, commit, and blob-batch streams are spooled to
 temporary files with explicit quotas rather than accumulated in RAM.

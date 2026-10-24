@@ -2,7 +2,9 @@
 #define MAELYS_GIT_RECEIPT_H
 
 /* Authorization receipts as bytes: Maelys Canonical JSON v1 written by
- * maelys-json, and their SHA-256. Version 1 of the receipt contract. */
+ * maelys-json, and their SHA-256. Versions 1 and 2 of the receipt contract:
+ * version 2 is version 1 with the member grants, written only when a policy
+ * of the set read a snapshot of grants. */
 
 #include "maelys_git.h"
 
@@ -26,10 +28,11 @@ maelys_git_result_t maelys_git_receipt_serialize(
     char out_sha256[65],
     maelys_git_error_t *error);
 
-/* Accepts bytes only if they are a canonical receipt of version 1: closed
- * keys, types, enumerations and digest lengths, unsigned integers only. On
- * success, out_sha256 (which may be NULL) receives the SHA-256 of the bytes as
- * given. Anything else is MAELYS_GIT_ERR_PROTOCOL. */
+/* Accepts bytes only if they are a canonical receipt of version 1 or 2:
+ * closed keys, types, enumerations and digest lengths, unsigned integers
+ * only; grants in version 2 and only there. On success, out_sha256 (which
+ * may be NULL) receives the SHA-256 of the bytes as given. Anything else is
+ * MAELYS_GIT_ERR_PROTOCOL. */
 maelys_git_result_t maelys_git_receipt_verify(
     const void *bytes,
     size_t size,

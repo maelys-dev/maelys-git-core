@@ -187,10 +187,16 @@ maelys_git_result_t mg_config_load(const char *path,
     maelys_json_value_t root = maelys_json_document_root(document);
     size_t fields = 0u;
     uint64_t version = 0u;
-    /* Unique keys, exactly 14 members and all required getters together
-     * reject both missing and unknown fields without a second key catalog. */
+    /* Unique keys, exactly 14 members (15 with grants_path, the optional
+     * one) and all required getters together reject both missing and
+     * unknown fields without a second key catalog. */
+    maelys_json_value_t grants = 0;
+    int has_grants = maelys_json_object_get(document, root, "grants_path", &grants) == MAELYS_JSON_OK;
     int valid = maelys_json_object_size(document, root, &fields) == MAELYS_JSON_OK &&
-                fields == MG_CONFIG_FIELD_COUNT &&
+                fields == MG_CONFIG_FIELD_COUNT + (has_grants ? 1u : 0u) &&
+                (!has_grants || (copy_config_string(document, root, "grants_path", config->grants_path,
+                                                    sizeof(config->grants_path)) &&
+                                 absolute_path(config->grants_path))) &&
                 maelys_json_object_get_u64(document, root, "version", &version) == MAELYS_JSON_OK &&
                 version == 1u &&
                 copy_config_string(document, root, "agent_id", config->agent_id, sizeof(config->agent_id)) &&
@@ -224,7 +230,8 @@ maelys_git_result_t mg_config_load(const char *path,
     }
     if (!secure_regular_file(config->token_file, FILE_TRUST_SECRET, error) ||
         !secure_regular_file(config->ca_file, FILE_TRUST_SYSTEM, error) ||
-        !secure_regular_file(config->manifest_path, FILE_TRUST_SYSTEM, error)) {
+        !secure_regular_file(config->manifest_path, FILE_TRUST_SYSTEM, error) ||
+        (config->grants_path[0] && !secure_regular_file(config->grants_path, FILE_TRUST_SYSTEM, error))) {
         free(config);
         return error ? error->code : MAELYS_GIT_ERR_DENIED;
     }
@@ -292,12 +299,23 @@ maelys_git_result_t maelys_git_agent_provision(
     const char *ca_file, const char *token_file, const char *database_path,
     const char *manifest_path, const char *repository_root, const char *executor_path,
     maelys_git_error_t *error) {
-    maelys_git_result_t validation = maelys_git_agent_validate_provision(
+    return maelys_git_agent_provision_grants(config_path, agent_id, authority, ca_file, token_file,
+                                             database_path, manifest_path, NULL, repository_root,
+                                             executor_path, error);
+}
+
+maelys_git_result_t maelys_git_agent_provision_grants(
+    const char *config_path, const char *agent_id, const char *authority,
+    const char *ca_file, const char *token_file, const char *database_path,
+    const char *manifest_path, const char *grants_path, const char *repository_root,
+    const char *executor_path, maelys_git_error_t *error) {
+    maelys_git_result_t validation = maelys_git_agent_validate_provision_grants(
         config_path, agent_id, authority, ca_file, token_file, database_path,
-        manifest_path, repository_root, executor_path, error);
+        manifest_path, grants_path, repository_root, executor_path, error);
     if (validation != MAELYS_GIT_OK) return validation;
 
-    /* The flat object mg_config_load reads back: 14 members, indented. */
+    /* The flat object mg_config_load reads back: 14 members, or 15 with
+     * grants_path, indented. */
     mg_json_t json;
     mg_json_begin(&json, MG_JSON_CONFIGURATION);
     mg_json_object(&json, NULL);
@@ -308,6 +326,7 @@ maelys_git_result_t maelys_git_agent_provision(
     mg_json_string(&json, "token_file", token_file);
     mg_json_string(&json, "database_path", database_path);
     mg_json_string(&json, "manifest_path", manifest_path);
+    if (grants_path) mg_json_string(&json, "grants_path", grants_path);
     mg_json_string(&json, "repository_root", repository_root);
     mg_json_string(&json, "git_executable", "/usr/bin/git");
     mg_json_string(&json, "executor_path", executor_path);
@@ -346,8 +365,19 @@ maelys_git_result_t maelys_git_agent_validate_provision(
     const char *ca_file, const char *token_file, const char *database_path,
     const char *manifest_path, const char *repository_root, const char *executor_path,
     maelys_git_error_t *error) {
+    return maelys_git_agent_validate_provision_grants(config_path, agent_id, authority, ca_file, token_file,
+                                                      database_path, manifest_path, NULL, repository_root,
+                                                      executor_path, error);
+}
+
+maelys_git_result_t maelys_git_agent_validate_provision_grants(
+    const char *config_path, const char *agent_id, const char *authority,
+    const char *ca_file, const char *token_file, const char *database_path,
+    const char *manifest_path, const char *grants_path, const char *repository_root,
+    const char *executor_path, maelys_git_error_t *error) {
     if (!config_path || !agent_id || !authority || !ca_file || !token_file ||
         !database_path || !manifest_path || !repository_root || !executor_path ||
+        (grants_path && !absolute_path(grants_path)) ||
         !absolute_path(config_path) || !absolute_path(ca_file) || !absolute_path(token_file) ||
         !absolute_path(database_path) || !absolute_path(manifest_path) ||
         !absolute_path(repository_root) || !absolute_path(executor_path) ||
@@ -357,7 +387,8 @@ maelys_git_result_t maelys_git_agent_validate_provision(
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     }
     if (!secure_regular_file(token_file, FILE_TRUST_SECRET, error)) return error ? error->code : MAELYS_GIT_ERR_DENIED;
-    if (!secure_regular_file(ca_file, FILE_TRUST_SYSTEM, error) || !secure_regular_file(manifest_path, FILE_TRUST_SYSTEM, error))
+    if (!secure_regular_file(ca_file, FILE_TRUST_SYSTEM, error) || !secure_regular_file(manifest_path, FILE_TRUST_SYSTEM, error) ||
+        (grants_path && !secure_regular_file(grants_path, FILE_TRUST_SYSTEM, error)))
         return error ? error->code : MAELYS_GIT_ERR_DENIED;
     struct stat status;
     if (stat(repository_root, &status) != 0 || !S_ISDIR(status.st_mode)) {

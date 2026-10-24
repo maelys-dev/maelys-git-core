@@ -53,6 +53,37 @@ maelys_git_result_t maelys_git_agent_validate_provision(
     const char *executor_path,
     maelys_git_error_t *error);
 
+/* maelys_git_agent_provision and its validation, with the snapshot of
+ * Gitolite grants the executor reads (grants_path, absolute; NULL for none,
+ * which writes the configuration the functions above write). The agent keeps
+ * the bytes it gives each executor in its store, grants-store/, beside the
+ * journal. */
+maelys_git_result_t maelys_git_agent_provision_grants(
+    const char *config_path,
+    const char *agent_id,
+    const char *authority,
+    const char *ca_file,
+    const char *token_file,
+    const char *database_path,
+    const char *manifest_path,
+    const char *grants_path,
+    const char *repository_root,
+    const char *executor_path,
+    maelys_git_error_t *error);
+
+maelys_git_result_t maelys_git_agent_validate_provision_grants(
+    const char *config_path,
+    const char *agent_id,
+    const char *authority,
+    const char *ca_file,
+    const char *token_file,
+    const char *database_path,
+    const char *manifest_path,
+    const char *grants_path,
+    const char *repository_root,
+    const char *executor_path,
+    maelys_git_error_t *error);
+
 maelys_git_result_t maelys_git_agent_run_cloud(
     const char *config_path,
     int run_once,

@@ -20,6 +20,7 @@
     "mergeTreeOid",
     "preparedOid",
     "policyFingerprint",
+    "grantsFingerprint",
     "prId",
     "prHeadRef",
     "prMergedRef",
@@ -91,6 +92,11 @@
     },
     "policyFingerprint": {
       "type": "string"
+    },
+    "grantsFingerprint": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64})?$",
+      "description": "SHA-256 of the snapshot of grants the policy was opened with; empty without one, and for pr check. Apply requires it back as --expected-grants-fingerprint."
     },
     "prId": {
       "type": "string"

@@ -1,5 +1,6 @@
 #include "agent_internal.h"
 #include "maelys_git_receipt.h"
+#include "policy/policy_grants.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -8,6 +9,35 @@
 static int payload_has_only(const mg_agent_message_t *message, const char *const *allowed) {
     return mg_document_object_has_only(message->document, message->payload, allowed);
 }
+
+/* The payload members each command accepts. protocol/agent-v1.schema.json
+ * declares the same members for the same commands, which a test holds. */
+static const char *const health_members[] = {NULL};
+static const char *const authorize_members[] = {"operation", "ref", "paths", "explain", NULL};
+static const char *const repository_info_members[] = {NULL};
+static const char *const diff_members[] = {"old_oid", "new_oid", NULL};
+static const char *const update_ref_members[] = {"ref", "old_oid", "new_oid", NULL};
+static const char *const create_repository_members[] = {NULL};
+static const char *const pr_check_members[] = {
+    "base_oid", "head_oid", "style", "message", "source_repository",
+    "source_ref", "max_source_objects", "max_source_bytes", NULL};
+static const char *const pr_merge_members[] = {
+    "base_ref", "base_oid", "head_oid", "style", "message", "approvals",
+    "required_approvals", "status_checks_passed", "blocking_review", "apply",
+    "expected_prepared_oid", "expected_policy_fingerprint", "expected_grants_fingerprint", "pr_id",
+    "source_repository", "source_ref", "max_source_objects", "max_source_bytes",
+    "expected_source_identity", "expected_target_identity", NULL};
+
+const mg_executor_payload_t mg_executor_payloads[] = {
+    {"health", health_members},
+    {"authorize", authorize_members},
+    {"repository_info", repository_info_members},
+    {"diff", diff_members},
+    {"update_ref", update_ref_members},
+    {"create_repository", create_repository_members},
+    {"pr_check", pr_check_members},
+    {"pr_merge", pr_merge_members},
+    {NULL, NULL}};
 
 static const char *required_string(const mg_agent_message_t *message, const char *name) {
     maelys_json_view_t view;
@@ -212,8 +242,7 @@ static char *decision_result(const mg_agent_message_t *message,
 static char *execute_authorize(maelys_git_policy_t *policy,
                                const mg_agent_message_t *message,
                                maelys_git_error_t *error) {
-    static const char *const allowed[] = {"operation", "ref", "paths", "explain", NULL};
-    if (!payload_has_only(message, allowed))
+    if (!payload_has_only(message, authorize_members))
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "unknown authorize field", error);
     const char *operation = required_string(message, "operation");
     int valid = 1;
@@ -256,8 +285,7 @@ static char *execute_repository_info(maelys_git_policy_t *policy,
                                      const char *root,
                                      const mg_agent_message_t *message,
                                      maelys_git_error_t *error) {
-    static const char *const allowed[] = {NULL};
-    if (!payload_has_only(message, allowed))
+    if (!payload_has_only(message, repository_info_members))
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "repository_info payload must be empty", error);
     judged_t judged;
     maelys_git_result_t result = authorize(policy, message, "read", NULL, NULL, 0u,
@@ -280,10 +308,9 @@ static char *execute_diff(maelys_git_policy_t *policy,
                           const char *root,
                           const mg_agent_message_t *message,
                           maelys_git_error_t *error) {
-    static const char *const allowed[] = {"old_oid", "new_oid", NULL};
     const char *old_oid = required_string(message, "old_oid");
     const char *new_oid = required_string(message, "new_oid");
-    if (!payload_has_only(message, allowed) || !old_oid || !new_oid)
+    if (!payload_has_only(message, diff_members) || !old_oid || !new_oid)
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid diff payload", error);
     judged_t judged;
     maelys_git_result_t result = authorize(policy, message, "read", NULL, NULL, 0u,
@@ -312,11 +339,10 @@ static char *execute_update_ref(maelys_git_policy_t *policy,
                                 const mg_agent_message_t *message,
                                 maelys_git_explain_mode_t denial_mode,
                                 maelys_git_error_t *error) {
-    static const char *const allowed[] = {"ref", "old_oid", "new_oid", NULL};
     const char *ref = required_string(message, "ref");
     const char *old_oid = required_string(message, "old_oid");
     const char *new_oid = required_string(message, "new_oid");
-    if (!payload_has_only(message, allowed) || !ref || !old_oid || !new_oid)
+    if (!payload_has_only(message, update_ref_members) || !ref || !old_oid || !new_oid)
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid update_ref payload", error);
     char repository_path[4096];
     maelys_git_result_t result = maelys_git_resolve_repository(root, message->repository,
@@ -371,8 +397,7 @@ static char *execute_create_repository(maelys_git_policy_t *policy,
                                        const mg_agent_message_t *message,
                                        maelys_git_explain_mode_t denial_mode,
                                        maelys_git_error_t *error) {
-    static const char *const allowed[] = {NULL};
-    if (!payload_has_only(message, allowed))
+    if (!payload_has_only(message, create_repository_members))
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "create_repository payload must be empty", error);
     char text[EXPLANATION_CAPACITY];
     judged_t judged;
@@ -414,6 +439,7 @@ static char *pr_result(const mg_agent_message_t *message, maelys_git_pr_check_re
     mg_json_string(&json, "merge_tree_oid", result->merge_tree_oid);
     mg_json_string(&json, "prepared_oid", result->prepared_oid);
     mg_json_string(&json, "policy_fingerprint", result->policy_fingerprint);
+    mg_json_string(&json, "grants_fingerprint", result->grants_fingerprint);
     mg_json_string(&json, "pr_id", result->pr_id);
     mg_json_string(&json, "pr_head_ref", result->pr_head_ref);
     mg_json_string(&json, "pr_merged_ref", result->pr_merged_ref);
@@ -436,15 +462,12 @@ static char *execute_pr_check(maelys_git_policy_t *policy,
                               const char *root,
                               const mg_agent_message_t *message,
                               maelys_git_error_t *error) {
-    static const char *const allowed[] = {
-        "base_oid", "head_oid", "style", "message", "source_repository",
-        "source_ref", "max_source_objects", "max_source_bytes", NULL};
     const char *base = required_string(message, "base_oid");
     const char *head = required_string(message, "head_oid");
     int valid = 1;
     const char *merge_message = optional_string(message, "message", &valid);
     maelys_git_merge_style_t style = required_style(message);
-    if (!valid || !payload_has_only(message, allowed) || !base || !head || !style)
+    if (!valid || !payload_has_only(message, pr_check_members) || !base || !head || !style)
         return failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL, "invalid pr_check payload", error);
     judged_t judged;
     maelys_git_result_t result = authorize(policy, message, "read", NULL, NULL, 0u,
@@ -475,12 +498,6 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
                               const mg_agent_message_t *message,
                               maelys_git_explain_mode_t denial_mode,
                               maelys_git_error_t *error) {
-    static const char *const allowed[] = {
-        "base_ref", "base_oid", "head_oid", "style", "message", "approvals",
-        "required_approvals", "status_checks_passed", "blocking_review", "apply",
-        "expected_prepared_oid", "expected_policy_fingerprint", "pr_id",
-        "source_repository", "source_ref", "max_source_objects", "max_source_bytes",
-        "expected_source_identity", "expected_target_identity", NULL};
     const char *base_ref = required_string(message, "base_ref");
     const char *base = required_string(message, "base_oid");
     const char *head = required_string(message, "head_oid");
@@ -488,12 +505,13 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
     int valid = 1;
     const char *expected_prepared_oid = optional_string(message, "expected_prepared_oid", &valid);
     const char *expected_policy_fingerprint = optional_string(message, "expected_policy_fingerprint", &valid);
+    const char *expected_grants_fingerprint = optional_string(message, "expected_grants_fingerprint", &valid);
     const char *expected_target_identity = optional_string(message, "expected_target_identity", &valid);
     const char *pr_id = optional_string(message, "pr_id", &valid);
     const char *merge_message = optional_string(message, "message", &valid);
     int64_t approvals = 0, required = 0;
     int checks = 0, blocking = 0, apply = 0;
-    if (!valid || !payload_has_only(message, allowed) || !base_ref || !base || !head || !style ||
+    if (!valid || !payload_has_only(message, pr_merge_members) || !base_ref || !base || !head || !style ||
         maelys_json_object_get_i64(message->document, message->payload, "approvals", &approvals) != MAELYS_JSON_OK ||
         approvals < 0 || (uint64_t)approvals > SIZE_MAX ||
         maelys_json_object_get_i64(message->document, message->payload, "required_approvals", &required) != MAELYS_JSON_OK ||
@@ -533,7 +551,8 @@ static char *execute_pr_merge(maelys_git_policy_t *policy,
         merge_message,
         message->principal, &gates, policy, pr_id, source,
         expected_target_identity, expected_prepared_oid,
-        expected_policy_fingerprint, apply, &merge, &judged.decision, &receipt, error);
+        expected_policy_fingerprint, expected_grants_fingerprint, 1, apply, &merge, &judged.decision,
+        &receipt, error);
     /* A policy denial is a decision with its receipt; the gates and the
      * mergeability refuse without one. */
     if (result == MAELYS_GIT_ERR_DENIED && receipt.decided) {
@@ -563,8 +582,7 @@ maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
         *out_result_json = failure(message, "failed", MAELYS_GIT_ERR_DENIED,
                                    "command is expired or issued too far in the future", error);
     } else if (strcmp(message->command, "health") == 0) {
-        static const char *const allowed[] = {NULL};
-        if (!payload_has_only(message, allowed))
+        if (!payload_has_only(message, health_members))
             *out_result_json = failure(message, "failed", MAELYS_GIT_ERR_PROTOCOL,
                                        "health payload must be empty", error);
         else {
@@ -574,6 +592,13 @@ maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
             mg_json_string(&json, "version", MAELYS_GIT_VERSION);
             *out_result_json = mg_protocol_result_end(&json, error);
         }
+    } else if (mg_policy_refresh_grants(policy, error) != MAELYS_GIT_OK) {
+        /* Each command decides on the grants read before it, or not at all:
+         * this one and the next are refused until a reading succeeds. */
+        maelys_git_result_t code = error->code;
+        char reason[MAELYS_GIT_MAX_ERROR];
+        (void)snprintf(reason, sizeof(reason), "grants snapshot unavailable: %.900s", error->message);
+        *out_result_json = failure(message, "failed", code, reason, error);
     } else if (strcmp(message->command, "authorize") == 0) {
         *out_result_json = execute_authorize(policy, message, error);
     } else if (strcmp(message->command, "repository_info") == 0) {

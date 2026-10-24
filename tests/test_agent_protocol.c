@@ -358,6 +358,60 @@ static int test_result_line_limit(void) {
     return 1;
 }
 
+/* The payload of each command in protocol/agent-v1.schema.json declares the
+ * members the executor accepts, no more and no fewer, for the same commands:
+ * the published shape cannot drift from what runs. */
+static int test_schema_payloads(void) {
+    static char text[65536];
+    FILE *file = fopen(PROTOCOL_DIR "/agent-v1.schema.json", "rb");
+    CHECK(file != NULL);
+    size_t size = fread(text, 1u, sizeof(text) - 1u, file);
+    (void)fclose(file);
+    CHECK(size > 0u && size < sizeof(text) - 1u);
+    text[size] = '\0';
+    maelys_json_document_t *schema = tj_parse(text);
+    CHECK(schema != NULL);
+    size_t commands = 0u;
+    while (mg_executor_payloads[commands].command) ++commands;
+    CHECK(tj_size(schema, "oneOf") == commands);
+    for (size_t i = 0u; i < commands; ++i) {
+        char path[96];
+        (void)snprintf(path, sizeof(path), "oneOf.%zu.properties.command.const", i);
+        const char *command = tj_string(schema, path);
+        CHECK(command != NULL);
+        const mg_executor_payload_t *entry = mg_executor_payloads;
+        while (entry->command && strcmp(entry->command, command) != 0) ++entry;
+        CHECK(entry->command != NULL);
+        size_t members = 0u;
+        while (entry->members[members]) ++members;
+        (void)snprintf(path, sizeof(path), "oneOf.%zu.properties.payload", i);
+        maelys_json_value_t payload = tj_root_at(schema, path);
+        maelys_json_value_t properties = tj_at(schema, payload, "properties");
+        if (properties == MAELYS_JSON_VALUE_NONE) {
+            (void)snprintf(path, sizeof(path), "oneOf.%zu.properties.payload.maxProperties", i);
+            CHECK(members == 0u && tj_i64(schema, path, -1) == 0);
+            continue;
+        }
+        (void)snprintf(path, sizeof(path), "oneOf.%zu.properties.payload.additionalProperties", i);
+        CHECK(tj_boolean(schema, path) == 0);
+        (void)snprintf(path, sizeof(path), "oneOf.%zu.properties.payload.properties", i);
+        if (tj_size(schema, path) != members) {
+            (void)fprintf(stderr, "%s: schema declares %zu members, the executor accepts %zu\n", command,
+                          tj_size(schema, path), members);
+            CHECK(0);
+        }
+        for (size_t m = 0u; m < members; ++m) {
+            maelys_json_value_t member;
+            if (maelys_json_object_get(schema, properties, entry->members[m], &member) != MAELYS_JSON_OK) {
+                (void)fprintf(stderr, "%s: schema lacks %s\n", command, entry->members[m]);
+                CHECK(0);
+            }
+        }
+    }
+    tj_release(schema);
+    return 1;
+}
+
 int main(void) {
     int passed = test_owned_documents();
     passed += test_structure_budgets();
@@ -365,7 +419,8 @@ int main(void) {
     passed += test_poll_reader();
     passed += test_result_envelope();
     passed += test_result_line_limit();
-    if (passed != 6) return 1;
+    passed += test_schema_payloads();
+    if (passed != 7) return 1;
     (void)printf("ok: %d protocol ownership and compatibility groups passed\n", passed);
     return 0;
 }

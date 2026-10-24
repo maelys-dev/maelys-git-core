@@ -1,6 +1,7 @@
 /* maelys-git-agent and maelys-git-executor. The executor's `serve` and the
  * agent's `stdio` share one handler: the local JSONL protocol on stdio. */
 #include "agent/agent_internal.h"
+#include "policy/policy_grants.h"
 #include "cli/json_support.h"
 #include "maelys_git_agent.h"
 
@@ -17,6 +18,9 @@ static const maelys_cli_option_t provision_options[] = {
     {MAELYS_CLI_ABSOLUTE_PATH("database", "FILE", "SQLite journal path."), .required = 1},
     {MAELYS_CLI_ABSOLUTE_PATH("manifest", "FILE", "Datalog manifest path."),
      .required = 1},
+    {MAELYS_CLI_ABSOLUTE_PATH("grants", "FILE",
+     "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads; "
+     "the agent keeps the bytes each executor reads in grants-store/ beside the journal.")},
     {MAELYS_CLI_ABSOLUTE_PATH("root", "DIR", "Repository root."), .required = 1},
     {MAELYS_CLI_ABSOLUTE_PATH("executor", "FILE", "Executor binary path."),
      .required = 1},
@@ -30,6 +34,12 @@ static const maelys_cli_option_t run_options[] = {
 
 static const maelys_cli_option_t serve_options[] = {
     {MAELYS_CLI_PATH("manifest", "FILE", "Datalog manifest path."), .required = 1},
+    {MAELYS_CLI_PATH("grants", "FILE",
+     "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads; "
+     "read again before each command.")},
+    {MAELYS_CLI_HEX("expected-grants-fingerprint", "SHA256",
+     "SHA-256 every reading of --grants must have; a reading with other bytes refuses the command.", 64u),
+     .depends_on = "grants"},
     {MAELYS_CLI_PATH("root", "DIR", "Repository root."), .required = 1},
     MAELYS_GIT_CLI_GIT_OPTION,
 };
@@ -42,16 +52,17 @@ static int command_provision(maelys_cli_context_t *context) {
     const char *token = maelys_cli_option(context, "token");
     const char *database = maelys_cli_option(context, "database");
     const char *manifest = maelys_cli_option(context, "manifest");
+    const char *grants = maelys_cli_option(context, "grants");
     const char *root = maelys_cli_option(context, "root");
     const char *executor = maelys_cli_option(context, "executor");
     maelys_git_error_t error = {0};
-    maelys_git_result_t result = maelys_git_agent_validate_provision(
-        config, agent, authority, ca, token, database, manifest, root, executor, &error);
+    maelys_git_result_t result = maelys_git_agent_validate_provision_grants(
+        config, agent, authority, ca, token, database, manifest, grants, root, executor, &error);
     if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
     int apply = maelys_cli_flag(context, "apply");
     if (apply)
-        result = maelys_git_agent_provision(
-            config, agent, authority, ca, token, database, manifest, root, executor, &error);
+        result = maelys_git_agent_provision_grants(
+            config, agent, authority, ca, token, database, manifest, grants, root, executor, &error);
     if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
     mg_json_t data;
     mg_json_begin(&data, MG_JSON_DATA);
@@ -62,6 +73,7 @@ static int command_provision(maelys_cli_context_t *context) {
     mg_json_string(&data, "agentId", agent);
     mg_json_string(&data, "authority", authority);
     mg_json_string(&data, "database", database);
+    if (grants) mg_json_string(&data, "grants", grants);
     mg_json_object(&data, "precondition");
     mg_json_boolean(&data, "configAbsent", 1);
     mg_json_end_object(&data);
@@ -92,9 +104,14 @@ static int command_run(maelys_cli_context_t *context) {
 
 static int serve(maelys_cli_context_t *context, maelys_git_explain_mode_t denial_mode) {
     maelys_git_error_t error = {0};
+    const char *manifest = maelys_cli_option(context, "manifest");
+    const char *grants = maelys_cli_option(context, "grants");
     maelys_git_policy_t *policy = NULL;
-    maelys_git_result_t result = maelys_git_policy_open(
-        maelys_cli_option(context, "manifest"), &policy, &error);
+    maelys_git_result_t result = grants ? maelys_git_policy_open_grants(manifest, grants, &policy, &error)
+                                        : maelys_git_policy_open(manifest, &policy, &error);
+    const char *expected_grants = maelys_cli_option(context, "expected-grants-fingerprint");
+    if (result == MAELYS_GIT_OK && expected_grants)
+        result = mg_policy_expect_grants(policy, expected_grants, &error);
     if (result == MAELYS_GIT_OK)
         result = mg_agent_serve(policy, maelys_git_cli_git(context),
                                 maelys_cli_option(context, "root"),

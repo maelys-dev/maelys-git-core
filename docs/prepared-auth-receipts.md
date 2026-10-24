@@ -199,12 +199,41 @@ structurées du moteur, et l'empreinte du document, qui voyage à côté.
   compte les faits de requête construits et les policies résolues.
 - Tous les nombres sont des entiers non signés.
 
+### 6.2 bis Version 2 : les droits utilisés (GIT-C06)
+
+Une décision prise avec un instantané de droits porte le membre `grants`, et
+`version` vaut 2. C'est le cas quand une policy du jeu lit les prédicats
+`slice_*` ; seul le programme Gitolite audité en a le droit. Tous les autres
+membres sont ceux de la version 1.
+
+```json
+"grants": {
+  "facts": 2,
+  "format": "maelys-git-grants/1",
+  "program": "maelys-git-gitolite-program/1",
+  "sha256": "<64 hex>",
+  "slice": "maelys-git-slice/1"
+}
+```
+
+- `sha256` est l'empreinte des octets de l'instantané lu à l'ouverture.
+- `facts` compte les tuples distincts de la tranche donnés au moteur pour
+  cette requête, tous prédicats `slice_*` confondus. Il vaut 0 quand la
+  tranche est refusée avant d'être donnée, par exemple pour une capacité.
+- `stats.edbFacts` compte les faits de la requête seuls, ceux que reçoit
+  chaque policy du jeu. La tranche n'est donnée qu'au programme audité.
+- `format`, `slice` et `program` sont fixés par la version 2.
+
+Sans instantané, le reçu reste en version 1, octet pour octet. Le lecteur
+accepte les deux versions : `grants` en version 2, et seulement là.
+
 ### 6.3 Canonicalisation et vérification
 
 Le reçu est écrit par maelys-json en Maelys Canonical JSON v1, profil
 `RFC8259`, sans saut de ligne final ; son empreinte est le SHA-256 de ces
 octets. `maelys_git_receipt_verify` n'accepte que cette forme, les clés
-fermées de la version 1, les énumérations et les longueurs d'empreinte, et
+fermées de la version 1 ou de la version 2, les énumérations, les formats
+fixés de `grants` et les longueurs d'empreinte, et
 refuse fraction et exposant. Un reçu relu dans une enveloppe est réécrit par
 maelys-json puis vérifié avant d'être haché : depuis maelys-json 0.3.0, la
 réécriture recopie un nombre non entier par son lexème, et ne prouve donc
@@ -214,7 +243,7 @@ rien seule.
 
 Un reçu fait au plus 8 192 octets canoniques ; tous ses champs sont bornés
 par des limites du produit, et le plus grand reçu possible, champs au
-maximum, tient en 3 403 octets. Un document d'explication est exposé jusqu'à
+maximum et `grants` compris, tient en 3 621 octets. Un document d'explication est exposé jusqu'à
 32 768 octets ; au-delà il ne l'est pas, et le reçu garde sa taille et son
 empreinte.
 
@@ -230,6 +259,7 @@ empreinte.
 | Résultat publié par l'agent Cloud pour ce refus | — | non : retiré après audit |
 | Audit SQLite, `authorization_receipt` | — | le reçu canonique seul |
 | Audit SQLite, `authorization_explanation` | — | le texte d'un refus ou d'une demande |
+| Audit SQLite, `grants_snapshot` | — | l'empreinte et le chemin, dans le magasin de l'agent, de l'instantané des droits donné à l'exécuteur ; jamais ses octets |
 | Hook avec `--receipts FILE`, refus | sur refus | dans le fichier |
 | Hook avec `--receipts FILE`, acceptation | jamais | non |
 | `maelys-git-agent stdio`, refus de `create_repository` ou `update_ref`, refus de policy de `pr_merge` | jamais | non ; le reçu n'a pas de résumé (`explanation.kind` vaut `none`) |

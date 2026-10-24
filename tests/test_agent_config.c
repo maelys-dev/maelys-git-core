@@ -110,6 +110,30 @@ static int test_valid_config(const fixture_t *fixture) {
     return 1;
 }
 
+/* GIT-C06 test 14: grants_path is optional. A configuration without it stays
+ * valid; with it, the path is absolute and names a file the agent trusts. */
+static int test_grants_path(const fixture_t *fixture) {
+    char path[4096];
+    (void)snprintf(path, sizeof(path), "%s/grants.json", fixture->directory);
+    CHECK(write_bytes(path, "{}", 2u, 0644));
+    CHECK(expect_object(fixture, tj_with(fixture->base, NULL, NULL), MAELYS_GIT_OK));
+    maelys_git_agent_config_t *loaded = NULL;
+    CHECK(mg_config_load(fixture->config, &loaded, NULL) == MAELYS_GIT_OK && loaded->grants_path[0] == '\0');
+    mg_config_free(loaded);
+    CHECK(expect_object(fixture, with_string(fixture, "grants_path", path), MAELYS_GIT_OK));
+    CHECK(mg_config_load(fixture->config, &loaded, NULL) == MAELYS_GIT_OK && !strcmp(loaded->grants_path, path));
+    mg_config_free(loaded);
+    CHECK(expect_object(fixture, with_string(fixture, "grants_path", "grants.json"), MAELYS_GIT_ERR_PROTOCOL));
+    CHECK(expect_object(fixture, with_string(fixture, "grants_path", ""), MAELYS_GIT_ERR_PROTOCOL));
+    CHECK(expect_object(fixture, tj_with(fixture->base, "grants_path", "1"), MAELYS_GIT_ERR_PROTOCOL));
+    char missing[4200];
+    (void)snprintf(missing, sizeof(missing), "%s/missing.json", fixture->directory);
+    CHECK(expect_object(fixture, with_string(fixture, "grants_path", missing), MAELYS_GIT_ERR_NOT_FOUND));
+    CHECK(chmod(path, 0666) == 0);
+    CHECK(expect_object(fixture, with_string(fixture, "grants_path", path), MAELYS_GIT_ERR_DENIED));
+    return 1;
+}
+
 static int test_syntax_and_limits(const fixture_t *fixture) {
     static const char *const rejected[] = {
         "", "{}", "[]", "null", "{\"version\":1,}",
@@ -123,7 +147,14 @@ static int test_syntax_and_limits(const fixture_t *fixture) {
 
     const char *nested = "{\"version\":{}}";
     CHECK(expect_bytes(fixture, nested, strlen(nested), MAELYS_GIT_ERR_LIMIT));
-    CHECK(expect_object(fixture, tj_with(fixture->base, "extra", "0"), MAELYS_GIT_ERR_LIMIT));
+    /* 31 values: 15 members, grants_path the one optional. An unknown member
+     * in its place is the schema's refusal; one more member is beyond the
+     * parse limits. */
+    CHECK(expect_object(fixture, tj_with(fixture->base, "extra", "0"), MAELYS_GIT_ERR_PROTOCOL));
+    char *grants = with_string(fixture, "grants_path", "/tmp/grants.json");
+    CHECK(grants != NULL);
+    CHECK(expect_object(fixture, tj_with(grants, "extra", "0"), MAELYS_GIT_ERR_LIMIT));
+    free(grants);
 
     char *base = tj_with(fixture->base, NULL, NULL);
     CHECK(base != NULL);
@@ -280,8 +311,9 @@ int main(void) {
     passed += test_numeric_contract(&fixture);
     passed += test_schema_and_strings(&fixture);
     passed += test_file_security(&fixture);
+    passed += test_grants_path(&fixture);
     free(fixture.base);
-    if (!test_remove_tree(fixture.directory) || passed != 5) return 1;
+    if (!test_remove_tree(fixture.directory) || passed != 6) return 1;
     (void)printf("ok: %d configuration reader test groups passed\n", passed);
     return 0;
 }

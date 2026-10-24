@@ -5,7 +5,8 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
-- maelys-datalog is pinned to 0.25.0 (was 0.23.1), which includes 0.24.0.
+- maelys-datalog is pinned to 0.26.0 (was 0.23.1), which includes 0.24.0 and
+  0.25.0.
   - The engine identifies a named variable by its complete name within its
     rule; it used to identify it by its first letter, so that `Ab` and `Ac`,
     or `G1` and `G2`, were one variable. No policy of this repository, and no
@@ -19,6 +20,71 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
     strata as a capacity failure with the budget `MAX_STRATA`, five strata
     requested and four allowed. A negation cycle stays a semantic failure,
     without a budget. The bound itself does not change.
+  - A request refused because its input symbols exceed the engine's count
+    of symbols (`MAX_SYMBOLS`) or its pool of text (`STRING_POOL_BYTES`) is a
+    capacity denial that names that budget, with the attempted count and the
+    bound; it was a failure of the engine without a budget. The decision, a
+    denial, does not change.
+  - A policy of more rules than the engine holds is refused with the message
+    "rule capacity exceeded"; the engine used to attribute it to the
+    expansion of OR. Its code, its location and its capacity do not change.
+- `migrate gitolite` writes the audited Gitolite program,
+  `maelys-git-gitolite-program/1`, whose text no longer depends on the
+  configuration, and the configuration's grants as `grants.json`,
+  `maelys-git-grants/1`. Granting or revoking a right no longer changes the
+  policy or its fingerprint; publishing rights is publishing that file, by a
+  rename. The program reads, for each request, the slice of the snapshot the
+  request needs; a configuration beyond the 128 facts a compiled policy held
+  is decided, and a request whose slice exceeds the engine's bounds is a
+  capacity denial, never a truncated slice.
+- `--grants FILE` on `authorize`, `validate`, `pr merge`, `maelys-git-hook
+  pre-receive`, `maelys-git-shell serve`, `maelys-git-executor serve` and
+  `maelys-git-agent stdio`, and `grants_path`, optional, in the agent's
+  configuration. The program refuses to open without it. A stream reads the
+  snapshot again before each command, and refuses commands while it cannot
+  read it; a file changed while it is read is refused. The public API adds
+  `maelys_git_policy_open_grants` and `maelys_git_policy_grants_fingerprint`.
+- `pr merge` returns `grantsFingerprint` and applies with
+  `--expected-grants-fingerprint`; grants changed since the plan are refused.
+  `maelys_git_pr_merge_grants` carries that precondition; the former entry
+  points still plan, and refuse to apply on a policy with a snapshot.
+- `migrate gitolite --apply` syncs the directory of its output before
+  renaming it into place, and the parent directory after: the published
+  output is durable, not only atomic.
+- The Cloud agent keeps, before each command, the snapshot of grants it
+  gives the executor in a content-addressed store beside its journal,
+  `grants-store/<sha256>.json`: a directory private to its account, each file
+  written once, read-only, synced with its directory, and read back when it
+  already exists. Every use syncs the store, an existing file and their
+  directories again, so that an attempt whose sync failed is made durable by
+  the next one. The executor runs on that file with
+  `--expected-grants-fingerprint` (new on `maelys-git-executor serve` and
+  `maelys-git-agent stdio`), which refuses a reading with other bytes, at its
+  opening and before each command. A snapshot that cannot be kept starts no
+  executor; the command fails with a message starting with `grants store
+  unavailable: `. The journal audits the digest as a `grants_snapshot` event,
+  and a receipt naming other grants fails the command.
+- `agent provision --grants FILE` writes `grants_path`; the public API adds
+  `maelys_git_agent_provision_grants` and
+  `maelys_git_agent_validate_provision_grants`. The configuration writer
+  admits the 31 values such a configuration holds.
+- The agent protocol schema declares `expected_grants_fingerprint` on
+  `pr_merge` and `explain` on `authorize`, which the executor already
+  accepted; a client validating against the schema could not send them. A
+  test holds the members of every command's payload in the schema equal to
+  those the executor accepts. The protocol states that a command refused
+  because the snapshot cannot be read again is a `failed` result whose message
+  starts with `grants snapshot unavailable: `.
+- Authorization receipts gain version 2: a decision that used a snapshot of
+  grants carries `grants`, the digest of the snapshot, the number of facts of
+  its slice and the formats of the snapshot, the slice and the audited
+  Gitolite program. Without a snapshot a receipt stays version 1, byte for
+  byte; `maelys_git_receipt_verify` accepts both. The output schema of
+  `authorize` admits both.
+- maelys-json is pinned to 0.3.1 (was 0.3.0). Its canonical check answers
+  without copying the document: the grants snapshot reader runs it on every
+  load, and on macOS forty reloads of a 4 MiB snapshot no longer raise the
+  resident peak from 120 MiB to 1.9 GiB. The answers are unchanged.
 - Jansson is no longer a dependency: maelys-json, already pinned, writes
   every JSON document the programs produce, and the build, the CI and the
   Linux image no longer install Jansson. The bytes written are those of the

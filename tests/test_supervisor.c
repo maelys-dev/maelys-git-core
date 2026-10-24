@@ -1,5 +1,8 @@
 #include "agent/agent_internal.h"
 
+#include <maelys/cli/digest.h>
+
+#include <dirent.h>
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
@@ -84,6 +87,63 @@ static int executor_mode(const char *executable, const char *marker) {
     return 0;
 }
 
+/* An executor that records its arguments, one per line, beside its marker,
+ * then answers. */
+static int record_arguments(int argc, char **argv) {
+    char request[64];
+    if (!fgets(request, sizeof(request), stdin)) return 2;
+    char path[4200];
+    (void)snprintf(path, sizeof(path), "%s.arguments", argv[3]);
+    FILE *file = fopen(path, "w");
+    if (!file) return 2;
+    for (int i = 1; i < argc; ++i) (void)fprintf(file, "%s\n", argv[i]);
+    if (fclose(file) != 0) return 2;
+    (void)fputs(valid_result, stdout);
+    (void)fputc('\n', stdout);
+    return 0;
+}
+
+/* Publishes TEXT at PATH by a rename, as the publication contract asks. */
+static int publish(const char *path, const char *text) {
+    char temporary[4300];
+    (void)snprintf(temporary, sizeof(temporary), "%s.new", path);
+    FILE *file = fopen(temporary, "wb");
+    if (!file) return 0;
+    int ok = fputs(text, file) >= 0;
+    ok = fclose(file) == 0 && ok;
+    return ok && chmod(temporary, 0644) == 0 && rename(temporary, path) == 0;
+}
+
+static int write_text(const char *path, const char *text) {
+    FILE *file = fopen(path, "wb");
+    if (!file) return 0;
+    int ok = fputs(text, file) >= 0;
+    return fclose(file) == 0 && ok;
+}
+
+static int read_text(const char *path, char *out, size_t capacity) {
+    FILE *file = fopen(path, "rb");
+    if (!file) return 0;
+    size_t size = fread(out, 1u, capacity - 1u, file);
+    (void)fclose(file);
+    out[size] = '\0';
+    return 1;
+}
+
+/* Removes the files of DIRECTORY, one level. */
+static int remove_entries(const char *directory) {
+    DIR *stream = opendir(directory);
+    if (!stream) return 0;
+    int ok = 1;
+    for (struct dirent *entry; (entry = readdir(stream)) != NULL;) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        char path[4300];
+        (void)snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
+        if (unlink(path) != 0) ok = 0;
+    }
+    return closedir(stream) == 0 && ok;
+}
+
 static int fail(const char *message) {
     fprintf(stderr, "test_supervisor: %s\n", message);
     return 1;
@@ -98,7 +158,7 @@ int main(int argc, char **argv) {
     }
     if (argc >= 4 && strcmp(argv[1], "serve") == 0 &&
         strcmp(argv[2], "--manifest") == 0)
-        return executor_mode(argv[0], argv[3]);
+        return ends_with(argv[3], "/arguments") ? record_arguments(argc, argv) : executor_mode(argv[0], argv[3]);
 
     char executable[4096];
     if (!realpath(argv[0], executable)) return fail("cannot resolve test executable");
@@ -124,7 +184,7 @@ int main(int argc, char **argv) {
     request[MAELYS_GIT_MAX_PROTOCOL_LINE] = '\0';
     maelys_git_error_t error = {0};
     maelys_git_result_t result = mg_supervisor_execute(
-        &config, &command, request, &response, &succeeded, &error);
+        &config, &command, request, NULL, &response, &succeeded, &error);
     free(request);
     free(response);
     if (result != MAELYS_GIT_ERR_LIMIT)
@@ -146,7 +206,7 @@ int main(int argc, char **argv) {
     request[MAELYS_GIT_MAX_PROTOCOL_LINE] = '\0';
     response = NULL;
     memset(&error, 0, sizeof(error));
-    result = mg_supervisor_execute(&config, &command, request, &response, &succeeded, &error);
+    result = mg_supervisor_execute(&config, &command, request, NULL, &response, &succeeded, &error);
     free(request);
     free(response);
     if (result == MAELYS_GIT_OK)
@@ -158,7 +218,7 @@ int main(int argc, char **argv) {
         config.request_timeout_ms = i == 2u ? 2000u : 200u;
         response = NULL;
         int64_t started = mg_monotonic_ms();
-        result = mg_supervisor_execute(&config, &command, "{}", &response, &succeeded, &error);
+        result = mg_supervisor_execute(&config, &command, "{}", NULL, &response, &succeeded, &error);
         free(response);
         if (result != (i == 2u ? MAELYS_GIT_OK : MAELYS_GIT_ERR_LIMIT))
             return fail("closed stdout or nested subprocess bypassed supervision");
@@ -197,7 +257,7 @@ int main(int argc, char **argv) {
         if (!file || fwrite(wire, 1u, size, file) != size || fclose(file) != 0)
             return fail("cannot write response fixture");
         succeeded = 1;
-        result = mg_supervisor_execute(&config, &command, "{}", &response, &succeeded, &error);
+        result = mg_supervisor_execute(&config, &command, "{}", NULL, &response, &succeeded, &error);
         if (result != expected || succeeded != (expected == MAELYS_GIT_OK) ||
             (response != NULL) != (expected == MAELYS_GIT_OK))
             return fail("response framing, limit or success state was not enforced");
@@ -205,6 +265,96 @@ int main(int argc, char **argv) {
     }
     free(wire);
     if (unlink(config.manifest_path) != 0) return fail("cannot remove response fixture");
+
+    /* GIT-C06 test 12. The executor receives the snapshot kept in the
+     * agent's store and its digest, never the configured path, and no
+     * --grants without one. */
+    (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/arguments", directory);
+    (void)snprintf(config.database_path, sizeof(config.database_path), "%s/journal.sqlite", directory);
+    char recorded[4200], source[4200], store[4200];
+    (void)snprintf(recorded, sizeof(recorded), "%s.arguments", config.manifest_path);
+    (void)snprintf(source, sizeof(source), "%s/grants.json", directory);
+    (void)snprintf(store, sizeof(store), "%s/grants-store", directory);
+    static const char first[] = "first generation of grants";
+    static const char second[] = "second generation of grants";
+    char first_sha[65], second_sha[65], kept[4200];
+    maelys_cli_sha256_hex(first, strlen(first), first_sha);
+    maelys_cli_sha256_hex(second, strlen(second), second_sha);
+    if (!publish(source, first)) return fail("cannot publish the grants");
+    mg_grants_archive_t grants;
+    for (int with_grants = 0; with_grants < 2; ++with_grants) {
+        (void)snprintf(config.grants_path, sizeof(config.grants_path), "%s", with_grants ? source : "");
+        response = NULL;
+        result = mg_supervisor_execute(&config, &command, "{}", &grants, &response, &succeeded, &error);
+        free(response);
+        if (result != MAELYS_GIT_OK || !succeeded) return fail("the recording executor failed");
+        char arguments[8192];
+        if (!read_text(recorded, arguments, sizeof(arguments))) return fail("no recorded arguments");
+        if (!with_grants) {
+            if (strstr(arguments, "--grants") || grants.sha256[0] || access(store, F_OK) == 0)
+                return fail("an executor without grants received some");
+        } else {
+            (void)snprintf(kept, sizeof(kept), "%s/%s.json", store, first_sha);
+            char expected[9000];
+            (void)snprintf(expected, sizeof(expected), "\n--grants\n%s\n--expected-grants-fingerprint\n%s\n", kept,
+                           first_sha);
+            if (!strstr(arguments, expected) || strstr(arguments, source) || strcmp(grants.sha256, first_sha) != 0 ||
+                strcmp(grants.path, kept) != 0)
+                return fail("the executor did not receive the kept snapshot and its digest");
+            /* Kept before the executor started: private, read-only, these bytes. */
+            char bytes[256];
+            struct stat entry, holder;
+            if (!read_text(kept, bytes, sizeof(bytes)) || strcmp(bytes, first) != 0 ||
+                lstat(kept, &entry) != 0 || (entry.st_mode & 0777) != 0400 ||
+                lstat(store, &holder) != 0 || (holder.st_mode & 0777) != 0700)
+                return fail("the store does not hold the snapshot as given");
+        }
+        if (unlink(recorded) != 0) return fail("cannot remove recorded arguments");
+    }
+
+    /* The source changes: the store keeps the bytes the first command used
+     * and adds the new ones; the same snapshot again is read back. */
+    if (!publish(source, second)) return fail("cannot publish the grants");
+    for (int round = 0; round < 2; ++round) {
+        response = NULL;
+        result = mg_supervisor_execute(&config, &command, "{}", &grants, &response, &succeeded, &error);
+        free(response);
+        if (result != MAELYS_GIT_OK || !succeeded || strcmp(grants.sha256, second_sha) != 0)
+            return fail("a new snapshot was not kept");
+        if (unlink(recorded) != 0) return fail("cannot remove recorded arguments");
+    }
+    char bytes[256];
+    if (!read_text(kept, bytes, sizeof(bytes)) || strcmp(bytes, first) != 0)
+        return fail("the store lost the bytes an earlier command used");
+
+    /* An entry that no longer holds the bytes its name says is refused, and
+     * an unwritable store too: no executor starts, the command fails. */
+    char second_kept[4200];
+    (void)snprintf(second_kept, sizeof(second_kept), "%s/%s.json", store, second_sha);
+    if (chmod(second_kept, 0600) != 0 || !write_text(second_kept, "tampered") || chmod(second_kept, 0400) != 0)
+        return fail("cannot tamper with the store entry");
+    static const char third[] = "third generation of grants";
+    for (int test = 0; test < 2; ++test) {
+        if (test == 1) {
+            if (!publish(source, third) || chmod(store, 0500) != 0) return fail("cannot close the store");
+        }
+        response = NULL;
+        succeeded = 1;
+        result = mg_supervisor_execute(&config, &command, "{}", &grants, &response, &succeeded, &error);
+        int refused = result == MAELYS_GIT_OK && response && !succeeded && !grants.sha256[0] &&
+                      strstr(response, "\"status\":\"failed\"") &&
+                      strstr(response, "\"message\":\"grants store unavailable: ") &&
+                      mg_protocol_validate_result(response, strlen(response), &command, &succeeded, &error) ==
+                          MAELYS_GIT_OK &&
+                      !succeeded;
+        free(response);
+        if (!refused) return fail(test ? "an unwritable store did not fail the command"
+                                       : "a tampered store entry was trusted");
+        if (access(recorded, F_OK) == 0) return fail("an executor started without its kept snapshot");
+    }
+    if (chmod(store, 0700) != 0) return fail("cannot reopen the store");
+    if (!remove_entries(store) || rmdir(store) != 0 || unlink(source) != 0)
+        return fail("cannot remove the store");
     if (rmdir(directory) != 0) return fail("cannot remove temporary directory");
     return 0;
 }

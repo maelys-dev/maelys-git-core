@@ -1,6 +1,10 @@
 #include "internal.h"
+#include "policy/grants.h"
+#include "policy/policy_grants.h"
+#include "policy/program.h"
 
 #include <maelys/cli/digest.h>
+#include <maelys/json.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -73,6 +77,10 @@ static int safe_atom(const char *value) {
     for (const unsigned char *p = (const unsigned char *)value; *p; ++p)
         if (!(isalnum(*p) || *p == '.' || *p == '_' || *p == '-')) return 0;
     return 1;
+}
+
+int mg_gitolite_name_is_valid(const char *name) {
+    return safe_atom(name);
 }
 
 static int safe_exact_path(const char *value) {
@@ -159,6 +167,168 @@ void maelys_git_gitolite_migration_result_clear(
     memset(result, 0, sizeof(*result));
 }
 
+/* ---- the snapshot of grants -------------------------------------------- */
+
+/* The sections of maelys-git-grants/1, in key order, and the arity of their
+ * tuples; the last element of a VREF limit is its integer. */
+enum {
+    SECTION_ACCESS, SECTION_MEMBERS, SECTION_CREATORS, SECTION_NESTED, SECTION_OWNERS,
+    SECTION_REFS, SECTION_VREF_LIMITS, SECTION_VREF_NAMES, SECTION_COUNT
+};
+
+static const struct {
+    const char *key;
+    size_t texts;
+    int number;
+} k_sections[SECTION_COUNT] = {
+    [SECTION_ACCESS] = {"access", 4u, 0},
+    [SECTION_MEMBERS] = {"members", 2u, 0},
+    [SECTION_CREATORS] = {"namespace_creators", 3u, 0},
+    [SECTION_NESTED] = {"nested", 2u, 0},
+    [SECTION_OWNERS] = {"owner_access", 2u, 0},
+    [SECTION_REFS] = {"refs", 6u, 0},
+    [SECTION_VREF_LIMITS] = {"vref_limits", 4u, 1},
+    [SECTION_VREF_NAMES] = {"vref_names", 4u, 0},
+};
+
+typedef struct {
+    char *text[6];
+    size_t texts; /* the strings of its section */
+    int64_t number;
+} grant_tuple_t;
+
+typedef struct {
+    grant_tuple_t *items;
+    size_t count, capacity;
+} grant_section_t;
+
+/* The elementary grants of a configuration, as the generator reads them:
+ * the same entries the compiled encoding writes as facts and rules. */
+typedef struct {
+    grant_section_t sections[SECTION_COUNT];
+} grants_builder_t;
+
+static int add_tuple(grants_builder_t *grants, int section, const char *a, const char *b, const char *c,
+                     const char *d, const char *e, const char *f, int64_t number) {
+    if (!grants) return 1;
+    grant_section_t *items = &grants->sections[section];
+    if (items->count == items->capacity) {
+        size_t next = items->capacity ? items->capacity * 2u : 64u;
+        grant_tuple_t *grown = realloc(items->items, next * sizeof(*grown));
+        if (!grown) return 0;
+        items->items = grown;
+        items->capacity = next;
+    }
+    grant_tuple_t *tuple = &items->items[items->count];
+    const char *const values[6] = {a, b, c, d, e, f};
+    memset(tuple, 0, sizeof(*tuple));
+    tuple->number = number;
+    tuple->texts = k_sections[section].texts;
+    for (size_t i = 0u; i < tuple->texts; ++i) {
+        tuple->text[i] = strdup(values[i]);
+        if (!tuple->text[i]) {
+            for (size_t k = 0u; k < i; ++k) free(tuple->text[k]);
+            return 0;
+        }
+    }
+    ++items->count;
+    return 1;
+}
+
+static void grants_builder_clear(grants_builder_t *grants) {
+    for (int s = 0; s < SECTION_COUNT; ++s) {
+        grant_section_t *items = &grants->sections[s];
+        for (size_t i = 0u; i < items->count; ++i)
+            for (size_t k = 0u; k < 6u; ++k) free(items->items[i].text[k]);
+        free(items->items);
+    }
+    memset(grants, 0, sizeof(*grants));
+}
+
+/* The snapshot's order, within one section: element by element, strings by
+ * bytes, the integer last. */
+static int compare_tuples(const void *left, const void *right) {
+    const grant_tuple_t *a = left, *b = right;
+    for (size_t i = 0u; i < a->texts; ++i) {
+        int order = strcmp(a->text[i], b->text[i]);
+        if (order) return order;
+    }
+    return a->number == b->number ? 0 : (a->number < b->number ? -1 : 1);
+}
+
+/* The snapshot of GRANTS in its one byte form: each section sorted, without
+ * duplicates, serialized by maelys-json without a flag (Canonical JSON v1)
+ * within the bounds its reader applies: three containers deep (the root, a
+ * section, a tuple), nine members and at most seven values per tuple.
+ * MAELYS_JSON_ERR_LIMIT when it does not fit them. */
+static maelys_json_result_t serialize_grants(grants_builder_t *grants, char **out_bytes, size_t *out_size) {
+    const maelys_json_limits_t limits = {.maximum_bytes = MG_GRANTS_MAX_BYTES, .maximum_depth = 3u,
+                                         .maximum_tokens = 19u + 7u * MG_GRANTS_MAX_TUPLES};
+    maelys_json_writer_t *writer = NULL;
+    maelys_json_result_t status = maelys_json_writer_create(MAELYS_JSON_PROFILE_RFC8259, &limits, 0u, &writer);
+    *out_bytes = NULL;
+    *out_size = 0u;
+    if (status != MAELYS_JSON_OK) return status;
+#define WRITE(call) do { if (status == MAELYS_JSON_OK) status = (call); } while (0)
+    WRITE(maelys_json_writer_object_begin(writer));
+    WRITE(maelys_json_writer_key_cstr(writer, "format"));
+    WRITE(maelys_json_writer_string_cstr(writer, MG_GRANTS_FORMAT));
+    for (int s = 0; s < SECTION_COUNT; ++s) {
+        grant_section_t *items = &grants->sections[s];
+        if (items->count) qsort(items->items, items->count, sizeof(*items->items), compare_tuples);
+        WRITE(maelys_json_writer_key_cstr(writer, k_sections[s].key));
+        WRITE(maelys_json_writer_array_begin(writer));
+        for (size_t i = 0u; i < items->count; ++i) {
+            if (i && compare_tuples(&items->items[i - 1u], &items->items[i]) == 0) continue;
+            WRITE(maelys_json_writer_array_begin(writer));
+            for (size_t k = 0u; k < k_sections[s].texts; ++k)
+                WRITE(maelys_json_writer_string_cstr(writer, items->items[i].text[k]));
+            if (k_sections[s].number) WRITE(maelys_json_writer_i64(writer, items->items[i].number));
+            WRITE(maelys_json_writer_array_end(writer));
+        }
+        WRITE(maelys_json_writer_array_end(writer));
+    }
+    WRITE(maelys_json_writer_object_end(writer));
+    WRITE(maelys_json_writer_finish(writer, out_bytes, out_size));
+#undef WRITE
+    maelys_json_writer_release(writer);
+    return status;
+}
+
+/* The tuple of one grant of a rule, for one subject and one repository of
+ * its block, in the snapshot's form. */
+typedef struct {
+    int is_vref, is_ref_rule;
+    const char *right;          /* the permission of a plain rule */
+    const char *ref_permission; /* RW, RW+ or - */
+    int ref_prefix;
+    const char *ref_name;
+    const char *vref_predicate, *vref_path;
+    unsigned long long vref_limit;
+} grant_rule_t;
+
+static int record_grant(grants_builder_t *grants, const grant_rule_t *rule, const char *subject,
+                        const repository_spec_t *repository) {
+    const char *kind = subject[0] == '@' ? "group" : "user";
+    const char *name = subject[0] == '@' ? subject + 1u : subject;
+    if (rule->is_vref) {
+        if (!strcmp(rule->vref_predicate, "vref_deny_name"))
+            return add_tuple(grants, SECTION_VREF_NAMES, kind, name, repository->value, rule->vref_path, NULL, NULL, 0);
+        const char *limit = !strcmp(rule->vref_predicate, "vref_deny_count") ? "count" :
+                            !strcmp(rule->vref_predicate, "vref_deny_new_count") ? "new_count" : "max_new_binary";
+        return add_tuple(grants, SECTION_VREF_LIMITS, kind, name, repository->value, limit, NULL, NULL,
+                         (int64_t)rule->vref_limit);
+    }
+    if (rule->is_ref_rule)
+        return add_tuple(grants, SECTION_REFS, kind, name, repository->value, rule->ref_prefix ? "prefix" : "exact",
+                         rule->ref_name, rule->ref_permission, 0);
+    if (repository->kind == REPOSITORY_EXACT)
+        return add_tuple(grants, SECTION_ACCESS, kind, name, repository->value, rule->right, NULL, NULL, 0);
+    if (!strcmp(rule->right, "C"))
+        return add_tuple(grants, SECTION_CREATORS, kind, name, repository->value, NULL, NULL, NULL, 0);
+    return add_tuple(grants, SECTION_OWNERS, repository->value, rule->right, NULL, NULL, NULL, NULL, 0);
+}
+
 /* One elementary grant on an exact repository is one fact: the subject, the
  * repository and the Gitolite level, which the fixed rules read. */
 static int append_direct_grant(text_buffer_t *policy,
@@ -223,13 +393,27 @@ static int append_ref_access(text_buffer_t *policy,
                        prefix, name, repository, ref_name, level);
 }
 
-/* The longest filter pattern the policy language accepts. */
-#define MG_REF_PATTERN_MAX 256u
 
 typedef enum {
     REFEX_EXACT = 1,
     REFEX_PREFIX = 2
 } refex_kind_t;
+
+/* The longest filter pattern the policy language accepts. */
+#define MG_REF_PATTERN_MAX 256u
+
+int mg_gitolite_pattern_is_valid(const char *pattern, int prefix, int deny) {
+    size_t length = pattern ? strlen(pattern) : 0u;
+    if (length < 5u || length > MG_REF_PATTERN_MAX || strncmp(pattern, "refs/", 5u) ||
+        strstr(pattern, "..") || strstr(pattern, "//"))
+        return 0;
+    for (size_t i = 0u; i < length; ++i) {
+        unsigned char ch = (unsigned char)pattern[i];
+        if (!(isalnum(ch) || ch == '.' || ch == '_' || ch == '/' || ch == '-')) return 0;
+    }
+    if (prefix) return deny || pattern[length - 1u] == '/';
+    return pattern[length - 1u] != '/' && maelys_git_ref_name_is_valid(pattern);
+}
 
 /* Reads one Gitolite refex and returns NULL, or the stable reason it is
  * refused. Gitolite anchors a refex at its start only, completes a name that
@@ -255,15 +439,16 @@ static const char *classify_refex(const char *text, int deny, refex_kind_t *out_
     const char *implied = strncmp(text, "refs/", 5u) == 0 ? "" : "refs/heads/";
     if (strlen(implied) + body > MG_REF_PATTERN_MAX) return "ref pattern exceeds 256 bytes";
     (void)snprintf(out_value, MG_REF_PATTERN_MAX + 1u, "%s%.*s", implied, (int)body, text);
-    if (strstr(out_value, "..") || strstr(out_value, "//")) return "unsupported refex syntax";
     int open_namespace = out_value[strlen(out_value) - 1u] == '/';
     if (anchored && open_namespace) return "unsupported refex syntax";
-    if (!anchored && (open_namespace || deny)) {
+    int prefix = !anchored && (open_namespace || deny);
+    /* The normalized form, by the rule a snapshot of grants is read with. */
+    if (!mg_gitolite_pattern_is_valid(out_value, prefix, deny)) return "unsupported refex syntax";
+    if (prefix) {
         *out_kind = REFEX_PREFIX;
         return NULL;
     }
-    /* An exact ref is a policy atom: the full-ref form and the atom length apply. */
-    if (!maelys_git_ref_name_is_valid(out_value)) return "unsupported refex syntax";
+    /* An exact ref is a policy atom: the atom length applies. */
     if (strlen(out_value) >= 64u) return "exact ref exceeds 63 bytes";
     *out_kind = REFEX_EXACT;
     return NULL;
@@ -549,6 +734,7 @@ static int most_groups_of_a_user(const memberships_t *graph, size_t *out) {
 static maelys_git_result_t parse_gitolite(FILE *input,
                                           int prefix_facts,
                                           text_buffer_t *policy,
+                                          grants_builder_t *grants,
                                           memberships_t *graph,
                                           size_t *out_lines,
                                           size_t *out_prefix_facts,
@@ -606,7 +792,9 @@ static maelys_git_result_t parse_gitolite(FILE *input,
                                      name, group)) return MAELYS_GIT_ERR_IO;
                 } else if (!append_text(policy, "group_member(\"%s\", \"%s\").\n",
                                         name, group)) return MAELYS_GIT_ERR_IO;
-                if (!add_membership(graph, name, group, member[0] == '@'))
+                if (!add_membership(graph, name, group, member[0] == '@') ||
+                    !add_tuple(grants, member[0] == '@' ? SECTION_NESTED : SECTION_MEMBERS, name, group, NULL,
+                               NULL, NULL, NULL, 0))
                     return MAELYS_GIT_ERR_IO;
             }
             if (!supported) {
@@ -733,6 +921,10 @@ static maelys_git_result_t parse_gitolite(FILE *input,
                 return MAELYS_GIT_ERR_IO;
             continue;
         }
+        const grant_rule_t rule = {
+            .is_vref = is_vref, .is_ref_rule = is_ref_rule, .right = right,
+            .ref_permission = ref_permission, .ref_prefix = ref_kind == REFEX_PREFIX, .ref_name = ref_name,
+            .vref_predicate = vref.predicate, .vref_path = vref.symbol_value, .vref_limit = vref.integer_value};
         for (char *subject = strtok_r(subjects, " \t,", &save);
              subject; subject = strtok_r(NULL, " \t,", &save)) {
             for (size_t i = 0u; i < repository_count; ++i) {
@@ -752,6 +944,8 @@ static maelys_git_result_t parse_gitolite(FILE *input,
                                                        repositories[i].value);
                 if (!appended)
                     grant_supported = 0;
+                else if (!record_grant(grants, &rule, subject, &repositories[i]))
+                    return MAELYS_GIT_ERR_IO;
             }
         }
         if (!grant_supported) {
@@ -774,9 +968,9 @@ static maelys_git_result_t parse_gitolite(FILE *input,
 
 #define MG_GITOLITE_POLICY_ID "maelys-git.gitolite.authorization"
 
-static int build_manifest(const text_buffer_t *policy, text_buffer_t *manifest) {
+static int build_manifest(const char *source, size_t length, const char *description, text_buffer_t *manifest) {
     char policy_sha[MAELYS_CLI_SHA256_HEX_SIZE];
-    maelys_cli_sha256_hex(policy->data, policy->length, policy_sha);
+    maelys_cli_sha256_hex(source, length, policy_sha);
     return append_text(manifest,
         "{\n  \"policy_set_id\": \"maelys-git.gitolite-migration\",\n"
         "  \"policy_set_version\": \"1\",\n  \"manifest_version\": \"1\",\n"
@@ -785,9 +979,9 @@ static int build_manifest(const text_buffer_t *policy, text_buffer_t *manifest) 
         "  \"policies\": [{\n    \"policy_id\": \"" MG_GITOLITE_POLICY_ID "\",\n"
         "    \"domain\": \"maelys_git\",\n    \"file\": \"gitolite-migrated.dl\",\n"
         "    \"sha256\": \"%s\",\n    \"mode\": \"enforce\",\n"
-        "    \"enabled\": true,\n    \"description\": \"Safely migrated Gitolite ACL subset\",\n"
+        "    \"enabled\": true,\n    \"description\": \"%s\",\n"
         "    \"queries\": [{\"name\":\"allow\",\"arity\":1},{\"name\":\"deny\",\"arity\":1}]\n"
-        "  }]\n}\n", policy_sha);
+        "  }]\n}\n", policy_sha, description);
 }
 
 /* What one derived predicate holds for one request, beside the groups of its
@@ -820,15 +1014,15 @@ static int add_budget_refusal(maelys_git_gitolite_migration_result_t *migration,
  * is the generator's to compute, from the fixed rules and the group graph.
  * A budget that does not hold is an entry that cannot be migrated, and
  * budget.failure says which, for a machine. */
-static maelys_git_result_t judge_budget(const text_buffer_t *policy, const text_buffer_t *manifest,
-                                        const memberships_t *graph, size_t line_number,
+static maelys_git_result_t judge_budget(const char *source, size_t source_length, const text_buffer_t *manifest,
+                                        mg_grants_t *grants, const memberships_t *graph, size_t line_number,
                                         maelys_git_gitolite_migration_result_t *migration,
                                         maelys_git_error_t *error) {
     maelys_git_policy_budget_t *budget = &migration->budget;
     maelys_git_policy_t *compiled = NULL;
     maelys_git_error_t refusal = {0};
     maelys_git_result_t opened = mg_policy_open_buffer(manifest->data, manifest->length,
-        MG_GITOLITE_POLICY_ID, policy->data, policy->length, &compiled, &refusal);
+        MG_GITOLITE_POLICY_ID, source, source_length, grants, &compiled, &refusal);
     if (opened != MAELYS_GIT_OK && opened != MAELYS_GIT_ERR_POLICY) {
         mg_error_set(error, opened, 0, "%s", refusal.message);
         return opened;
@@ -875,16 +1069,146 @@ static maelys_git_result_t generate(FILE *input, int prefix_facts, text_buffer_t
     memberships_t graph = {0};
     size_t lines = 0u;
     *out_prefix_facts = 0u;
-    maelys_git_result_t result = parse_gitolite(input, prefix_facts, policy, &graph, &lines,
+    maelys_git_result_t result = parse_gitolite(input, prefix_facts, policy, NULL, &graph, &lines,
                                                 out_prefix_facts, migration, error);
-    if (result == MAELYS_GIT_OK && !build_manifest(policy, manifest)) result = MAELYS_GIT_ERR_IO;
+    if (result == MAELYS_GIT_OK &&
+        !build_manifest(policy->data, policy->length, "Safely migrated Gitolite ACL subset", manifest))
+        result = MAELYS_GIT_ERR_IO;
     if (result == MAELYS_GIT_OK)
-        result = judge_budget(policy, manifest, &graph, lines, migration, error);
+        result = judge_budget(policy->data, policy->length, manifest, NULL, &graph, lines, migration, error);
     memberships_clear(&graph);
     return result;
 }
 
+typedef struct {
+    const char *name;
+    const char *data;
+    size_t length;
+} output_file_t;
+
+/* The directory that holds PATH, in OUT: "." for a bare name, "/" at the
+ * root. */
+static const char *parent_of(const char *path, char *out, size_t size) {
+    const char *slash = strrchr(path, '/');
+    if (!slash) return ".";
+    if (slash == path) return "/";
+    (void)snprintf(out, size, "%.*s", (int)(slash - path), path);
+    return out;
+}
+
+/* Writes FILES into a transaction directory beside OUTPUT_DIRECTORY, loads
+ * the manifest as production will (with the snapshot of grants.json when
+ * WITH_GRANTS), then publishes the directory by one rename: no file of a
+ * published output is ever written in place. The engine is the authority on
+ * its language: the generated policy is loaded before it is published. */
+static maelys_git_result_t publish(const char *output_directory, const output_file_t *files, size_t count,
+                                   int with_grants, maelys_git_error_t *error) {
+    /* The transaction directory lives beside its destination so that the
+     * final rename stays on one file system. */
+    char prefix[PATH_MAX], temporary[PATH_MAX];
+    int length = snprintf(prefix, sizeof(prefix), "%s.tmp", output_directory);
+    if (length < 0 || (size_t)length >= sizeof(prefix)) return MAELYS_GIT_ERR_LIMIT;
+    maelys_git_result_t result = mg_make_temporary_directory(prefix, temporary, error);
+    if (result != MAELYS_GIT_OK) return result;
+    char path[PATH_MAX], manifest_path[PATH_MAX], grants_path[PATH_MAX];
+    int m = snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.json", temporary);
+    int g = snprintf(grants_path, sizeof(grants_path), "%s/grants.json", temporary);
+    if (m < 0 || g < 0 || (size_t)m >= sizeof(manifest_path) || (size_t)g >= sizeof(grants_path))
+        result = MAELYS_GIT_ERR_LIMIT;
+    for (size_t i = 0u; result == MAELYS_GIT_OK && i < count; ++i) {
+        int p = snprintf(path, sizeof(path), "%s/%s", temporary, files[i].name);
+        result = p < 0 || (size_t)p >= sizeof(path) ? MAELYS_GIT_ERR_LIMIT :
+                 mg_write_file_exclusive(path, files[i].data, files[i].length, 0600, error);
+    }
+    if (result == MAELYS_GIT_OK) {
+        maelys_git_policy_t *generated = NULL;
+        maelys_git_error_t refusal;
+        maelys_git_result_t opened = with_grants
+            ? mg_policy_open_grants(manifest_path, grants_path, &generated, &refusal)
+            : maelys_git_policy_open(manifest_path, &generated, &refusal);
+        if (opened != MAELYS_GIT_OK) {
+            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                         "the generated policy is refused by the engine: %.3800s", refusal.message);
+            mg_error_set_detail(error, &refusal.detail);
+            result = MAELYS_GIT_ERR_POLICY;
+        }
+        maelys_git_policy_close(generated);
+    }
+    /* Each file was synced as it was written; the directory that names them
+     * is synced before its rename, and its parent after it. */
+    if (result == MAELYS_GIT_OK && !mg_sync_directory(temporary)) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "cannot make migration output durable: %s", strerror(errno));
+        result = MAELYS_GIT_ERR_IO;
+    }
+    if (result == MAELYS_GIT_OK && rename(temporary, output_directory) != 0) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "cannot publish migration output: %s", strerror(errno));
+        result = MAELYS_GIT_ERR_IO;
+    }
+    if (result != MAELYS_GIT_OK) (void)mg_remove_tree(temporary);
+    if (result == MAELYS_GIT_OK && !mg_sync_directory(parent_of(output_directory, path, sizeof(path)))) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "migration output published, but its directory could not be synced: %s", strerror(errno));
+        result = MAELYS_GIT_ERR_IO;
+    }
+    return result;
+}
+
+/* The refusals of apply, before anything is written: a budget that does not
+ * hold refuses as the engine would at load time, with the same detail; an
+ * unsupported entry refuses the whole migration. */
+static maelys_git_result_t refuse_apply(const maelys_git_gitolite_migration_result_t *migration,
+                                        maelys_git_error_t *error) {
+    const maelys_git_failure_detail_t *failure = &migration->budget.failure;
+    if (failure->kind != MAELYS_GIT_FAILURE_NONE) {
+        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                     "the generated policy is refused by its budget: %s %llu requested, limit %llu%s%s",
+                     failure->budget[0] ? failure->budget : failure->diagnostic,
+                     (unsigned long long)failure->requested, (unsigned long long)failure->limit,
+                     failure->kind == MAELYS_GIT_FAILURE_CAPACITY ? "" : " ",
+                     failure->kind == MAELYS_GIT_FAILURE_CAPACITY ? "" :
+                         maelys_git_failure_kind_name(failure->kind));
+        mg_error_set_detail(error, failure);
+        return MAELYS_GIT_ERR_POLICY;
+    }
+    if (migration->unsupported_count) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
+                     "migration has %zu unsupported entries; apply is refused",
+                     migration->unsupported_count);
+        return MAELYS_GIT_ERR_PROTOCOL;
+    }
+    return MAELYS_GIT_OK;
+}
+
+static FILE *open_migration_input(const char *input_path, const char *output_directory,
+                                  maelys_git_error_t *error) {
+    struct stat existing;
+    if (lstat(output_directory, &existing) == 0 || errno != ENOENT) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "migration output must not already exist: %s", output_directory);
+        return NULL;
+    }
+    FILE *input = fopen(input_path, "rb");
+    if (!input)
+        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
+                     "cannot read Gitolite configuration: %s", strerror(errno));
+    return input;
+}
+
 maelys_git_result_t maelys_git_migrate_gitolite(
+    const char *input_path,
+    const char *output_directory,
+    int apply,
+    maelys_git_gitolite_migration_result_t *out_result,
+    maelys_git_error_t *error) {
+    return mg_migrate_gitolite_grants(input_path, output_directory, apply, out_result, error);
+}
+
+/* The compiled encoding of GIT-C03: one fact per elementary grant, a rule
+ * per prefix beyond the facts, in a policy whose text is the configuration.
+ * Kept to judge the grants as data against it (GIT-C06, D1). */
+maelys_git_result_t mg_migrate_gitolite_compiled(
     const char *input_path,
     const char *output_directory,
     int apply,
@@ -894,18 +1218,8 @@ maelys_git_result_t maelys_git_migrate_gitolite(
     if (!input_path || !*input_path || !output_directory || !*output_directory || !out_result)
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     memset(out_result, 0, sizeof(*out_result));
-    struct stat existing;
-    if (lstat(output_directory, &existing) == 0 || errno != ENOENT) {
-        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
-                     "migration output must not already exist: %s", output_directory);
-        return MAELYS_GIT_ERR_IO;
-    }
-    FILE *input = fopen(input_path, "rb");
-    if (!input) {
-        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
-                     "cannot read Gitolite configuration: %s", strerror(errno));
-        return MAELYS_GIT_ERR_IO;
-    }
+    FILE *input = open_migration_input(input_path, output_directory, error);
+    if (!input) return MAELYS_GIT_ERR_IO;
     text_buffer_t policy = {0}, manifest = {0};
     size_t prefix_facts = 0u;
     maelys_git_result_t result = generate(input, 1, &policy, &manifest, &prefix_facts,
@@ -941,70 +1255,100 @@ maelys_git_result_t maelys_git_migrate_gitolite(
         if (!error->message[0]) mg_error_set(error, result, errno, "cannot compile Gitolite policy");
         return result;
     }
-    if (!apply) { free(policy.data); free(manifest.data); return MAELYS_GIT_OK; }
-    /* A budget that does not hold refuses as the engine would at load time,
-     * with the same detail, before anything is written. */
-    const maelys_git_failure_detail_t *failure = &out_result->budget.failure;
-    if (failure->kind != MAELYS_GIT_FAILURE_NONE) {
-        free(policy.data); free(manifest.data);
-        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
-                     "the generated policy is refused by its budget: %s %llu requested, limit %llu%s%s",
-                     failure->budget[0] ? failure->budget : failure->diagnostic,
-                     (unsigned long long)failure->requested, (unsigned long long)failure->limit,
-                     failure->kind == MAELYS_GIT_FAILURE_CAPACITY ? "" : " ",
-                     failure->kind == MAELYS_GIT_FAILURE_CAPACITY ? "" :
-                         maelys_git_failure_kind_name(failure->kind));
-        mg_error_set_detail(error, failure);
-        return MAELYS_GIT_ERR_POLICY;
-    }
-    if (out_result->unsupported_count) {
-        free(policy.data); free(manifest.data);
-        mg_error_set(error, MAELYS_GIT_ERR_PROTOCOL, 0,
-                     "migration has %zu unsupported entries; apply is refused",
-                     out_result->unsupported_count);
-        return MAELYS_GIT_ERR_PROTOCOL;
-    }
-    /* The transaction directory lives beside its destination so that the
-     * final rename stays on one file system. */
-    char prefix[PATH_MAX], temporary[PATH_MAX];
-    int length = snprintf(prefix, sizeof(prefix), "%s.tmp", output_directory);
-    if (length < 0 || (size_t)length >= sizeof(prefix)) {
-        free(policy.data); free(manifest.data);
-        return MAELYS_GIT_ERR_LIMIT;
-    }
-    result = mg_make_temporary_directory(prefix, temporary, error);
-    if (result != MAELYS_GIT_OK) {
+    if (apply) result = refuse_apply(out_result, error);
+    if (!apply || result != MAELYS_GIT_OK) {
         free(policy.data); free(manifest.data);
         return result;
     }
-    char policy_path[PATH_MAX], manifest_path[PATH_MAX];
-    int p = snprintf(policy_path, sizeof(policy_path), "%s/gitolite-migrated.dl", temporary);
-    int m = snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.json", temporary);
-    if (p < 0 || m < 0 || (size_t)p >= sizeof(policy_path) || (size_t)m >= sizeof(manifest_path))
-        result = MAELYS_GIT_ERR_LIMIT;
-    if (result == MAELYS_GIT_OK)
-        result = mg_write_file_exclusive(policy_path, policy.data, policy.length, 0600, error);
-    if (result == MAELYS_GIT_OK)
-        result = mg_write_file_exclusive(manifest_path, manifest.data, manifest.length, 0600, error);
-    if (result == MAELYS_GIT_OK) {
-        /* The engine is the authority on its language: the generated policy is
-         * loaded as it will be in production before it is published. */
-        maelys_git_policy_t *generated = NULL;
-        maelys_git_error_t refusal;
-        if (maelys_git_policy_open(manifest_path, &generated, &refusal) != MAELYS_GIT_OK) {
-            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
-                         "the generated policy is refused by the engine: %.3800s", refusal.message);
-            mg_error_set_detail(error, &refusal.detail);
-            result = MAELYS_GIT_ERR_POLICY;
-        }
-        maelys_git_policy_close(generated);
-    }
-    if (result == MAELYS_GIT_OK && rename(temporary, output_directory) != 0) {
-        mg_error_set(error, MAELYS_GIT_ERR_IO, errno,
-                     "cannot publish migration output: %s", strerror(errno));
-        result = MAELYS_GIT_ERR_IO;
-    }
-    if (result != MAELYS_GIT_OK) (void)mg_remove_tree(temporary);
+    const output_file_t files[] = {
+        {"gitolite-migrated.dl", policy.data, policy.length},
+        {"manifest.json", manifest.data, manifest.length}};
+    result = publish(output_directory, files, 2u, 0, error);
     free(policy.data); free(manifest.data);
+    return result;
+}
+
+/* The grants snapshot of a configuration: its bytes, or an unsupported entry
+ * when they exceed the snapshot's bounds; and, parsed, the snapshot the
+ * program is judged with, which is empty when they do. */
+static maelys_git_result_t snapshot_of(grants_builder_t *grants, size_t line_number, char **out_bytes,
+                                       size_t *out_size, mg_grants_t **out_parsed,
+                                       maelys_git_gitolite_migration_result_t *migration,
+                                       maelys_git_error_t *error) {
+    maelys_git_error_t refusal = {0};
+    maelys_json_result_t written = serialize_grants(grants, out_bytes, out_size);
+    if (written == MAELYS_JSON_OK && mg_grants_parse(*out_bytes, *out_size, out_parsed, &refusal) == MAELYS_GIT_OK)
+        return MAELYS_GIT_OK;
+    if (written == MAELYS_JSON_ERR_MEMORY) {
+        mg_error_set(error, MAELYS_GIT_ERR_IO, ENOMEM, "cannot write the grants snapshot");
+        return MAELYS_GIT_ERR_IO;
+    }
+    free(*out_bytes);
+    *out_bytes = NULL;
+    if (!add_unsupported(migration, line_number, "grants snapshot refused",
+                         written == MAELYS_JSON_OK ? refusal.message :
+                         "it exceeds the bounds of maelys-git-grants/1"))
+        return MAELYS_GIT_ERR_IO;
+    grants_builder_t empty = {0};
+    char *bytes = NULL;
+    size_t size = 0u;
+    maelys_git_result_t result = serialize_grants(&empty, &bytes, &size) == MAELYS_JSON_OK
+        ? mg_grants_parse(bytes, size, out_parsed, error) : MAELYS_GIT_ERR_IO;
+    free(bytes);
+    return result;
+}
+
+maelys_git_result_t mg_migrate_gitolite_grants(const char *input_path, const char *output_directory, int apply,
+                                               maelys_git_gitolite_migration_result_t *out_result,
+                                               maelys_git_error_t *error) {
+    maelys_git_error_clear(error);
+    if (!input_path || !*input_path || !output_directory || !*output_directory || !out_result)
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    memset(out_result, 0, sizeof(*out_result));
+    FILE *input = open_migration_input(input_path, output_directory, error);
+    if (!input) return MAELYS_GIT_ERR_IO;
+    /* The compiled text is read and discarded: the grants are what the
+     * generator would have compiled, entry for entry. */
+    text_buffer_t compiled = {0}, manifest = {0};
+    grants_builder_t grants = {0};
+    memberships_t graph = {0};
+    size_t lines = 0u, prefix_facts = 0u;
+    maelys_git_result_t result = parse_gitolite(input, 1, &compiled, &grants, &graph, &lines, &prefix_facts,
+                                                out_result, error);
+    fclose(input);
+    free(compiled.data);
+    size_t program_length = 0u;
+    const char *program = mg_gitolite_program_text(&program_length);
+    char *snapshot = NULL;
+    size_t snapshot_size = 0u;
+    mg_grants_t *parsed = NULL;
+    if (result == MAELYS_GIT_OK)
+        result = snapshot_of(&grants, lines, &snapshot, &snapshot_size, &parsed, out_result, error);
+    if (result == MAELYS_GIT_OK &&
+        !build_manifest(program, program_length, "Audited Gitolite program " MG_GITOLITE_PROGRAM_FORMAT
+                        "; its grants are a maelys-git-grants/1 snapshot", &manifest))
+        result = MAELYS_GIT_ERR_IO;
+    if (result == MAELYS_GIT_OK) {
+        result = judge_budget(program, program_length, &manifest, parsed, &graph, lines, out_result, error);
+        parsed = NULL; /* the judged handle owned it */
+    }
+    mg_grants_free(parsed);
+    grants_builder_clear(&grants);
+    memberships_clear(&graph);
+    if (result != MAELYS_GIT_OK) {
+        maelys_git_gitolite_migration_result_clear(out_result);
+        if (!error->message[0]) mg_error_set(error, result, errno, "cannot migrate Gitolite grants");
+    } else if (apply) {
+        result = refuse_apply(out_result, error);
+    }
+    if (result == MAELYS_GIT_OK && apply) {
+        const output_file_t files[] = {
+            {"gitolite-migrated.dl", program, program_length},
+            {"manifest.json", manifest.data, manifest.length},
+            {"grants.json", snapshot, snapshot_size}};
+        result = publish(output_directory, files, 3u, 1, error);
+    }
+    free(snapshot);
+    free(manifest.data);
     return result;
 }

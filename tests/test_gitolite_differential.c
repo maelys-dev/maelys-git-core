@@ -5,10 +5,15 @@
  *     old policy's outcome on the LARGE profile;
  *   - the old policy, on this profile, gives the same outcome or, in SMALL
  *     only, a capacity failure of execution;
- *   - the new policy never fails for capacity.
+ *   - the new policy never fails for capacity;
+ *   - the same configuration as grants as data (the audited program and its
+ *     snapshot, GIT-C06) gives the recorded outcome too, never failing for
+ *     capacity.
  * MG_RECORD_DIFFERENTIAL=FILE writes the old policy's outcomes instead; it is
  * run on the LARGE profile, in a commit that explains every changed line. */
 #include "maelys_git.h"
+#include "internal.h"
+#include "policy/policy_grants.h"
 #include "test_support.h"
 
 #include <stdint.h>
@@ -20,6 +25,7 @@ static FILE *g_record;
 static char *g_expected[MAX_ROWS];
 static size_t g_expected_count, g_row;
 static size_t g_old_capacity_failures, g_compared;
+static maelys_git_policy_t *g_grants_policy;
 
 typedef struct {
     const char *name;
@@ -118,6 +124,11 @@ static int compare(const char *name, maelys_git_policy_t *old_policy, maelys_git
         (void)fprintf(stderr, "%s%s: new %s, expected %s\n", row, "", new_outcome, expected);
         return 0;
     }
+    outcome_of(g_grants_policy, request, new_outcome, sizeof(new_outcome), &new_capacity);
+    if (new_capacity || strcmp(new_outcome, expected) != 0) {
+        (void)fprintf(stderr, "%s%s: grants %s, expected %s\n", row, "", new_outcome, expected);
+        return 0;
+    }
     if (strcmp(old_outcome, expected) != 0) {
         if (!old_capacity) {
             (void)fprintf(stderr, "%s: old %s, expected %s\n", row, old_outcome, expected);
@@ -191,7 +202,8 @@ static int run_grid(const grid_t *grid, maelys_git_policy_t *old_policy, maelys_
 }
 
 static int run_case(const grid_t *grid) {
-    char old_manifest[512], input[512], output[512], new_manifest[600];
+    char old_manifest[512], input[512], output[512], new_manifest[600], grants_output[600],
+        grants_manifest[700], snapshot[700];
     (void)snprintf(old_manifest, sizeof(old_manifest), "%s/%s/old/manifest.json", DIFFERENTIAL_DIR,
                    grid->name);
     (void)snprintf(input, sizeof(input), "%s/%s/gitolite.conf", DIFFERENTIAL_DIR, grid->name);
@@ -200,14 +212,23 @@ static int run_case(const grid_t *grid) {
     maelys_git_policy_t *old_policy = NULL, *new_policy = NULL;
     CHECK(maelys_git_policy_open(old_manifest, &old_policy, &error) == MAELYS_GIT_OK);
     maelys_git_gitolite_migration_result_t migration;
-    CHECK(maelys_git_migrate_gitolite(input, output, 1, &migration, &error) == MAELYS_GIT_OK);
+    CHECK(mg_migrate_gitolite_compiled(input, output, 1, &migration, &error) == MAELYS_GIT_OK);
     CHECK(migration.unsupported_count == 0u);
     maelys_git_gitolite_migration_result_clear(&migration);
     (void)snprintf(new_manifest, sizeof(new_manifest), "%s/manifest.json", output);
     CHECK(maelys_git_policy_open(new_manifest, &new_policy, &error) == MAELYS_GIT_OK);
+    (void)snprintf(grants_output, sizeof(grants_output), "%s-grants", output);
+    CHECK(mg_migrate_gitolite_grants(input, grants_output, 1, &migration, &error) == MAELYS_GIT_OK);
+    CHECK(migration.unsupported_count == 0u);
+    maelys_git_gitolite_migration_result_clear(&migration);
+    (void)snprintf(grants_manifest, sizeof(grants_manifest), "%s/manifest.json", grants_output);
+    (void)snprintf(snapshot, sizeof(snapshot), "%s/grants.json", grants_output);
+    CHECK(mg_policy_open_grants(grants_manifest, snapshot, &g_grants_policy, &error) == MAELYS_GIT_OK);
     int ok = run_grid(grid, old_policy, new_policy);
     maelys_git_policy_close(old_policy);
     maelys_git_policy_close(new_policy);
+    maelys_git_policy_close(g_grants_policy);
+    g_grants_policy = NULL;
     return ok;
 }
 
@@ -252,8 +273,8 @@ int main(void) {
     for (size_t i = 0u; i < g_expected_count; ++i) free(g_expected[i]);
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok && !g_record)
-        (void)printf("Gitolite encodings: %zu requests identical; %zu where the old policy "
-                     "failed for capacity on this profile: ok\n",
+        (void)printf("Gitolite encodings, compiled and as grants: %zu requests identical; %zu where the old "
+                     "policy failed for capacity on this profile: ok\n",
                      g_compared, g_old_capacity_failures);
     return ok ? 0 : 1;
 }

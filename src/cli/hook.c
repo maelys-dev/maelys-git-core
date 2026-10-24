@@ -15,6 +15,7 @@
 static const maelys_cli_option_t pre_receive_options[] = {
     {MAELYS_CLI_STRING("repository", "NAME", "Repository name."), .required = 1},
     {MAELYS_CLI_PATH("manifest", "FILE", "Datalog manifest path."), .required = 1},
+    MAELYS_GIT_CLI_GRANTS_OPTION,
     {MAELYS_CLI_STRING("user", "PRINCIPAL",
      "Authenticated principal; defaults to MAELYS_GIT_PRINCIPAL.")},
     MAELYS_GIT_CLI_GIT_OPTION,
@@ -94,9 +95,13 @@ static int command_pre_receive(maelys_cli_context_t *context) {
     static char text[MAELYS_GIT_RECEIPT_MAX_EXPLANATION_TEXT + 1u];
     mg_receive_receipt_t receipt = {.mode = MAELYS_GIT_EXPLAIN_ON_DENIAL, .text = text,
                                     .text_capacity = sizeof(text)};
+    /* One snapshot of grants for the whole push: every ref decides on the
+     * generation read here. */
+    const char *manifest = maelys_cli_option(context, "manifest");
+    const char *grants = maelys_cli_option(context, "grants");
     maelys_git_policy_t *policy = NULL;
-    maelys_git_result_t result = maelys_git_policy_open(
-        maelys_cli_option(context, "manifest"), &policy, &error);
+    maelys_git_result_t result = grants ? maelys_git_policy_open_grants(manifest, grants, &policy, &error)
+                                        : maelys_git_policy_open(manifest, &policy, &error);
     if (result == MAELYS_GIT_OK) result = mg_receive_objects_begin(git_dir, &error);
     if (result == MAELYS_GIT_OK)
         result = mg_receive_authorize(

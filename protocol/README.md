@@ -113,6 +113,38 @@ reviewed source OID changed. Optional
 `max_source_objects` and `max_source_bytes` tighten the default traversal
 budgets of 100,000 reachable objects and 512 MiB of reachable on-disk data.
 
+An `authorize` payload may set `explain: true` to receive the explanation text
+of the decision in the result.
+
+An executor started with a snapshot of grants (`--grants`) reads it again
+before each command but `health`, and decides on the bytes it has just read.
+Its `pr_check` and `pr_merge` results carry `grants_fingerprint`, the SHA-256
+of those bytes, empty without a snapshot. A `pr_merge` apply under a snapshot
+must echo the plan's value as `expected_grants_fingerprint`: it fails with
+code `invalid_argument` when the member is missing, and with code
+`process_error` and the message "grants changed; run a new pull request plan"
+when the grants are no longer those of the plan. The schema
+cannot state that requirement, since it depends on how the executor was
+started. When the snapshot cannot be read again, the command is answered by a
+`failed` result whose `code` is that of the failed read and whose `message`
+starts with `grants snapshot unavailable: `; every following command is
+refused the same way until a reading succeeds. That prefix is part of this
+protocol and identifies the condition.
+
+A Cloud agent configured with `grants_path` keeps the snapshot's bytes in its
+store, `grants-store/<sha256>.json` beside its journal, before it starts the
+executor for a command, and starts it on that file with
+`--expected-grants-fingerprint`, so that the executor decides on those bytes
+or refuses. When the snapshot cannot be read or kept, no executor starts: the
+command is answered by a correlated `failed` result whose `code` is that of
+the failure and whose `message` starts with `grants store unavailable: `, a
+prefix that is part of this protocol too. The agent's audit records the
+snapshot given to the executor as a `grants_snapshot` event, `path` and
+`sha256`, in the transaction that completes the command; the protocol carries
+the digest only, in receipts and in `grants_fingerprint`, never the snapshot.
+A receipt that names other grants than those the executor was given fails the
+command with code `executor_failed`.
+
 Local repository administration returns lifecycle events conforming to
 `repository-events-v1.schema.json`. Plan and apply have distinct event types;
 the forge should persist apply events only after it has durably accepted the

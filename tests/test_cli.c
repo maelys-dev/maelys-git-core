@@ -690,6 +690,53 @@ static int test_authorize_receipt(void) {
     return 1;
 }
 
+/* The authorize envelope of OUT with the first FROM replaced by TO, checked
+ * against SCHEMA: 1 conforms, 0 does not, -1 when FROM is not there. */
+static int conforms_replaced(const char *out, const char *from, const char *to, const maelys_json_document_t *schema) {
+    const char *at = strstr(out, from);
+    if (!at) return -1;
+    size_t size = strlen(out) - strlen(from) + strlen(to);
+    char *text = malloc(size + 1u);
+    if (!text) return -1;
+    (void)snprintf(text, size + 1u, "%.*s%s%s", (int)(at - out), out, to, at + strlen(from));
+    maelys_json_document_t *envelope = tj_parse(text);
+    free(text);
+    int ok = envelope && data_conforms(envelope, schema);
+    tj_release(envelope);
+    return ok;
+}
+
+/* GIT-C06 test 15: the schema of authorize admits a receipt of version 1
+ * without grants and of version 2 with them, and nothing else. */
+static int test_receipt_versions_schema(void) {
+    maelys_json_document_t *schema = output_schema("authorize");
+    CHECK(schema != NULL);
+    char manifest[] = FIXTURE_DIR "/../../../policies/manifest.json";
+    ARGV(argv, "authorize", manifest, "mallory", "example.git", "push", "refs/heads/main", "--json", "--compact");
+    run_result_t result;
+    CHECK(run(&maelys_git_cli_admin_app, argv, argv_count, &result) && result.code == 0);
+    static const char grants[] =
+        "\"grants\":{\"facts\":3,\"format\":\"maelys-git-grants/1\",\"program\":\"maelys-git-gitolite-program/1\","
+        "\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\","
+        "\"slice\":\"maelys-git-slice/1\"},";
+    char v2[512], v1_grants[512], other_format[512];
+    (void)snprintf(v2, sizeof(v2), "%s\"version\":2}", grants);
+    (void)snprintf(v1_grants, sizeof(v1_grants), "%s\"version\":1}", grants);
+    (void)snprintf(other_format, sizeof(other_format), "%s\"version\":2}", grants);
+    char *at = strstr(other_format, "grants/1");
+    CHECK(at != NULL);
+    at[7] = '2';
+    CHECK(conforms_replaced(result.out, "\"version\":1}", "\"version\":1}", schema) == 1);
+    CHECK(conforms_replaced(result.out, "\"version\":1}", v2, schema) == 1);
+    CHECK(conforms_replaced(result.out, "\"version\":1}", "\"version\":2}", schema) == 0);
+    CHECK(conforms_replaced(result.out, "\"version\":1}", v1_grants, schema) == 0);
+    CHECK(conforms_replaced(result.out, "\"version\":1}", other_format, schema) == 0);
+    CHECK(conforms_replaced(result.out, "\"version\":1}", "\"version\":3}", schema) == 0);
+    run_clear(&result);
+    tj_release(schema);
+    return 1;
+}
+
 /* ---- the pinned engine: variable identity and strata ----------------------------- */
 
 /* authorize of alice on example.git, pushing refs/heads/main with one path,
@@ -911,7 +958,8 @@ int main(void) {
     passed += test_same_receipt();
     passed += test_variable_identity();
     passed += test_engine_capacities();
-    if (passed != 8) return 1;
+    passed += test_receipt_versions_schema();
+    if (passed != 9) return 1;
     (void)printf("ok: %d CLI contract test groups passed\n", passed);
     return 0;
 }

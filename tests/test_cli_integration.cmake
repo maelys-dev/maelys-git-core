@@ -112,6 +112,31 @@ if(NOT EXISTS "${agent_config}")
   message(FATAL_ERROR "provision apply did not create configuration")
 endif()
 
+# GIT-C06: --grants writes grants_path, and the plan names it.
+file(WRITE "${test_root}/grants.json" "{}")
+set(grants_config "${test_root}/agent-grants.json")
+foreach(step plan apply)
+  set(apply_flag "")
+  if(step STREQUAL "apply")
+    set(apply_flag "--apply")
+  endif()
+  run_json(0 provision_grants provision_grants_error
+    "${MAELYS_AGENT_BIN}" provision --config "${grants_config}" --agent-id test-agent
+    --authority forge.example.test --ca "${test_root}/ca.pem" --token "${test_root}/token"
+    --database "${test_root}/agent.sqlite3" --manifest "${TEST_MANIFEST}"
+    --grants "${test_root}/grants.json" --root "${test_root}" --executor "${MAELYS_EXECUTOR_BIN}"
+    ${apply_flag} --format json --compact --non-interactive)
+  string(JSON provision_grants_path GET "${provision_grants}" data grants)
+  if(NOT provision_grants_path STREQUAL "${test_root}/grants.json")
+    message(FATAL_ERROR "provision does not name its grants: ${provision_grants}")
+  endif()
+endforeach()
+file(READ "${grants_config}" grants_config_text)
+string(JSON configured_grants GET "${grants_config_text}" grants_path)
+if(NOT configured_grants STREQUAL "${test_root}/grants.json")
+  message(FATAL_ERROR "provision --grants did not write grants_path: ${grants_config_text}")
+endif()
+
 run_json(0 shell_describe shell_describe_error
   "${MAELYS_SHELL_BIN}" describe serve --format json --compact)
 string(JSON shell_mode GET "${shell_describe}" data commands 0 outputMode)

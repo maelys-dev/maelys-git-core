@@ -18,5 +18,9 @@ typedef maelys_datalog_status_t (*mg_policy_reads_t)(const maelys_datalog_policy
 maelys_git_result_t mg_policy_open_reads(const char *manifest_path, mg_policy_reads_t reads,
                                          maelys_git_policy_t **out_policy,
                                          maelys_git_error_t *error);
+/* The same, with the snapshot of grants at GRANTS_PATH when it is not NULL. */
+maelys_git_result_t mg_policy_open_with(const char *manifest_path, const char *grants_path,
+                                        mg_policy_reads_t reads, maelys_git_policy_t **out_policy,
+                                        maelys_git_error_t *error);
 
 #endif

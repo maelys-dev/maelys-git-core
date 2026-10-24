@@ -10,6 +10,7 @@ static const maelys_cli_option_t serve_options[] = {
      .required = 1},
     {MAELYS_CLI_PATH("root", "DIR", "Repository root."), .required = 1},
     {MAELYS_CLI_PATH("manifest", "FILE", "Datalog manifest path."), .required = 1},
+    MAELYS_GIT_CLI_GRANTS_OPTION,
     MAELYS_GIT_CLI_GIT_OPTION,
     {MAELYS_CLI_STRING("restrict-repository", "NAME",
      "Restrict a deploy key to one exact repository.")},
@@ -56,7 +57,10 @@ static int command_serve(maelys_cli_context_t *context) {
         result = maelys_git_resolve_repository(root, command.repository, repository_path,
                                                sizeof(repository_path), &error);
     maelys_git_policy_t *policy = NULL;
-    if (result == MAELYS_GIT_OK) result = maelys_git_policy_open(manifest, &policy, &error);
+    const char *grants = maelys_cli_option(context, "grants");
+    if (result == MAELYS_GIT_OK)
+        result = grants ? maelys_git_policy_open_grants(manifest, grants, &policy, &error)
+                        : maelys_git_policy_open(manifest, &policy, &error);
     if (result == MAELYS_GIT_OK) {
         maelys_git_policy_request_t request = {
             .request_id = "ssh",

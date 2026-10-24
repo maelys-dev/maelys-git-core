@@ -130,6 +130,9 @@ add_library(maelys_git_core STATIC
     src/common/strings.c
     src/shell/command.c
     src/policy/policy.c
+    src/policy/grants.c
+    src/policy/program.c
+    src/policy/slice.c
     src/repository/repository.c
     src/repository/lifecycle.c
     src/repository/mirror.c
@@ -145,7 +148,7 @@ target_include_directories(maelys_git_core
 # comes from the public digest of the dependency-free CLI framework core.
 target_link_libraries(maelys_git_core
     PUBLIC maelys_datalog
-    PRIVATE maelys::cli Threads::Threads maelys_git_build_flags)
+    PRIVATE maelys::cli maelys::json Threads::Threads maelys_git_build_flags)
 
 # Authorization receipts: their only writer and reader, on maelys-json. The
 # policy core builds the receipt structure and stays without JSON.
@@ -173,6 +176,7 @@ add_library(maelys_git_agent_core STATIC
     src/agent/store.c
     src/agent/retry.c
     src/agent/executor.c
+    src/agent/grants_store.c
     src/agent/agent.c)
 target_include_directories(maelys_git_agent_core
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -361,12 +365,25 @@ if(MAELYS_GIT_BUILD_TESTS)
     add_test(NAME maelys-git-policy-golden COMMAND test-maelys-git-policy-golden)
 
     add_executable(test-maelys-git-policy-facade tests/test_policy_facade.c)
+    target_include_directories(test-maelys-git-policy-facade PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_definitions(test-maelys-git-policy-facade PRIVATE
         TEST_MANIFEST_FILE="${MAELYS_GIT_TEST_MANIFEST}"
         FIXTURE_DIR="${MAELYS_GIT_POLICY_FIXTURES}")
     target_link_libraries(test-maelys-git-policy-facade PRIVATE
         maelys_git_core maelys::cli maelys_git_build_flags)
     add_test(NAME maelys-git-policy-facade COMMAND test-maelys-git-policy-facade)
+
+    add_executable(test-maelys-git-grants tests/test_grants.c)
+    target_include_directories(test-maelys-git-grants PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-maelys-git-grants PRIVATE maelys_git_core maelys::cli maelys_git_build_flags)
+    add_test(NAME maelys-git-grants COMMAND test-maelys-git-grants)
+    set_tests_properties(maelys-git-grants PROPERTIES TIMEOUT 120)
+
+    add_executable(test-maelys-git-slice tests/test_slice.c)
+    target_include_directories(test-maelys-git-slice PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-maelys-git-slice PRIVATE maelys_git_core maelys_git_build_flags)
+    add_test(NAME maelys-git-slice COMMAND test-maelys-git-slice)
+    set_tests_properties(maelys-git-slice PROPERTIES TIMEOUT 120)
 
     add_executable(test-maelys-git-gitolite-budget tests/test_gitolite_budget.c)
     target_include_directories(test-maelys-git-gitolite-budget PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -376,7 +393,23 @@ if(MAELYS_GIT_BUILD_TESTS)
         maelys_git_core maelys::cli maelys_git_build_flags)
     add_test(NAME maelys-git-gitolite-budget COMMAND test-maelys-git-gitolite-budget)
 
+    add_executable(test-maelys-git-engine-contract tests/test_engine_contract.c)
+    target_link_libraries(test-maelys-git-engine-contract PRIVATE
+        maelys_datalog maelys::cli maelys_git_build_flags)
+    add_test(NAME maelys-git-engine-contract COMMAND test-maelys-git-engine-contract)
+
+    add_executable(test-maelys-git-gitolite-program tests/test_gitolite_program.c)
+    target_include_directories(test-maelys-git-gitolite-program PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-maelys-git-gitolite-program PRIVATE
+        maelys_git_core maelys::cli maelys_git_build_flags)
+    add_test(NAME maelys-git-gitolite-program COMMAND test-maelys-git-gitolite-program)
+    # The parity oracle decides 92,911 requests in both encodings: about 75 s
+    # under the sanitizers on a fast machine, beyond the CI's default of 120 s
+    # on a slower runner.
+    set_tests_properties(maelys-git-gitolite-program PROPERTIES TIMEOUT 300)
+
     add_executable(test-maelys-git-gitolite-differential tests/test_gitolite_differential.c)
+    target_include_directories(test-maelys-git-gitolite-differential PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_definitions(test-maelys-git-gitolite-differential PRIVATE
         DIFFERENTIAL_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gitolite-differential")
     target_link_libraries(test-maelys-git-gitolite-differential PRIVATE
@@ -405,9 +438,15 @@ if(MAELYS_GIT_BUILD_TESTS)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_facade_consumer.cmake)
 
     # Timing is not a test: built on demand, never run by CTest.
+    add_executable(bench-maelys-git-grants EXCLUDE_FROM_ALL tests/bench_grants.c)
+    target_include_directories(bench-maelys-git-grants PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(bench-maelys-git-grants PRIVATE maelys_git_core maelys_git_build_flags)
     add_executable(bench-maelys-git-authorize EXCLUDE_FROM_ALL tests/bench_authorize.c)
     target_link_libraries(bench-maelys-git-authorize PRIVATE
         maelys_git_receipt maelys_git_build_flags)
+    add_executable(bench-maelys-git-slices EXCLUDE_FROM_ALL tests/bench_slices.c)
+    target_include_directories(bench-maelys-git-slices PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(bench-maelys-git-slices PRIVATE maelys_git_agent_core maelys_git_build_flags)
 
     # Production code reaches the engine through its installed SDK only.
     add_test(NAME maelys-git-datalog-boundary
@@ -438,6 +477,12 @@ if(MAELYS_GIT_BUILD_TESTS)
         FIXTURE_DIR="${MAELYS_GIT_POLICY_FIXTURES}")
     add_test(NAME maelys-git-agent COMMAND test-maelys-git-agent)
 
+    add_executable(test-maelys-git-grants-streams tests/test_grants_streams.c)
+    target_include_directories(test-maelys-git-grants-streams PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-maelys-git-grants-streams PRIVATE
+        maelys_git_agent_core maelys::cli maelys_git_build_flags)
+    add_test(NAME maelys-git-grants-streams COMMAND test-maelys-git-grants-streams)
+
     add_executable(test-maelys-git-agent-config tests/test_agent_config.c)
     target_include_directories(test-maelys-git-agent-config PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(test-maelys-git-agent-config PRIVATE
@@ -449,6 +494,8 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_include_directories(test-maelys-git-agent-protocol PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(test-maelys-git-agent-protocol PRIVATE
         maelys_git_agent_core SQLite::SQLite3 maelys_git_build_flags)
+    target_compile_definitions(test-maelys-git-agent-protocol PRIVATE
+        PROTOCOL_DIR="${CMAKE_CURRENT_SOURCE_DIR}/protocol")
     add_test(NAME maelys-git-agent-protocol COMMAND test-maelys-git-agent-protocol)
 
     add_executable(test-maelys-git-store-migration tests/test_store_migration.c)
@@ -507,7 +554,7 @@ if(MAELYS_GIT_BUILD_TESTS)
         add_test(NAME maelys-git-cloud-transport
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cloud_transport.py
                 $<TARGET_FILE:maelys-git-agent> $<TARGET_FILE:maelys-git-executor>
-                ${MAELYS_GIT_TEST_MANIFEST} ${MAELYS_OPENSSL_PROGRAM})
+                ${MAELYS_GIT_TEST_MANIFEST} ${MAELYS_OPENSSL_PROGRAM} $<TARGET_FILE:maelys-git>)
         set_tests_properties(maelys-git-cloud-transport PROPERTIES TIMEOUT 60)
     endif()
 
