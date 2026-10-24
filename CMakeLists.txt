@@ -403,6 +403,9 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_link_libraries(test-maelys-git-gitolite-program PRIVATE
         maelys_git_core maelys::cli maelys_git_build_flags)
     add_test(NAME maelys-git-gitolite-program COMMAND test-maelys-git-gitolite-program)
+    # Under ASan+UBSan it takes about 115 s on the CI runners, at the 120 s
+    # default the workflow gives a test without its own timeout.
+    set_tests_properties(maelys-git-gitolite-program PROPERTIES TIMEOUT 300)
 
     add_executable(test-maelys-git-gitolite-differential tests/test_gitolite_differential.c)
     target_include_directories(test-maelys-git-gitolite-differential PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
