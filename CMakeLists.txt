@@ -440,6 +440,9 @@ if(MAELYS_GIT_BUILD_TESTS)
     add_executable(bench-maelys-git-authorize EXCLUDE_FROM_ALL tests/bench_authorize.c)
     target_link_libraries(bench-maelys-git-authorize PRIVATE
         maelys_git_receipt maelys_git_build_flags)
+    add_executable(bench-maelys-git-slices EXCLUDE_FROM_ALL tests/bench_slices.c)
+    target_include_directories(bench-maelys-git-slices PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(bench-maelys-git-slices PRIVATE maelys_git_agent_core maelys_git_build_flags)
 
     # Production code reaches the engine through its installed SDK only.
     add_test(NAME maelys-git-datalog-boundary
