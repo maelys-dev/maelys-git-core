@@ -5,9 +5,10 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
-- An executor started with `--expected-grants-fingerprint` decides its first
-  command on the snapshot it verified at startup, without reading the file
-  again; every later command reads it again, as before. A Cloud command thus
+- An executor started with `--expected-grants-fingerprint` decides the first
+  command of its stream, whatever it is, on the snapshot it verified at
+  startup, without reading the file again; every later command reads it
+  again, as before, a `health` coming first included. A Cloud command thus
   reads the agent's kept snapshot twice instead of three times. Streams
   without an expected fingerprint still read the snapshot before each
   command.

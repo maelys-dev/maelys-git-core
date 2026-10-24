@@ -87,8 +87,9 @@ static int setup(void) {
 
 /* ---- test 9: a stream ---------------------------------------------------------- */
 
-/* One authorize command of alice on r.git through the executor: its status,
- * whether it was allowed and the grants its receipt names. */
+/* One command of alice on r.git through the executor, authorize unless
+ * COMMAND names another: its status, whether it was allowed and the grants
+ * its receipt names. */
 typedef struct {
     char status[16];
     int allowed;
@@ -96,7 +97,7 @@ typedef struct {
     char message[512];
 } outcome_t;
 
-static int run_command(maelys_git_policy_t *policy, int number, outcome_t *out) {
+static int run_named(maelys_git_policy_t *policy, int number, const char *command, outcome_t *out) {
     char id[32];
     (void)snprintf(id, sizeof(id), "c%d", number);
     mg_json_t json;
@@ -106,13 +107,13 @@ static int run_command(maelys_git_policy_t *policy, int number, outcome_t *out) 
     mg_json_string(&json, "message_id", id);
     mg_json_string(&json, "agent_id", "agent-1");
     mg_json_string(&json, "type", "command");
-    mg_json_string(&json, "command", "authorize");
+    mg_json_string(&json, "command", command);
     mg_json_string(&json, "principal", "alice");
     mg_json_string(&json, "repository", "r.git");
     mg_json_i64(&json, "issued_at_ms", (int64_t)mg_now_ms());
     mg_json_i64(&json, "expires_at_ms", (int64_t)(mg_now_ms() + 60000));
     mg_json_object(&json, "payload");
-    mg_json_string(&json, "operation", "write");
+    if (!strcmp(command, "authorize")) mg_json_string(&json, "operation", "write");
     mg_json_end_object(&json);
     mg_json_end_object(&json);
     char *raw = NULL;
@@ -139,6 +140,10 @@ static int run_command(maelys_git_policy_t *policy, int number, outcome_t *out) 
     if (text) (void)snprintf(out->message, sizeof(out->message), "%s", text);
     tj_release(document);
     return 1;
+}
+
+static int run_command(maelys_git_policy_t *policy, int number, outcome_t *out) {
+    return run_named(policy, number, "authorize", out);
 }
 
 static char g_during_read[2048];
@@ -274,10 +279,11 @@ static void count_reading(const char *path) {
     ++g_readings;
 }
 
-/* A pinned handle decides its first command on the reading its pin
- * verified, without reading the file again; every later command reads it
- * again and refuses other bytes. An unpinned handle reads again before its
- * first command too (D4). */
+/* A pinned handle decides the first command of its stream on the reading
+ * its pin verified, without reading the file again; every later command
+ * reads it again and refuses other bytes, a first command that was a health
+ * included. An unpinned handle reads again before its first command too
+ * (D4). */
 static int test_pinned_first_read(void) {
     char text[2048], alice[65];
     snapshot_text("alice", text, sizeof(text));
@@ -310,6 +316,24 @@ static int test_pinned_first_read(void) {
         }
         maelys_git_policy_close(policy);
     }
+    /* The first command of the stream, whatever it is, uses up the verified
+     * reading: after a health, the first authorization reads again and
+     * refuses the bytes published since. */
+    CHECK(publish_users("alice"));
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_error_t error;
+    CHECK(maelys_git_policy_open_grants(g_manifest, g_grants, &policy, &error) == MAELYS_GIT_OK);
+    CHECK(mg_policy_expect_grants(policy, alice, &error) == MAELYS_GIT_OK);
+    g_readings = 0;
+    mg_grants_test_between_reads = count_reading;
+    CHECK(run_named(policy, ++n, "health", &outcome) && !strcmp(outcome.status, "ok"));
+    CHECK(g_readings == 0);
+    CHECK(publish_users("bob"));
+    int decided = run_command(policy, ++n, &outcome);
+    mg_grants_test_between_reads = NULL;
+    CHECK(decided && g_readings == 1 && !strcmp(outcome.status, "failed") && !outcome.allowed);
+    CHECK(strstr(outcome.message, "is not the expected one") != NULL);
+    maelys_git_policy_close(policy);
     return 1;
 }
 

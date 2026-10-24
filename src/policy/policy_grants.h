@@ -24,15 +24,22 @@ maelys_git_result_t mg_policy_open_grants(const char *manifest_path, const char 
  * same bytes keep the index; other bytes replace it; a failure leaves the
  * handle without a snapshot, refusing every request until a reading
  * succeeds. A handle opened without grants is left as it is, and so is a
- * pinned handle before its first command (mg_policy_expect_grants). */
+ * pinned handle during the first command of its stream
+ * (mg_policy_expect_grants). */
 maelys_git_result_t mg_policy_refresh_grants(maelys_git_policy_t *policy, maelys_git_error_t *error);
+
+/* Marks the start of one command of a stream, whatever it is, health and an
+ * expired command included: the first one of a pinned handle uses the
+ * reading its pin verified, and every later one reads again. */
+void mg_policy_begin_command(maelys_git_policy_t *policy);
 
 /* Every reading of the handle's snapshot, the one made at its opening
  * included, must have SHA256: a reading with other bytes refuses, as a
  * failed reading does, with MAELYS_GIT_ERR_PROCESS. An executor started on an
  * immutable file of the agent's store is given its digest. The reading this
- * call verifies serves the next command, which mg_policy_refresh_grants does
- * not read again; every later command reads again. */
+ * call verifies serves the next command of the stream, whatever it is
+ * (mg_policy_begin_command): a health or an expired command uses it up
+ * without reading, and every later command reads again. */
 maelys_git_result_t mg_policy_expect_grants(maelys_git_policy_t *policy, const char *sha256,
                                             maelys_git_error_t *error);
 

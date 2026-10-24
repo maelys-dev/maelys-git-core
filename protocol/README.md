@@ -135,8 +135,9 @@ A Cloud agent configured with `grants_path` keeps the snapshot's bytes in its
 store, `grants-store/<sha256>.json` beside its journal, before it starts the
 executor for a command, and starts it on that file with
 `--expected-grants-fingerprint`, so that the executor decides on those bytes
-or refuses. The reading the executor verifies at startup serves its first
-command; any later command of the same stream reads the file again. When the snapshot cannot be read or kept, no executor starts: the
+or refuses. The reading the executor verifies at startup serves the first
+command of its stream, whatever it is, a `health` or an expired command
+included; every later command of the stream reads the file again. When the snapshot cannot be read or kept, no executor starts: the
 command is answered by a correlated `failed` result whose `code` is that of
 the failure and whose `message` starts with `grants store unavailable: `, a
 prefix that is part of this protocol too. The agent's audit records the
