@@ -743,6 +743,12 @@ void mg_policy_slice_counts(const maelys_git_policy_t *policy, size_t *out_conte
     *out_slice = policy ? policy->fact_count - policy->context_count : 0u;
 }
 
+const maelys_datalog_fact_t *mg_policy_entry_batch(const maelys_git_policy_t *policy, size_t index,
+                                                   size_t *out_count) {
+    *out_count = policy && index < policy->count ? policy->entries[index].last_facts : 0u;
+    return policy ? policy->facts : NULL;
+}
+
 size_t mg_policy_slice_held(const maelys_git_policy_t *policy) {
     return policy ? policy->slice.count : 0u;
 }

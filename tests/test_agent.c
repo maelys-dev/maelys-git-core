@@ -327,6 +327,68 @@ static int test_denial_audit(void) {
 }
 
 
+static int write_file(const char *path, const char *contents, mode_t mode);
+
+/* The syncs the store makes, as the test hook sees them: each path, and
+ * the one to fail once. */
+static char g_synced[16][4200];
+static size_t g_sync_count;
+static char g_fail_sync[4200];
+
+static int record_sync(const char *path) {
+    if (g_sync_count < 16u) (void)snprintf(g_synced[g_sync_count++], sizeof(g_synced[0]), "%s", path);
+    if (g_fail_sync[0] && !strcmp(path, g_fail_sync)) {
+        g_fail_sync[0] = '\0';
+        return 1;
+    }
+    return 0;
+}
+
+static int synced(const char *path) {
+    for (size_t i = 0u; i < g_sync_count; ++i)
+        if (!strcmp(g_synced[i], path)) return 1;
+    return 0;
+}
+
+/* GIT-C06 test 12, durability: a sync that fails leaves a file or a
+ * directory in place; the next attempt finds it and syncs it again, rather
+ * than taking right bytes for durable ones. */
+static int test_grants_store_retry(void) {
+    char template[] = "/tmp/maelys_git_store_retry_XXXXXX";
+    char *root = mkdtemp(template);
+    CHECK(root != NULL);
+    char database[4096], source[4096], store[4200], entry[4300], sha256[65];
+    (void)snprintf(database, sizeof(database), "%s/agent.sqlite3", root);
+    (void)snprintf(source, sizeof(source), "%s/grants.json", root);
+    (void)snprintf(store, sizeof(store), "%s/grants-store", root);
+    static const char bytes[] = "grants kept durably";
+    CHECK(write_file(source, bytes, 0644));
+    maelys_cli_sha256_hex(bytes, strlen(bytes), sha256);
+    (void)snprintf(entry, sizeof(entry), "%s/%s.json", store, sha256);
+    mg_grants_archive_t archive;
+    maelys_git_error_t error;
+    mg_sync_test_failure = record_sync;
+    /* The store's parent, after its mkdir; then the entry's directory, after
+     * the entry is written. */
+    const char *failures[] = {root, store};
+    for (size_t f = 0u; f < 2u; ++f) {
+        g_sync_count = 0u;
+        (void)snprintf(g_fail_sync, sizeof(g_fail_sync), "%s", failures[f]);
+        CHECK(mg_grants_store_archive(source, database, &archive, &error) == MAELYS_GIT_ERR_IO);
+        CHECK(strstr(error.message, "durable") != NULL && !archive.sha256[0]);
+        CHECK(access(f == 0u ? store : entry, F_OK) == 0); /* left in place */
+        g_sync_count = 0u;
+        CHECK(mg_grants_store_archive(source, database, &archive, &error) == MAELYS_GIT_OK);
+        CHECK(!strcmp(archive.sha256, sha256));
+        /* Synced again: the parent, the entry and its directory. */
+        CHECK(synced(root) && synced(store));
+        CHECK(f == 0u || synced(entry));
+    }
+    mg_sync_test_failure = NULL;
+    CHECK(test_remove_tree(root));
+    return 1;
+}
+
 /* GIT-C06 test 12, the audit: the agent records the snapshot it gave the
  * executor with the completion, and refuses a receipt that names other
  * grants, or names grants when none were given. */
@@ -663,7 +725,8 @@ int main(void) {
     passed += test_stdio_denial();
     passed += test_diff_beyond_line();
     passed += test_grants_audit();
-    if (passed != 10) return 1;
+    passed += test_grants_store_retry();
+    if (passed != 11) return 1;
     (void)printf("ok: %d agent test groups passed\n", passed);
     return 0;
 }

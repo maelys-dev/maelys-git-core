@@ -403,8 +403,9 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_link_libraries(test-maelys-git-gitolite-program PRIVATE
         maelys_git_core maelys::cli maelys_git_build_flags)
     add_test(NAME maelys-git-gitolite-program COMMAND test-maelys-git-gitolite-program)
-    # Under ASan+UBSan it takes about 115 s on the CI runners, at the 120 s
-    # default the workflow gives a test without its own timeout.
+    # The parity oracle decides 92,911 requests in both encodings: about 75 s
+    # under the sanitizers on a fast machine, beyond the CI's default of 120 s
+    # on a slower runner.
     set_tests_properties(maelys-git-gitolite-program PROPERTIES TIMEOUT 300)
 
     add_executable(test-maelys-git-gitolite-differential tests/test_gitolite_differential.c)
@@ -443,6 +444,9 @@ if(MAELYS_GIT_BUILD_TESTS)
     add_executable(bench-maelys-git-authorize EXCLUDE_FROM_ALL tests/bench_authorize.c)
     target_link_libraries(bench-maelys-git-authorize PRIVATE
         maelys_git_receipt maelys_git_build_flags)
+    add_executable(bench-maelys-git-slices EXCLUDE_FROM_ALL tests/bench_slices.c)
+    target_include_directories(bench-maelys-git-slices PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(bench-maelys-git-slices PRIVATE maelys_git_agent_core maelys_git_build_flags)
 
     # Production code reaches the engine through its installed SDK only.
     add_test(NAME maelys-git-datalog-boundary

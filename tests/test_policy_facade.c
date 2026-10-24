@@ -574,7 +574,7 @@ static char *literal_policy(size_t length) {
     if (!source) return NULL;
     int prefix = snprintf(source, length + 64u, "allow(R) :- request(R), user(\"");
     memset(source + prefix, 'a', length);
-    (void)snprintf(source + (size_t)prefix + length, 64u, "\").\n");
+    (void)snprintf(source + (size_t)prefix + length, length + 64u - ((size_t)prefix + length), "\").\n");
     return source;
 }
 
@@ -783,7 +783,7 @@ static int test_capacity_details(const refusal_t refusals[REFUSAL_COUNT]) {
     CHECK(source != NULL);
     int prefix = snprintf(source, limit + 64u, "allow(R) :- request(R), user(\"");
     memset(source + prefix, 'b', limit);
-    (void)snprintf(source + (size_t)prefix + limit, 64u, "\").\n");
+    (void)snprintf(source + (size_t)prefix + limit, limit + 64u - ((size_t)prefix + limit), "\").\n");
     CHECK(loads("bound-atom-bytes", source));
 
     const refusal_t *atoms = &refusals[REFUSAL_POLICY_ATOMS];

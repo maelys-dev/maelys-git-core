@@ -9,6 +9,8 @@
 #include "maelys_git.h"
 #include "policy/slice.h"
 
+#include <maelys/datalog.h>
+
 #include <stddef.h>
 
 /* maelys_git_policy_open, with the snapshot of grants at GRANTS_PATH, read
@@ -39,6 +41,11 @@ const char *mg_policy_grants_sha256(const maelys_git_policy_t *policy);
 void mg_policy_slice_counts(const maelys_git_policy_t *policy, size_t *out_context, size_t *out_slice);
 /* The facts the policy at INDEX received in its last solve. */
 size_t mg_policy_entry_facts(const maelys_git_policy_t *policy, size_t index);
+
+/* Benches only: the facts the policy at INDEX received in its last solve,
+ * borrowed from the handle until its next request or its close. */
+const maelys_datalog_fact_t *mg_policy_entry_batch(const maelys_git_policy_t *policy, size_t index,
+                                                   size_t *out_count);
 
 /* Tests only: the facts of the last slice the handle still holds; none once
  * its snapshot is gone, since their strings were the snapshot's. */

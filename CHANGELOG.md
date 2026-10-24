@@ -48,11 +48,16 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   `--expected-grants-fingerprint`; grants changed since the plan are refused.
   `maelys_git_pr_merge_grants` carries that precondition; the former entry
   points still plan, and refuse to apply on a policy with a snapshot.
+- `migrate gitolite --apply` syncs the directory of its output before
+  renaming it into place, and the parent directory after: the published
+  output is durable, not only atomic.
 - The Cloud agent keeps, before each command, the snapshot of grants it
   gives the executor in a content-addressed store beside its journal,
   `grants-store/<sha256>.json`: a directory private to its account, each file
   written once, read-only, synced with its directory, and read back when it
-  already exists. The executor runs on that file with
+  already exists. Every use syncs the store, an existing file and their
+  directories again, so that an attempt whose sync failed is made durable by
+  the next one. The executor runs on that file with
   `--expected-grants-fingerprint` (new on `maelys-git-executor serve` and
   `maelys-git-agent stdio`), which refuses a reading with other bytes, at its
   opening and before each command. A snapshot that cannot be kept starts no
