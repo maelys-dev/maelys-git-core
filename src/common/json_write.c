@@ -17,7 +17,7 @@
 /* The configuration reader's own limits (src/agent/config.c). */
 #define MG_JSON_CONFIGURATION_BYTES 65536u
 #define MG_JSON_CONFIGURATION_DEPTH 1u
-#define MG_JSON_CONFIGURATION_NODES 29u
+#define MG_JSON_CONFIGURATION_NODES 31u
 
 void mg_json_begin(mg_json_t *json, mg_json_use_t use) {
     json->writer = NULL;

@@ -53,7 +53,7 @@ maelys-json ne fait pas pour une erreur d'argument.
 | `MG_JSON_DATA`, données d'une commande CLI | plafond de la bibliothèque, `SIZE_MAX / 2 - 1` | 32 | plafond, `SIZE_MAX / 256` | ASCII, compacte |
 | `MG_JSON_PROTOCOL_LINE`, résultat, événement, erreur, décision | 65 536 octets de JSON, séparateur exclu | 32 | 32 768 | ASCII, compacte, LF écrit après |
 | `MG_JSON_DEDUPLICATION`, forme v2 | 65 536 | 32 | 32 768 | ASCII, compacte, sans LF |
-| `MG_JSON_CONFIGURATION`, configuration générée | 65 536, comme son lecteur | 1 | 29 | indentée, LF écrit après |
+| `MG_JSON_CONFIGURATION`, configuration générée | 65 536, comme son lecteur | 1 | 31 | indentée, LF écrit après |
 | reçu (`receipt.c`) | 8 192 au plus (`MAELYS_GIT_RECEIPT_MAX_BYTES`) | 4 | 512 | canonique, sans drapeau |
 | ligne JSONL d'un reçu et de son texte (`receipt.c`) | reçu, plus six fois le texte de 32 768 octets, plus 256 | 5 | 520 | UTF-8, LF final compté |
 | résultat publié sans texte (`store.c`) | 65 536 | 32 | 32 768 | UTF-8 non échappé, compacte |

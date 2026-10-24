@@ -33,7 +33,7 @@ typedef enum {
     /* The deduplication form of a received command, v2: as a protocol line. */
     MG_JSON_DEDUPLICATION,
     /* A configuration the agent writes for its own reader: indented, one flat
-     * object of at most 29 values in 65 536 bytes. */
+     * object of at most 31 values in 65 536 bytes. */
     MG_JSON_CONFIGURATION
 } mg_json_use_t;
 

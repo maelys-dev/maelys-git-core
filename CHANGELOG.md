@@ -48,6 +48,21 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   `--expected-grants-fingerprint`; grants changed since the plan are refused.
   `maelys_git_pr_merge_grants` carries that precondition; the former entry
   points still plan, and refuse to apply on a policy with a snapshot.
+- The Cloud agent keeps, before each command, the snapshot of grants it
+  gives the executor in a content-addressed store beside its journal,
+  `grants-store/<sha256>.json`: a directory private to its account, each file
+  written once, read-only, synced with its directory, and read back when it
+  already exists. The executor runs on that file with
+  `--expected-grants-fingerprint` (new on `maelys-git-executor serve` and
+  `maelys-git-agent stdio`), which refuses a reading with other bytes, at its
+  opening and before each command. A snapshot that cannot be kept starts no
+  executor; the command fails with a message starting with `grants store
+  unavailable: `. The journal audits the digest as a `grants_snapshot` event,
+  and a receipt naming other grants fails the command.
+- `agent provision --grants FILE` writes `grants_path`; the public API adds
+  `maelys_git_agent_provision_grants` and
+  `maelys_git_agent_validate_provision_grants`. The configuration writer
+  admits the 31 values such a configuration holds.
 - The agent protocol schema declares `expected_grants_fingerprint` on
   `pr_merge` and `explain` on `authorize`, which the executor already
   accepted; a client validating against the schema could not send them. A

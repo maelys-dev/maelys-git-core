@@ -517,8 +517,8 @@ static int same_file(const struct stat *a, const struct stat *b) {
  * and after the read; a file that changed meanwhile is refused for this
  * read. That guard detects a writer that broke the contract of publication
  * (an immutable file, replaced by a rename); it proves nothing more. */
-static maelys_git_result_t read_snapshot(const char *path, unsigned char **out_bytes, size_t *out_size,
-                                         maelys_git_error_t *error) {
+maelys_git_result_t mg_grants_read(const char *path, unsigned char **out_bytes, size_t *out_size,
+                                   maelys_git_error_t *error) {
     *out_bytes = NULL;
     *out_size = 0u;
     int descriptor = -1;
@@ -565,7 +565,7 @@ maelys_git_result_t mg_grants_load(const char *path, mg_grants_t **out, maelys_g
     *out = NULL;
     unsigned char *bytes = NULL;
     size_t size = 0u;
-    maelys_git_result_t result = read_snapshot(path, &bytes, &size, error);
+    maelys_git_result_t result = mg_grants_read(path, &bytes, &size, error);
     if (result != MAELYS_GIT_OK) return result;
     result = mg_grants_parse(bytes, size, out, error);
     free(bytes);
@@ -578,7 +578,7 @@ maelys_git_result_t mg_grants_reload(const char *path, const mg_grants_t *curren
     *out = NULL;
     unsigned char *bytes = NULL;
     size_t size = 0u;
-    maelys_git_result_t result = read_snapshot(path, &bytes, &size, error);
+    maelys_git_result_t result = mg_grants_read(path, &bytes, &size, error);
     if (result != MAELYS_GIT_OK) return result;
     char sha256[MAELYS_CLI_SHA256_HEX_SIZE];
     maelys_cli_sha256_hex(bytes, size, sha256);

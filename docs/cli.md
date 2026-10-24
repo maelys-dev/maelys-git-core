@@ -60,9 +60,9 @@ Options globales :
 | describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
-| provision | `provision --config FILE --agent-id ID --authority HOST[:PORT] --ca FILE --token FILE --database FILE --manifest FILE --root DIR --executor FILE [--apply]` | preview then apply with --apply | json-envelope | Plan or create an agent configuration. |
+| provision | `provision --config FILE --agent-id ID --authority HOST[:PORT] --ca FILE --token FILE --database FILE --manifest FILE --root DIR --executor FILE [--grants FILE] [--apply]` | preview then apply with --apply | json-envelope | Plan or create an agent configuration. |
 | run | `run --config FILE [--once]` | execute | json-envelope | Run the persistent Cloud synchronization loop. |
-| stdio | `stdio --manifest FILE --root DIR [--grants FILE] [--git FILE]` | stream | protocol-stream (maelys-git-agent/1) | Serve the executor JSONL protocol on stdio. |
+| stdio | `stdio --manifest FILE --root DIR [--grants FILE] [--expected-grants-fingerprint SHA256] [--git FILE]` | stream | protocol-stream (maelys-git-agent/1) | Serve the executor JSONL protocol on stdio. |
 
 Options globales :
 
@@ -87,7 +87,7 @@ Options globales :
 | describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
-| serve | `serve --manifest FILE --root DIR [--grants FILE] [--git FILE]` | stream | protocol-stream (maelys-git-agent/1) | Serve one-command-at-a-time JSONL execution. |
+| serve | `serve --manifest FILE --root DIR [--grants FILE] [--expected-grants-fingerprint SHA256] [--git FILE]` | stream | protocol-stream (maelys-git-agent/1) | Serve one-command-at-a-time JSONL execution. |
 
 Options globales :
 

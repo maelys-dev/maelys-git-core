@@ -130,6 +130,11 @@ maelys_git_result_t mg_grants_parse(const void *bytes, size_t size, mg_grants_t 
  * by the errno of the check; a file that changed while it was read (its
  * descriptor observed before and after) is MAELYS_GIT_ERR_IO. */
 maelys_git_result_t mg_grants_load(const char *path, mg_grants_t **out, maelys_git_error_t *error);
+/* The bytes of the file at PATH, read as mg_grants_load reads them and not
+ * parsed: a trusted reading of at most MG_GRANTS_MAX_BYTES, refused when the
+ * file changes while it is read. The caller frees them. */
+maelys_git_result_t mg_grants_read(const char *path, unsigned char **out_bytes, size_t *out_size,
+                                   maelys_git_error_t *error);
 /* Reads the file at PATH again, as mg_grants_load reads it, and hashes its
  * bytes: *out is NULL when they are those of CURRENT, the new snapshot
  * otherwise. A failure leaves *out NULL and says nothing of CURRENT, which

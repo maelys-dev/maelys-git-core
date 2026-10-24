@@ -229,6 +229,44 @@ static int test_stream(void) {
     return 1;
 }
 
+/* GIT-C06 test 12, on the executor's side: a handle given the digest of its
+ * snapshot, as the agent starts an executor on a file of its store, refuses
+ * other bytes at its opening and at every reading, until the bytes are those. */
+static int test_expected_grants(void) {
+    char text[2048], alice[65], both[65];
+    snapshot_text("alice", text, sizeof(text));
+    sha_of(text, alice);
+    snapshot_text("alice,bob", text, sizeof(text));
+    sha_of(text, both);
+    CHECK(publish_users("alice"));
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_error_t error;
+    CHECK(maelys_git_policy_open_grants(g_manifest, g_grants, &policy, &error) == MAELYS_GIT_OK);
+    CHECK(mg_policy_expect_grants(policy, both, &error) == MAELYS_GIT_ERR_PROCESS);
+    CHECK(strstr(error.message, "is not the expected one") != NULL);
+    outcome_t outcome;
+    int n = 100;
+    CHECK(run_command(policy, ++n, &outcome) && !strcmp(outcome.status, "failed") && !outcome.allowed);
+    CHECK(strncmp(outcome.message, "grants snapshot unavailable: ", 29u) == 0);
+    CHECK(strstr(outcome.message, "is not the expected one") != NULL);
+    CHECK(publish_users("alice,bob"));
+    CHECK(run_command(policy, ++n, &outcome) && outcome.allowed && !strcmp(outcome.grants, both));
+    /* Other bytes later: refused, the slice of the last decision gone. */
+    CHECK(mg_policy_slice_held(policy) > 0u);
+    CHECK(publish_users("alice"));
+    CHECK(run_command(policy, ++n, &outcome) && !strcmp(outcome.status, "failed") && !outcome.allowed);
+    CHECK(strstr(outcome.message, "is not the expected one") != NULL);
+    CHECK(mg_policy_slice_held(policy) == 0u);
+    /* Only lowercase digests, and only on a handle with a snapshot. */
+    CHECK(mg_policy_expect_grants(policy, "ABCDEF", &error) == MAELYS_GIT_ERR_INVALID_ARGUMENT);
+    maelys_git_policy_close(policy);
+    CHECK(maelys_git_policy_open_grants(g_manifest, g_grants, &policy, &error) == MAELYS_GIT_OK);
+    CHECK(mg_policy_expect_grants(policy, alice, &error) == MAELYS_GIT_OK);
+    CHECK(run_command(policy, ++n, &outcome) && outcome.allowed && !strcmp(outcome.grants, alice));
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
 /* ---- tests 10 and 11: a repository ---------------------------------------------- */
 
 static int git(const char *command, char *out, size_t size) {
@@ -385,9 +423,9 @@ int main(void) {
     if (!root) return 1;
     (void)snprintf(g_root, sizeof(g_root), "%s", root);
     char base[64], a[64], b[64];
-    int ok = setup() && test_stream() && repository(base, a, b) && test_one_generation(a, b) &&
+    int ok = setup() && test_stream() && test_expected_grants() && repository(base, a, b) && test_one_generation(a, b) &&
              test_pr_merge(base, a);
     if (!test_remove_tree(g_root)) ok = 0;
-    if (ok) puts("grants in use: streams, one generation per command, pr merge: ok");
+    if (ok) puts("grants in use: streams, expected grants, one generation per command, pr merge: ok");
     return ok ? 0 : 1;
 }

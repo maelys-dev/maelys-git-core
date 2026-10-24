@@ -165,6 +165,7 @@ typedef struct {
     char *receipt;
     char *text;
     char *published;
+    char *grants; /* the snapshot of grants the executor was started with */
 } mg_receipt_events_t;
 
 /* Reads an executor result for `command`. A result without a receipt gives
@@ -176,6 +177,28 @@ maelys_git_result_t mg_receipt_events_prepare(const mg_agent_message_t *command,
                                               mg_receipt_events_t *out_events,
                                               maelys_git_error_t *error);
 void mg_receipt_events_clear(mg_receipt_events_t *events);
+
+/* A snapshot of grants in the agent's store: its SHA-256 and the path of the
+ * immutable file that holds its bytes; empty without a snapshot. */
+typedef struct {
+    char sha256[65];
+    char path[4096];
+} mg_grants_archive_t;
+
+/* Reads the snapshot at GRANTS_PATH and keeps its bytes in the store beside
+ * the journal at DATABASE_PATH, grants-store/<sha256>.json: a directory
+ * private to the agent's account, a file written once, read-only, synced
+ * with its directory. A file already there is read again and must hold the
+ * bytes its name says. Nothing is returned on failure. */
+maelys_git_result_t mg_grants_store_archive(const char *grants_path, const char *database_path,
+                                            mg_grants_archive_t *out, maelys_git_error_t *error);
+
+/* Adds to EVENTS the snapshot ARCHIVE names, which the agent audits with the
+ * completion. A receipt of version 2 must name those grants, and a receipt
+ * without an archived snapshot must name none: otherwise the executor
+ * decided on other bytes, MAELYS_GIT_ERR_PROTOCOL. */
+maelys_git_result_t mg_receipt_events_add_grants(mg_receipt_events_t *events, const mg_grants_archive_t *archive,
+                                                 maelys_git_error_t *error);
 
 /* Records the result, queues it and audits the completion, with the
  * receipt and explanation events when given, in one transaction. */
@@ -257,9 +280,16 @@ maelys_git_result_t mg_agent_serve(maelys_git_policy_t *policy,
                                    maelys_git_error_t *error);
 
 #ifdef MAELYS_GIT_ENABLE_CLOUD_AGENT
+/* Runs COMMAND in a fresh executor. With a snapshot of grants configured,
+ * its bytes are first kept in the agent's store, and the executor reads that
+ * file and its digest only: OUT_GRANTS (which may be NULL) names them. A
+ * snapshot that cannot be kept starts no executor; the command is answered by
+ * a correlated failed result whose message starts with "grants store
+ * unavailable: ". */
 maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *config,
                                           const mg_agent_message_t *command,
                                           const char *request_json,
+                                          mg_grants_archive_t *out_grants,
                                           char **out_response_json,
                                           int *out_succeeded,
                                           maelys_git_error_t *error);

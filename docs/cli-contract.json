@@ -3995,6 +3995,18 @@
               },
               {
                 "argument": {
+                  "name": "FILE",
+                  "type": "absolute-path"
+                },
+                "conflictsWith": [],
+                "long": "--grants",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads; the agent keeps the bytes each executor reads in grants-store/ beside the journal."
+              },
+              {
+                "argument": {
                   "name": "DIR",
                   "type": "absolute-path"
                 },
@@ -4027,7 +4039,7 @@
               }
             ],
             "passthrough": false,
-            "synopsis": "provision --config FILE --agent-id ID --authority HOST[:PORT] --ca FILE --token FILE --database FILE --manifest FILE --root DIR --executor FILE [--apply]"
+            "synopsis": "provision --config FILE --agent-id ID --authority HOST[:PORT] --ca FILE --token FILE --database FILE --manifest FILE --root DIR --executor FILE [--grants FILE] [--apply]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -4046,6 +4058,9 @@
                 "type": "string"
               },
               "database": {
+                "type": "string"
+              },
+              "grants": {
                 "type": "string"
               },
               "mode": {
@@ -4082,7 +4097,7 @@
             "provision"
           ],
           "purpose": "Plan or create an agent configuration.",
-          "usage": "provision --config FILE --agent-id ID --authority HOST[:PORT] --ca FILE --token FILE --database FILE --manifest FILE --root DIR --executor FILE [--apply]"
+          "usage": "provision --config FILE --agent-id ID --authority HOST[:PORT] --ca FILE --token FILE --database FILE --manifest FILE --root DIR --executor FILE [--grants FILE] [--apply]"
         },
         {
           "available": true,
@@ -4161,7 +4176,15 @@
           "hidden": false,
           "id": "stdio",
           "input": {
-            "constraints": [],
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-grants-fingerprint",
+                  "--grants"
+                ]
+              }
+            ],
             "operands": [],
             "options": [
               {
@@ -4190,6 +4213,21 @@
               },
               {
                 "argument": {
+                  "digits": 64,
+                  "name": "SHA256",
+                  "type": "hex"
+                },
+                "conflictsWith": [],
+                "long": "--expected-grants-fingerprint",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--grants"
+                ],
+                "summary": "SHA-256 every reading of --grants must have; a reading with other bytes refuses the command."
+              },
+              {
+                "argument": {
                   "name": "DIR",
                   "type": "path"
                 },
@@ -4215,7 +4253,7 @@
               }
             ],
             "passthrough": false,
-            "synopsis": "stdio --manifest FILE --root DIR [--grants FILE] [--git FILE]"
+            "synopsis": "stdio --manifest FILE --root DIR [--grants FILE] [--expected-grants-fingerprint SHA256] [--git FILE]"
           },
           "outputMode": "protocol-stream",
           "outputSchema": {
@@ -4228,7 +4266,7 @@
           ],
           "protocol": "maelys-git-agent/1",
           "purpose": "Serve the executor JSONL protocol on stdio.",
-          "usage": "stdio --manifest FILE --root DIR [--grants FILE] [--git FILE]"
+          "usage": "stdio --manifest FILE --root DIR [--grants FILE] [--expected-grants-fingerprint SHA256] [--git FILE]"
         }
       ],
       "contract": "agent-cli/v2",
@@ -4698,7 +4736,15 @@
           "hidden": false,
           "id": "serve",
           "input": {
-            "constraints": [],
+            "constraints": [
+              {
+                "kind": "requires",
+                "options": [
+                  "--expected-grants-fingerprint",
+                  "--grants"
+                ]
+              }
+            ],
             "operands": [],
             "options": [
               {
@@ -4727,6 +4773,21 @@
               },
               {
                 "argument": {
+                  "digits": 64,
+                  "name": "SHA256",
+                  "type": "hex"
+                },
+                "conflictsWith": [],
+                "long": "--expected-grants-fingerprint",
+                "repeatable": false,
+                "required": false,
+                "requires": [
+                  "--grants"
+                ],
+                "summary": "SHA-256 every reading of --grants must have; a reading with other bytes refuses the command."
+              },
+              {
+                "argument": {
                   "name": "DIR",
                   "type": "path"
                 },
@@ -4752,7 +4813,7 @@
               }
             ],
             "passthrough": false,
-            "synopsis": "serve --manifest FILE --root DIR [--grants FILE] [--git FILE]"
+            "synopsis": "serve --manifest FILE --root DIR [--grants FILE] [--expected-grants-fingerprint SHA256] [--git FILE]"
           },
           "outputMode": "protocol-stream",
           "outputSchema": {
@@ -4765,7 +4826,7 @@
           ],
           "protocol": "maelys-git-agent/1",
           "purpose": "Serve one-command-at-a-time JSONL execution.",
-          "usage": "serve --manifest FILE --root DIR [--grants FILE] [--git FILE]"
+          "usage": "serve --manifest FILE --root DIR [--grants FILE] [--expected-grants-fingerprint SHA256] [--git FILE]"
         }
       ],
       "contract": "agent-cli/v2",

@@ -32,6 +32,9 @@
     "database": {
       "type": "string"
     },
+    "grants": {
+      "type": "string"
+    },
     "precondition": {
       "type": "object",
       "additionalProperties": false,

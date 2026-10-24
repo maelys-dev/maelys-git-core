@@ -259,6 +259,7 @@ empreinte.
 | Résultat publié par l'agent Cloud pour ce refus | — | non : retiré après audit |
 | Audit SQLite, `authorization_receipt` | — | le reçu canonique seul |
 | Audit SQLite, `authorization_explanation` | — | le texte d'un refus ou d'une demande |
+| Audit SQLite, `grants_snapshot` | — | l'empreinte et le chemin, dans le magasin de l'agent, de l'instantané des droits donné à l'exécuteur ; jamais ses octets |
 | Hook avec `--receipts FILE`, refus | sur refus | dans le fichier |
 | Hook avec `--receipts FILE`, acceptation | jamais | non |
 | `maelys-git-agent stdio`, refus de `create_repository` ou `update_ref`, refus de policy de `pr_merge` | jamais | non ; le reçu n'a pas de résumé (`explanation.kind` vaut `none`) |

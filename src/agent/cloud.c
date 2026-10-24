@@ -271,7 +271,9 @@ static maelys_git_result_t process_command(const maelys_git_agent_config_t *conf
             char *response = NULL;
             maelys_git_error_t executor_error = {0};
             int succeeded = 0;
-            result = mg_supervisor_execute(config, &message, raw, &response, &succeeded, &executor_error);
+            mg_grants_archive_t grants;
+            result = mg_supervisor_execute(config, &message, raw, &grants, &response, &succeeded,
+                                           &executor_error);
             if (result != MAELYS_GIT_OK) {
                 response = executor_failure(&message, executor_error.message);
                 result = response ? MAELYS_GIT_OK : MAELYS_GIT_ERR_IO;
@@ -281,7 +283,9 @@ static maelys_git_result_t process_command(const maelys_git_agent_config_t *conf
             mg_receipt_events_t events = {0};
             if (result == MAELYS_GIT_OK) {
                 maelys_git_error_t receipt_error = {0};
-                if (mg_receipt_events_prepare(&message, response, &events, &receipt_error) != MAELYS_GIT_OK) {
+                if (mg_receipt_events_prepare(&message, response, &events, &receipt_error) != MAELYS_GIT_OK ||
+                    mg_receipt_events_add_grants(&events, &grants, &receipt_error) != MAELYS_GIT_OK) {
+                    mg_receipt_events_clear(&events);
                     free(response);
                     response = executor_failure(&message, receipt_error.message);
                     succeeded = 0;

@@ -24,6 +24,13 @@ maelys_git_result_t mg_policy_open_grants(const char *manifest_path, const char 
  * succeeds. A handle opened without grants is left as it is. */
 maelys_git_result_t mg_policy_refresh_grants(maelys_git_policy_t *policy, maelys_git_error_t *error);
 
+/* Every reading of the handle's snapshot, the one made at its opening
+ * included, must have SHA256: a reading with other bytes refuses, as a
+ * failed reading does, with MAELYS_GIT_ERR_PROCESS. An executor started on an
+ * immutable file of the agent's store is given its digest. */
+maelys_git_result_t mg_policy_expect_grants(maelys_git_policy_t *policy, const char *sha256,
+                                            maelys_git_error_t *error);
+
 /* The SHA-256 of the snapshot's bytes, or NULL for a handle without one. */
 const char *mg_policy_grants_sha256(const maelys_git_policy_t *policy);
 

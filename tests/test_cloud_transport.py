@@ -1,4 +1,5 @@
 """Local HTTPS end-to-end test: agent, executor, durable outbox and TLS boundary."""
+import hashlib
 import http.server
 import json
 from pathlib import Path
@@ -10,7 +11,7 @@ import tempfile
 import threading
 import time
 
-AGENT, EXECUTOR, MANIFEST, OPENSSL = map(lambda arg: str(Path(arg).resolve()), sys.argv[1:])
+AGENT, EXECUTOR, MANIFEST, OPENSSL, MAELYS_GIT = map(lambda arg: str(Path(arg).resolve()), sys.argv[1:])
 
 
 def run(*args, ok=True):
@@ -266,6 +267,72 @@ with tempfile.TemporaryDirectory(prefix="maelys-cloud-test-") as temporary:
                 assert connection.execute("SELECT state FROM commands").fetchone() == (
                     "complete" if status == "ok" else "failed",)
         config["executor_path"] = EXECUTOR
+
+        # GIT-C06 test 12, end to end: the agent keeps the snapshot before the
+        # executor starts, the executor decides on that file alone, and the
+        # journal audits its digest with the receipt that names it.
+        def migrate(name, text):
+            (root / (name + ".conf")).write_text(text)
+            run(MAELYS_GIT, "migrate", "gitolite", str(root / (name + ".conf")), str(root / name),
+                "--apply", "--format", "json", "--non-interactive")
+            return root / name
+
+        generated = migrate("generated", "repo example\n    RW = alice\n")
+        source = generated / "grants.json"
+        used = source.read_bytes()
+        sha256 = hashlib.sha256(used).hexdigest()
+        config.update(manifest_path=str(generated / "manifest.json"), grants_path=str(source))
+        authorize = dict(command, message_id="grants-authorize", command="authorize", repository="example.git",
+                         principal="alice", payload={"operation": "write"})
+        path = fresh_database("grants")
+        state["body"] = poll_bytes([authorize])
+        cycle()
+        store = root / "grants-store"
+        kept = store / (sha256 + ".json")
+        assert kept.read_bytes() == used and kept.stat().st_mode & 0o777 == 0o400, kept
+        assert store.stat().st_mode & 0o777 == 0o700, store
+        with sqlite3.connect(path) as connection:
+            terminal, encoded = connection.execute("SELECT state,result_json FROM commands").fetchone()
+            result = json.loads(encoded)
+            assert terminal == "complete" and result["payload"]["allowed"], result
+            assert result["payload"]["receipt"]["grants"]["sha256"] == sha256, result
+            audited = connection.execute("SELECT payload FROM audit WHERE event_id='grants:grants-authorize'").fetchone()
+            assert audited and json.loads(audited[0]) == dict(path=str(kept), sha256=sha256), audited
+        # The executor itself refuses a snapshot whose bytes are not the digest
+        # it was given, before it answers anything.
+        for expected, refused in [(sha256, False), ("0" * 64, True)]:
+            served = subprocess.run([EXECUTOR, "serve", "--manifest", str(generated / "manifest.json"),
+                                     "--grants", str(kept), "--expected-grants-fingerprint", expected,
+                                     "--root", str(root)],
+                                    input=json.dumps(authorize) + "\n", capture_output=True, text=True, timeout=20)
+            if refused:
+                assert served.returncode == 1 and not served.stdout, served
+                assert "stream error [process_error]" in served.stderr, served.stderr
+                assert "is not the expected one" in served.stderr, served.stderr
+            else:
+                assert served.returncode == 0 and json.loads(served.stdout)["payload"]["allowed"], served
+
+        # A store the agent cannot write starts no executor: the command gets
+        # a correlated failure, and nothing is audited as a snapshot.
+        revoked = migrate("revoked", "repo example\n    R = alice\n")
+        config["grants_path"] = str(revoked / "grants.json")
+        store.chmod(0o500)
+        try:
+            path = fresh_database("grants-unwritable")
+            state["body"] = poll_bytes([dict(authorize, message_id="grants-refused")])
+            cycle()
+        finally:
+            store.chmod(0o700)
+        with sqlite3.connect(path) as connection:
+            terminal, encoded = connection.execute("SELECT state,result_json FROM commands").fetchone()
+            result = json.loads(encoded)
+            assert terminal == "failed" and result["status"] == "failed", result
+            assert result["message_id"] == "grants-refused" and result["payload"]["code"] == "denied", result
+            assert result["payload"]["message"].startswith("grants store unavailable: "), result
+            assert connection.execute("SELECT count(*) FROM audit WHERE kind='grants_snapshot'").fetchone() == (0,)
+        assert sorted(entry.name for entry in store.iterdir()) == [sha256 + ".json"]
+        del config["grants_path"]
+        config["manifest_path"] = MANIFEST
         config["database_path"] = str(database)
         state["mode"] = "normal"
         count = len(state["requests"])

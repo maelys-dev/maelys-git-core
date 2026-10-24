@@ -131,6 +131,20 @@ starts with `grants snapshot unavailable: `; every following command is
 refused the same way until a reading succeeds. That prefix is part of this
 protocol and identifies the condition.
 
+A Cloud agent configured with `grants_path` keeps the snapshot's bytes in its
+store, `grants-store/<sha256>.json` beside its journal, before it starts the
+executor for a command, and starts it on that file with
+`--expected-grants-fingerprint`, so that the executor decides on those bytes
+or refuses. When the snapshot cannot be read or kept, no executor starts: the
+command is answered by a correlated `failed` result whose `code` is that of
+the failure and whose `message` starts with `grants store unavailable: `, a
+prefix that is part of this protocol too. The agent's audit records the
+snapshot given to the executor as a `grants_snapshot` event, `path` and
+`sha256`, in the transaction that completes the command; the protocol carries
+the digest only, in receipts and in `grants_fingerprint`, never the snapshot.
+A receipt that names other grants than those the executor was given fails the
+command with code `executor_failed`.
+
 Local repository administration returns lifecycle events conforming to
 `repository-events-v1.schema.json`. Plan and apply have distinct event types;
 the forge should persist apply events only after it has durably accepted the

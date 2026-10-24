@@ -176,6 +176,7 @@ add_library(maelys_git_agent_core STATIC
     src/agent/store.c
     src/agent/retry.c
     src/agent/executor.c
+    src/agent/grants_store.c
     src/agent/agent.c)
 target_include_directories(maelys_git_agent_core
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -546,7 +547,7 @@ if(MAELYS_GIT_BUILD_TESTS)
         add_test(NAME maelys-git-cloud-transport
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cloud_transport.py
                 $<TARGET_FILE:maelys-git-agent> $<TARGET_FILE:maelys-git-executor>
-                ${MAELYS_GIT_TEST_MANIFEST} ${MAELYS_OPENSSL_PROGRAM})
+                ${MAELYS_GIT_TEST_MANIFEST} ${MAELYS_OPENSSL_PROGRAM} $<TARGET_FILE:maelys-git>)
         set_tests_properties(maelys-git-cloud-transport PROPERTIES TIMEOUT 60)
     endif()
 

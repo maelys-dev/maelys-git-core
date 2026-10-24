@@ -333,6 +333,11 @@ maelys_git_result_t mg_store_complete_command(maelys_git_agent_store_t *store,
         ok = mg_store_audit(store, event_id, "authorization_explanation", events->text,
                             now_ms, error) == MAELYS_GIT_OK;
     }
+    if (ok && events && events->grants) {
+        char event_id[MG_MESSAGE_ID_MAX + 16u];
+        (void)snprintf(event_id, sizeof(event_id), "grants:%s", command_id);
+        ok = mg_store_audit(store, event_id, "grants_snapshot", events->grants, now_ms, error) == MAELYS_GIT_OK;
+    }
     if (ok) ok = execute(store->database, "COMMIT");
     if (!ok) {
         (void)execute(store->database, "ROLLBACK");
@@ -473,6 +478,7 @@ void mg_receipt_events_clear(mg_receipt_events_t *events) {
     free(events->receipt);
     free(events->text);
     free(events->published);
+    free(events->grants);
     memset(events, 0, sizeof(*events));
 }
 
@@ -573,4 +579,41 @@ maelys_git_result_t mg_receipt_events_prepare(const mg_agent_message_t *command,
     maelys_json_document_release(document);
     if (result != MAELYS_GIT_OK) mg_receipt_events_clear(out);
     return result;
+}
+
+maelys_git_result_t mg_receipt_events_add_grants(mg_receipt_events_t *events, const mg_grants_archive_t *archive,
+                                                 maelys_git_error_t *error) {
+    if (!events || !archive || events->grants) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    if (events->receipt) {
+        /* The receipt's bytes are canonical and verified: read its grants. */
+        const maelys_json_limits_t limits = {.maximum_bytes = MAELYS_GIT_RECEIPT_MAX_BYTES,
+                                             .maximum_depth = MG_PROTOCOL_MAX_DEPTH,
+                                             .maximum_tokens = MG_PROTOCOL_MAX_TOKENS};
+        maelys_json_document_t *document = NULL;
+        if (maelys_json_document_parse(events->receipt, strlen(events->receipt), MAELYS_JSON_PROFILE_RFC8259,
+                                       &limits, &document, NULL) != MAELYS_JSON_OK)
+            return receipt_refused("the receipt cannot be read again", error);
+        maelys_json_value_t root = maelys_json_document_root(document), grants = 0;
+        maelys_json_view_t sha256;
+        int named = maelys_json_object_get(document, root, "grants", &grants) == MAELYS_JSON_OK;
+        int same = named ? maelys_json_object_get_string(document, grants, "sha256", &sha256) == MAELYS_JSON_OK &&
+                               archive->sha256[0] && strcmp(sha256.data, archive->sha256) == 0
+                         : 1;
+        maelys_json_document_release(document);
+        if (!same) return receipt_refused("the receipt names grants other than those the executor was given", error);
+    }
+    if (!archive->sha256[0]) return MAELYS_GIT_OK;
+    mg_json_t json;
+    mg_json_begin(&json, MG_JSON_PROTOCOL_LINE);
+    mg_json_object(&json, NULL);
+    mg_json_string(&json, "path", archive->path);
+    mg_json_string(&json, "sha256", archive->sha256);
+    mg_json_end_object(&json);
+    size_t size = 0u;
+    if (mg_json_finish(&json, &events->grants, &size) != MAELYS_JSON_OK) {
+        events->grants = NULL;
+        mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "cannot encode the grants audit event");
+        return MAELYS_GIT_ERR_IO;
+    }
+    return MAELYS_GIT_OK;
 }

@@ -59,6 +59,7 @@ struct maelys_git_policy {
      * the last request, whose strings belong to it or to the request. */
     mg_grants_t *grants;
     char *grants_path; /* where the snapshot is read again, by a stream */
+    char expected_grants[65]; /* the SHA-256 every reading must have; empty for any */
     int has_audited;
     mg_slice_t slice;
     mg_policy_slice_filter_t slice_filter;
@@ -683,17 +684,50 @@ maelys_git_result_t maelys_git_policy_grants_fingerprint(const maelys_git_policy
     return MAELYS_GIT_OK;
 }
 
+/* Never the former snapshot after a failure: the handle refuses until a
+ * reading succeeds. */
+static void drop_grants(maelys_git_policy_t *policy) {
+    mg_slice_clear(&policy->slice); /* its strings were the snapshot's */
+    mg_grants_free(policy->grants);
+    policy->grants = NULL;
+}
+
+/* A snapshot whose bytes are not the expected ones is not used. */
+static maelys_git_result_t check_expected(maelys_git_policy_t *policy, maelys_git_error_t *error) {
+    const char *sha256 = policy->grants ? mg_grants_sha256(policy->grants) : NULL;
+    if (!policy->expected_grants[0] || !sha256 || strcmp(sha256, policy->expected_grants) == 0)
+        return MAELYS_GIT_OK;
+    mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
+                 "grants snapshot %s is not the expected one: its SHA-256 is %s, %s was expected",
+                 policy->grants_path, sha256, policy->expected_grants);
+    drop_grants(policy);
+    return MAELYS_GIT_ERR_PROCESS;
+}
+
+maelys_git_result_t mg_policy_expect_grants(maelys_git_policy_t *policy, const char *sha256,
+                                            maelys_git_error_t *error) {
+    if (!policy || !sha256) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    if (strlen(sha256) != 64u || strspn(sha256, "0123456789abcdef") != 64u) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0,
+                     "an expected grants fingerprint is 64 lowercase hexadecimal digits");
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    if (!policy->grants_path) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0,
+                     "an expected grants fingerprint needs a snapshot of grants");
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
+    (void)mg_copy_string(policy->expected_grants, sizeof(policy->expected_grants), sha256);
+    return check_expected(policy, error);
+}
+
 maelys_git_result_t mg_policy_refresh_grants(maelys_git_policy_t *policy, maelys_git_error_t *error) {
     if (!policy) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     if (!policy->grants_path) return MAELYS_GIT_OK;
     mg_grants_t *fresh = NULL;
     maelys_git_result_t result = mg_grants_reload(policy->grants_path, policy->grants, &fresh, error);
     if (result != MAELYS_GIT_OK) {
-        /* Never the former snapshot after a failure: the handle refuses
-         * until a reading succeeds. */
-        mg_slice_clear(&policy->slice); /* its strings were the former snapshot's */
-        mg_grants_free(policy->grants);
-        policy->grants = NULL;
+        drop_grants(policy);
         return result;
     }
     if (fresh) {
@@ -701,7 +735,7 @@ maelys_git_result_t mg_policy_refresh_grants(maelys_git_policy_t *policy, maelys
         mg_grants_free(policy->grants);
         policy->grants = fresh;
     }
-    return MAELYS_GIT_OK;
+    return check_expected(policy, error);
 }
 
 void mg_policy_slice_counts(const maelys_git_policy_t *policy, size_t *out_context, size_t *out_slice) {
