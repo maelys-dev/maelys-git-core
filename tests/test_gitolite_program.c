@@ -13,6 +13,7 @@
 #include <maelys/cli/digest.h>
 
 #include <errno.h>
+#include <stdarg.h>
 #include <stdint.h>
 
 static char g_root[256];
@@ -357,6 +358,15 @@ static int test_fixed_program(void) {
     return 1;
 }
 
+/* The directory syncs a migration makes, as the test hook sees them. */
+static size_t g_syncs, g_parent_syncs;
+
+static int count_sync(const char *path) {
+    ++g_syncs;
+    if (!strcmp(path, g_root)) ++g_parent_syncs;
+    return 0;
+}
+
 /* The snapshot a migration writes: canonical bytes the reader accepts, the
  * tuples of every kind of grant, nothing of the compiled form. */
 static int test_written_snapshot(void) {
@@ -375,6 +385,16 @@ static int test_written_snapshot(void) {
     char path[512];
     (void)snprintf(path, sizeof(path), "%s/written-grants", g_root);
     CHECK(mg_sync_directory(path) && mg_sync_directory(g_root));
+    g_syncs = g_parent_syncs = 0u;
+    mg_sync_test_failure = count_sync;
+    int migrated = migrate_both("durable", "repo app\n    RW = alice\n", &compiled, &grants);
+    mg_sync_test_failure = NULL;
+    maelys_git_policy_close(compiled);
+    maelys_git_policy_close(grants);
+    CHECK(migrated);
+    /* Each of the two migrations syncs its transaction directory and the
+     * parent it is renamed into. */
+    CHECK(g_syncs == 4u && g_parent_syncs == 2u);
     (void)snprintf(path, sizeof(path), "%s/missing", g_root);
     errno = 0;
     CHECK(!mg_sync_directory(path) && errno == ENOENT);
@@ -724,6 +744,116 @@ static int test_quotas(void) {
     return 1;
 }
 
+/* Appends to a growing JSON text; 0 when it does not fit. */
+static int add_json(char *json, size_t capacity, const char *format, ...) MG_PRINTF(3, 4);
+
+static int add_json(char *json, size_t capacity, const char *format, ...) {
+    size_t used = strlen(json);
+    va_list args;
+    va_start(args, format);
+    int written = vsnprintf(json + used, capacity - used, format, args);
+    va_end(args);
+    return written >= 0 && (size_t)written < capacity - used;
+}
+
+/* The total of the request's facts and its slice beyond the engine's input
+ * facts, with no predicate beyond its own bound: 14 predicates of N facts
+ * (N the facts per predicate, at most 64) and 13 more, 909 in SMALL, beside
+ * a request of 64 paths on a repository of 64 segments. Refused whole, as
+ * MAX_EDB_FACTS for input:slice, with the attempted total; never truncated.
+ * Where the engine's bounds admit the total, the request decides. */
+static int test_total_bound(void) {
+    size_t per_predicate = 0u, total = 0u;
+    CHECK(maelys_datalog_limit_get(MAELYS_DATALOG_LIMIT_MAX_FACTS_PER_PRED, &per_predicate) ==
+          MAELYS_DATALOG_STATUS_OK);
+    CHECK(maelys_datalog_limit_get(MAELYS_DATALOG_LIMIT_MAX_EDB_FACTS, &total) == MAELYS_DATALOG_STATUS_OK);
+    size_t n = per_predicate < MG_GRANTS_MAX_DIRECT_GROUPS ? per_predicate : MG_GRANTS_MAX_DIRECT_GROUPS;
+    char repository[MAELYS_GIT_MAX_REPOSITORY] = "users/alice";
+    for (int segment = 2; segment < 63; ++segment)
+        (void)snprintf(repository + strlen(repository), sizeof(repository) - strlen(repository), "/s%02d", segment);
+    (void)snprintf(repository + strlen(repository), sizeof(repository) - strlen(repository), "/last.git");
+    const size_t capacity = 400000u;
+    char *json = calloc(capacity, 1u);
+    CHECK(json);
+    int ok = add_json(json, capacity, "{\"access\":[");
+    for (size_t g = 0u; ok && g < n; ++g)
+        ok = add_json(json, capacity, "[\"group\",\"g%02zu\",\"%s\",\"R\"],", g, repository);
+    static const char *const access_levels[] = {"C", "R", "RW", "RW+"};
+    for (size_t l = 0u; ok && l < 4u; ++l)
+        ok = add_json(json, capacity, "[\"user\",\"alice\",\"%s\",\"%s\"]%s", repository, access_levels[l],
+                      l < 3u ? "," : "");
+    ok = ok && add_json(json, capacity, "],\"format\":\"maelys-git-grants/1\",\"members\":[");
+    for (size_t g = 0u; ok && g < n; ++g)
+        ok = add_json(json, capacity, "[\"alice\",\"g%02zu\"]%s", g, g + 1u < n ? "," : "");
+    ok = ok && add_json(json, capacity, "],\"namespace_creators\":[");
+    for (size_t g = 0u; ok && g < n; ++g) ok = add_json(json, capacity, "[\"group\",\"g%02zu\",\"users\"],", g);
+    ok = ok && add_json(json, capacity, "[\"user\",\"alice\",\"users\"]],\"nested\":[");
+    for (size_t g = 0u; ok && g < n; ++g)
+        ok = add_json(json, capacity, "[\"g%02zu\",\"h%02zu\"]%s", g, g, g + 1u < n ? "," : "");
+    ok = ok && add_json(json, capacity,
+                        "],\"owner_access\":[[\"users\",\"R\"],[\"users\",\"RW\"],[\"users\",\"RW+\"]],\"refs\":[");
+    for (size_t g = 0u; ok && g < n; ++g)
+        ok = add_json(json, capacity, "[\"group\",\"h%02zu\",\"%s\",\"exact\",\"refs/heads/main\",\"RW\"],", g,
+                      repository);
+    ok = ok && add_json(json, capacity,
+                        "[\"user\",\"alice\",\"%s\",\"exact\",\"refs/heads/main\",\"RW\"],"
+                        "[\"user\",\"alice\",\"%s\",\"exact\",\"refs/heads/main\",\"RW+\"],"
+                        "[\"user\",\"alice\",\"%s\",\"prefix\",\"refs/heads/main\",\"-\"]],\"vref_limits\":[",
+                        repository, repository, repository);
+    static const char *const limits[] = {"count", "max_new_binary", "new_count"};
+    for (size_t g = 0u; ok && g < n; ++g)
+        for (size_t l = 0u; ok && l < 3u; ++l)
+            ok = add_json(json, capacity, "[\"group\",\"g%02zu\",\"%s\",\"%s\",5],", g, repository, limits[l]);
+    for (size_t l = 0u; ok && l < 3u; ++l)
+        for (size_t v = 1u; ok && v <= n; ++v)
+            ok = add_json(json, capacity, "[\"user\",\"alice\",\"%s\",\"%s\",%zu]%s", repository, limits[l], v,
+                          l == 2u && v == n ? "" : ",");
+    ok = ok && add_json(json, capacity, "],\"vref_names\":[");
+    for (size_t g = 0u; ok && g < n; ++g)
+        ok = add_json(json, capacity, "[\"group\",\"h%02zu\",\"%s\",\"p%02zu\"],", g, repository, g);
+    for (size_t g = 0u; ok && g < n; ++g)
+        ok = add_json(json, capacity, "[\"user\",\"alice\",\"%s\",\"p%02zu\"]%s", repository, g,
+                      g + 1u < n ? "," : "");
+    ok = ok && add_json(json, capacity, "]}");
+    const char *grants_path = ok ? write_grants("total", json) : NULL;
+    free(json);
+    const char *const program[] = {mg_gitolite_program_text(NULL)};
+    const char *manifest = write_set("total-set", 1u, program);
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_error_t error;
+    CHECK(grants_path && manifest);
+    if (mg_policy_open_grants(manifest, grants_path, &policy, &error) != MAELYS_GIT_OK) {
+        (void)fprintf(stderr, "total: %s\n", error.message);
+        return 0;
+    }
+    char path_names[64][4];
+    const char *paths[64];
+    for (size_t i = 0u; i < 64u; ++i) {
+        (void)snprintf(path_names[i], sizeof(path_names[i]), "p%02zu", i);
+        paths[i] = path_names[i];
+    }
+    maelys_git_policy_request_t push = {
+        .request_id = "t", .principal = "alice", .repository = repository, .operation = "push",
+        .ref_name = "refs/heads/main", .ref_kind = "branch", .update_kind = "update", .paths = paths,
+        .path_count = 64u};
+    maelys_git_policy_decision_t decision;
+    maelys_git_result_t result = maelys_git_policy_authorize(policy, &push, &decision, &error);
+    size_t context = 0u, slice = 0u;
+    mg_policy_slice_counts(policy, &context, &slice);
+    CHECK(mg_policy_slice_held(policy) == 14u * n + 13u); /* whole, never truncated */
+    /* In SMALL (64 per predicate, 1 024 in all) the total is refused. */
+    CHECK(per_predicate != 64u || total != 1024u || context + 14u * n + 13u > total);
+    if (context + 14u * n + 13u > total) {
+        CHECK(result == MAELYS_GIT_ERR_POLICY && error.detail.kind == MAELYS_GIT_FAILURE_CAPACITY);
+        CHECK(!strcmp(error.detail.budget, "MAX_EDB_FACTS") && !strcmp(error.detail.diagnostic, "input:slice"));
+        CHECK(error.detail.limit == total && error.detail.requested == context + 14u * n + 13u);
+    } else {
+        CHECK(result == MAELYS_GIT_OK);
+    }
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
 /* The engine's own bounds on a slice: strings it cannot pool are a
  * capacity failure of the solve that names its budget, never a truncated
  * slice. */
@@ -854,7 +984,7 @@ int main(void) {
     (void)snprintf(g_root, sizeof(g_root), "%s", root);
     int ok = test_identity() && test_audited_consumer() && test_mixed_routing() && test_fixed_program() &&
              test_written_snapshot() && test_counterexamples() && test_quotas() && test_engine_bounds() &&
-             test_vref_filtering() && test_admission() && test_parity();
+             test_vref_filtering() && test_admission() && test_total_bound() && test_parity();
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok) puts("audited Gitolite program: identity, consumer, routing, parity: ok");
     return ok ? 0 : 1;
