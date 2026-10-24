@@ -48,6 +48,13 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   `--expected-grants-fingerprint`; grants changed since the plan are refused.
   `maelys_git_pr_merge_grants` carries that precondition; the former entry
   points still plan, and refuse to apply on a policy with a snapshot.
+- The agent protocol schema declares `expected_grants_fingerprint` on
+  `pr_merge` and `explain` on `authorize`, which the executor already
+  accepted; a client validating against the schema could not send them. A
+  test holds the members of every command's payload in the schema equal to
+  those the executor accepts. The protocol states that a command refused
+  because the snapshot cannot be read again is a `failed` result whose message
+  starts with `grants snapshot unavailable: `.
 - Authorization receipts gain version 2: a decision that used a snapshot of
   grants carries `grants`, the digest of the snapshot, the number of facts of
   its slice and the formats of the snapshot, the slice and the audited

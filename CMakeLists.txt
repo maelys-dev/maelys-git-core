@@ -486,6 +486,8 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_include_directories(test-maelys-git-agent-protocol PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(test-maelys-git-agent-protocol PRIVATE
         maelys_git_agent_core SQLite::SQLite3 maelys_git_build_flags)
+    target_compile_definitions(test-maelys-git-agent-protocol PRIVATE
+        PROTOCOL_DIR="${CMAKE_CURRENT_SOURCE_DIR}/protocol")
     add_test(NAME maelys-git-agent-protocol COMMAND test-maelys-git-agent-protocol)
 
     add_executable(test-maelys-git-store-migration tests/test_store_migration.c)

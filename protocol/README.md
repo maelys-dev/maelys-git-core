@@ -113,6 +113,24 @@ reviewed source OID changed. Optional
 `max_source_objects` and `max_source_bytes` tighten the default traversal
 budgets of 100,000 reachable objects and 512 MiB of reachable on-disk data.
 
+An `authorize` payload may set `explain: true` to receive the explanation text
+of the decision in the result.
+
+An executor started with a snapshot of grants (`--grants`) reads it again
+before each command but `health`, and decides on the bytes it has just read.
+Its `pr_check` and `pr_merge` results carry `grants_fingerprint`, the SHA-256
+of those bytes, empty without a snapshot. A `pr_merge` apply under a snapshot
+must echo the plan's value as `expected_grants_fingerprint`: it fails with
+code `invalid_argument` when the member is missing, and with code
+`process_error` and the message "grants changed; run a new pull request plan"
+when the grants are no longer those of the plan. The schema
+cannot state that requirement, since it depends on how the executor was
+started. When the snapshot cannot be read again, the command is answered by a
+`failed` result whose `code` is that of the failed read and whose `message`
+starts with `grants snapshot unavailable: `; every following command is
+refused the same way until a reading succeeds. That prefix is part of this
+protocol and identifies the condition.
+
 Local repository administration returns lifecycle events conforming to
 `repository-events-v1.schema.json`. Plan and apply have distinct event types;
 the forge should persist apply events only after it has durably accepted the

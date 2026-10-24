@@ -11,6 +11,7 @@
 #include "agent/agent_internal.h"
 #include "maelys_git.h"
 #include "policy/grants.h"
+#include "policy/policy_grants.h"
 #include "policy/program.h"
 #include "test_json.h"
 #include "test_support.h"
@@ -203,10 +204,13 @@ static int test_stream(void) {
     CHECK(run_command(policy, ++n, &outcome) && outcome.allowed && !strcmp(outcome.grants, expected));
 
     /* An invalid file refuses this command and the next, never deciding on
-     * the snapshot read before; a corrected file resumes. */
+     * the snapshot read before; a corrected file resumes. The slice of the
+     * last decision goes with the snapshot its strings belonged to. */
+    CHECK(mg_policy_slice_held(policy) > 0u);
     CHECK(publish("{\"format\":\"maelys-git-grants/1\"}"));
     CHECK(run_command(policy, ++n, &outcome) && !strcmp(outcome.status, "failed") && !outcome.allowed);
-    CHECK(strstr(outcome.message, "grants snapshot unavailable") != NULL);
+    CHECK(strncmp(outcome.message, "grants snapshot unavailable: ", 29u) == 0);
+    CHECK(mg_policy_slice_held(policy) == 0u);
     CHECK(run_command(policy, ++n, &outcome) && !strcmp(outcome.status, "failed"));
     maelys_git_policy_request_t request = {.request_id = "s", .principal = "alice", .repository = "r.git",
                                            .operation = "write"};

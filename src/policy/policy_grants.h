@@ -33,6 +33,10 @@ void mg_policy_slice_counts(const maelys_git_policy_t *policy, size_t *out_conte
 /* The facts the policy at INDEX received in its last solve. */
 size_t mg_policy_entry_facts(const maelys_git_policy_t *policy, size_t index);
 
+/* Tests only: the facts of the last slice the handle still holds; none once
+ * its snapshot is gone, since their strings were the snapshot's. */
+size_t mg_policy_slice_held(const maelys_git_policy_t *policy);
+
 /* Tests only: a filter applied to each slice before it is given, which
  * keeps a fact when it returns non-zero; NULL removes it. The oracles of the
  * slice use it to show what a missing fact changes. */

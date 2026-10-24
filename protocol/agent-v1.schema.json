@@ -51,7 +51,8 @@
               "type": "array",
               "maxItems": 64,
               "items": {"type": "string", "minLength": 1}
-            }
+            },
+            "explain": {"type": "boolean"}
           }
         }
       }
@@ -153,6 +154,7 @@
             "blocking_review": {"type": "boolean"},
             "expected_prepared_oid": {"type": "string", "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$"},
             "expected_policy_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "expected_grants_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             "apply": {"type": "boolean"}
           },
           "dependentRequired": {

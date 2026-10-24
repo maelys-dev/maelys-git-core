@@ -225,6 +225,15 @@ uint64_t mg_retry_delay_ms(const char *key,
                            uint64_t base_ms,
                            uint64_t maximum_ms);
 
+/* The payload members one command accepts, NULL-terminated. */
+typedef struct {
+    const char *command;
+    const char *const *members;
+} mg_executor_payload_t;
+
+/* Every command the executor runs, ending with a NULL command. */
+extern const mg_executor_payload_t mg_executor_payloads[];
+
 /* Executes one command. `denial_mode` says whether the denial of a command
  * that changes a repository carries the explanation text: an executor whose
  * results an agent audits renders it, the agent keeps it in its audit and

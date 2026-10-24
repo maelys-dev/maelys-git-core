@@ -691,6 +691,7 @@ maelys_git_result_t mg_policy_refresh_grants(maelys_git_policy_t *policy, maelys
     if (result != MAELYS_GIT_OK) {
         /* Never the former snapshot after a failure: the handle refuses
          * until a reading succeeds. */
+        mg_slice_clear(&policy->slice); /* its strings were the former snapshot's */
         mg_grants_free(policy->grants);
         policy->grants = NULL;
         return result;
@@ -706,6 +707,10 @@ maelys_git_result_t mg_policy_refresh_grants(maelys_git_policy_t *policy, maelys
 void mg_policy_slice_counts(const maelys_git_policy_t *policy, size_t *out_context, size_t *out_slice) {
     *out_context = policy ? policy->context_count : 0u;
     *out_slice = policy ? policy->fact_count - policy->context_count : 0u;
+}
+
+size_t mg_policy_slice_held(const maelys_git_policy_t *policy) {
+    return policy ? policy->slice.count : 0u;
 }
 
 size_t mg_policy_entry_facts(const maelys_git_policy_t *policy, size_t index) {
