@@ -172,7 +172,10 @@ journal, `grants-store/<sha256>.json` (a directory private to its account, a
 file written once, read-only, synced with its directory; an existing file is
 read back and must hold the bytes its name says), and starts the executor on
 that file with `--expected-grants-fingerprint <sha256>`: every reading with
-other bytes refuses. A snapshot that cannot be kept starts no executor. The
+other bytes refuses. The reading verified at startup serves the executor's
+first command, which does not read the file again; a later command of the
+same stream reads it again. A snapshot that cannot be kept starts no
+executor. The
 journal audits the digest with the completion, and a receipt that names other
 grants fails the command. `agent provision --grants FILE` writes
 `grants_path`.

@@ -267,6 +267,52 @@ static int test_expected_grants(void) {
     return 1;
 }
 
+static int g_readings;
+
+static void count_reading(const char *path) {
+    (void)path;
+    ++g_readings;
+}
+
+/* A pinned handle decides its first command on the reading its pin
+ * verified, without reading the file again; every later command reads it
+ * again and refuses other bytes. An unpinned handle reads again before its
+ * first command too (D4). */
+static int test_pinned_first_read(void) {
+    char text[2048], alice[65];
+    snapshot_text("alice", text, sizeof(text));
+    sha_of(text, alice);
+    outcome_t outcome;
+    int n = 200;
+    for (int pinned = 0; pinned < 2; ++pinned) {
+        CHECK(publish_users("alice"));
+        maelys_git_policy_t *policy = NULL;
+        maelys_git_error_t error;
+        CHECK(maelys_git_policy_open_grants(g_manifest, g_grants, &policy, &error) == MAELYS_GIT_OK);
+        if (pinned) CHECK(mg_policy_expect_grants(policy, alice, &error) == MAELYS_GIT_OK);
+        /* Other bytes published between the opening and the first command. */
+        CHECK(publish_users("bob"));
+        g_readings = 0;
+        mg_grants_test_between_reads = count_reading;
+        int first = run_command(policy, ++n, &outcome);
+        int first_readings = g_readings;
+        outcome_t second;
+        int again = run_command(policy, ++n, &second);
+        mg_grants_test_between_reads = NULL;
+        CHECK(first && again);
+        if (pinned) {
+            CHECK(first_readings == 0 && outcome.allowed && !strcmp(outcome.grants, alice));
+            CHECK(g_readings == 1 && !strcmp(second.status, "failed"));
+            CHECK(strstr(second.message, "is not the expected one") != NULL);
+        } else {
+            CHECK(first_readings == 1 && !strcmp(outcome.status, "denied") && !outcome.allowed);
+            CHECK(g_readings == 2);
+        }
+        maelys_git_policy_close(policy);
+    }
+    return 1;
+}
+
 /* ---- tests 10 and 11: a repository ---------------------------------------------- */
 
 static int git(const char *command, char *out, size_t size) {
@@ -423,9 +469,9 @@ int main(void) {
     if (!root) return 1;
     (void)snprintf(g_root, sizeof(g_root), "%s", root);
     char base[64], a[64], b[64];
-    int ok = setup() && test_stream() && test_expected_grants() && repository(base, a, b) && test_one_generation(a, b) &&
+    int ok = setup() && test_stream() && test_expected_grants() && test_pinned_first_read() && repository(base, a, b) && test_one_generation(a, b) &&
              test_pr_merge(base, a);
     if (!test_remove_tree(g_root)) ok = 0;
-    if (ok) puts("grants in use: streams, expected grants, one generation per command, pr merge: ok");
+    if (ok) puts("grants in use: streams, expected grants, pinned first read, one generation per command, pr merge: ok");
     return ok ? 0 : 1;
 }

@@ -5,6 +5,12 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- An executor started with `--expected-grants-fingerprint` decides its first
+  command on the snapshot it verified at startup, without reading the file
+  again; every later command reads it again, as before. A Cloud command thus
+  reads the agent's kept snapshot twice instead of three times. Streams
+  without an expected fingerprint still read the snapshot before each
+  command.
 - maelys-datalog is pinned to 0.26.0 (was 0.23.1), which includes 0.24.0 and
   0.25.0.
   - The engine identifies a named variable by its complete name within its

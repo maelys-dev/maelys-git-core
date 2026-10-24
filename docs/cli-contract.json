@@ -4224,7 +4224,7 @@
                 "requires": [
                   "--grants"
                 ],
-                "summary": "SHA-256 every reading of --grants must have; a reading with other bytes refuses the command."
+                "summary": "SHA-256 every reading of --grants must have; a reading with other bytes refuses the command. The reading at startup serves the first command; every later command reads again."
               },
               {
                 "argument": {
@@ -4784,7 +4784,7 @@
                 "requires": [
                   "--grants"
                 ],
-                "summary": "SHA-256 every reading of --grants must have; a reading with other bytes refuses the command."
+                "summary": "SHA-256 every reading of --grants must have; a reading with other bytes refuses the command. The reading at startup serves the first command; every later command reads again."
               },
               {
                 "argument": {

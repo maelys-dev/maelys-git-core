@@ -60,6 +60,7 @@ struct maelys_git_policy {
     mg_grants_t *grants;
     char *grants_path; /* where the snapshot is read again, by a stream */
     char expected_grants[65]; /* the SHA-256 every reading must have; empty for any */
+    int verified_unused;      /* a reading of those bytes no command has used yet */
     int has_audited;
     mg_slice_t slice;
     mg_policy_slice_filter_t slice_filter;
@@ -718,12 +719,21 @@ maelys_git_result_t mg_policy_expect_grants(maelys_git_policy_t *policy, const c
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     }
     (void)mg_copy_string(policy->expected_grants, sizeof(policy->expected_grants), sha256);
-    return check_expected(policy, error);
+    maelys_git_result_t result = check_expected(policy, error);
+    policy->verified_unused = result == MAELYS_GIT_OK && policy->grants;
+    return result;
 }
 
 maelys_git_result_t mg_policy_refresh_grants(maelys_git_policy_t *policy, maelys_git_error_t *error) {
     if (!policy) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     if (!policy->grants_path) return MAELYS_GIT_OK;
+    /* The reading mg_policy_expect_grants just verified serves the next
+     * command: those are the bytes the handle is pinned to, and reading
+     * them again could only find them or refuse. Later commands read again. */
+    if (policy->verified_unused) {
+        policy->verified_unused = 0;
+        return MAELYS_GIT_OK;
+    }
     mg_grants_t *fresh = NULL;
     maelys_git_result_t result = mg_grants_reload(policy->grants_path, policy->grants, &fresh, error);
     if (result != MAELYS_GIT_OK) {
