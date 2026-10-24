@@ -62,6 +62,7 @@ Options globales :
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
 | provision | `provision --config FILE --agent-id ID --authority HOST[:PORT] --ca FILE --token FILE --database FILE --manifest FILE --root DIR --executor FILE [--grants FILE] [--apply]` | preview then apply with --apply | json-envelope | Plan or create an agent configuration. |
 | run | `run --config FILE [--once]` | execute | json-envelope | Run the persistent Cloud synchronization loop. |
+| grants-store.prune | `grants-store prune --config FILE [--keep N] [--older-than DURATION] [--apply]` | preview then apply with --apply | json-envelope | Plan or remove the expired snapshots of grants the agent kept for its executors. |
 | stdio | `stdio --manifest FILE --root DIR [--grants FILE] [--expected-grants-fingerprint SHA256] [--git FILE]` | stream | protocol-stream (maelys-git-agent/1) | Serve the executor JSONL protocol on stdio. |
 
 Options globales :

@@ -5,6 +5,14 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- `maelys-git-agent grants-store prune --config FILE` purges the agent's
+  store of grants snapshots: a plan by default, `--apply` to remove. It keeps
+  the current snapshot, the `--keep` most recently used (16 by default) and
+  those used within `--older-than` (90 days by default). A command holds the
+  store's lock, shared, until its executor exits, so that a purge never
+  removes a file an executor reads; a purge waits at most ten seconds for
+  running commands, then refuses. It audits the removed digests as a
+  `grants_store_pruned` event.
 - The slice of a request finds the groups its user reaches through an index
   on their names instead of a scan of those already reached: the closure of
   G groups costs about G lookups instead of G squared comparisons. For a

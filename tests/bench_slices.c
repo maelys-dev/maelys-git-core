@@ -443,6 +443,7 @@ static int store(const char *directory, int count, char **files) {
             (void)fprintf(stderr, "%s: %s\n", files[i], error.message);
             return 1;
         }
+        mg_grants_archive_release(&archive);
         /* A snapshot already kept adds nothing: it is read back. */
         int seen = 0;
         for (int j = 0; j < i && !seen; ++j) seen = !strcmp(files[j], files[i]);

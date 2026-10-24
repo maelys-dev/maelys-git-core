@@ -4166,6 +4166,170 @@
         },
         {
           "available": true,
+          "effect": {
+            "apply": "apply",
+            "plan": "preview"
+          },
+          "exitCodes": {
+            "0": "command completed",
+            "1": "execution failed",
+            "2": "valid report with violations"
+          },
+          "external": false,
+          "hidden": false,
+          "id": "grants-store.prune",
+          "input": {
+            "constraints": [],
+            "operands": [],
+            "options": [
+              {
+                "argument": {
+                  "name": "FILE",
+                  "type": "path"
+                },
+                "conflictsWith": [],
+                "long": "--config",
+                "repeatable": false,
+                "required": true,
+                "requires": [],
+                "summary": "Agent configuration file (v1, at most 64 KiB)."
+              },
+              {
+                "argument": {
+                  "maximum": 1000000,
+                  "name": "N",
+                  "type": "unsigned"
+                },
+                "conflictsWith": [],
+                "default": "16",
+                "long": "--keep",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "The most recently used snapshots to keep whatever their age."
+              },
+              {
+                "argument": {
+                  "maximum": 315360000000,
+                  "minimum": 1,
+                  "name": "DURATION",
+                  "type": "duration"
+                },
+                "conflictsWith": [],
+                "default": "90d",
+                "long": "--older-than",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Beyond the kept ones, a snapshot unused for longer expires."
+              },
+              {
+                "conflictsWith": [],
+                "long": "--apply",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Remove the expired snapshots."
+              }
+            ],
+            "passthrough": false,
+            "synopsis": "grants-store prune --config FILE [--keep N] [--older-than DURATION] [--apply]"
+          },
+          "outputMode": "json-envelope",
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "changed": {
+                "type": "boolean"
+              },
+              "entries": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "keep",
+                        "remove"
+                      ]
+                    },
+                    "bytes": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "lastUsedMs": {
+                      "type": "integer"
+                    },
+                    "reason": {
+                      "enum": [
+                        "current",
+                        "latest",
+                        "recent",
+                        "expired"
+                      ]
+                    },
+                    "sha256": {
+                      "pattern": "^[0-9a-f]{64}$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "sha256",
+                    "bytes",
+                    "lastUsedMs",
+                    "action",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "freedBytes": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "keep": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "mode": {
+                "enum": [
+                  "plan",
+                  "apply"
+                ]
+              },
+              "olderThanMs": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "removed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "store": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode",
+              "changed",
+              "store",
+              "keep",
+              "olderThanMs",
+              "entries",
+              "removed",
+              "freedBytes"
+            ],
+            "type": "object"
+          },
+          "pattern": [
+            "grants-store",
+            "prune"
+          ],
+          "purpose": "Plan or remove the expired snapshots of grants the agent kept for its executors.",
+          "usage": "grants-store prune --config FILE [--keep N] [--older-than DURATION] [--apply]"
+        },
+        {
+          "available": true,
           "effect": "stream",
           "exitCodes": {
             "0": "command completed",

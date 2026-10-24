@@ -1,0 +1,85 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mode",
+    "changed",
+    "store",
+    "keep",
+    "olderThanMs",
+    "entries",
+    "removed",
+    "freedBytes"
+  ],
+  "properties": {
+    "mode": {
+      "enum": [
+        "plan",
+        "apply"
+      ]
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "store": {
+      "type": "string"
+    },
+    "keep": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "olderThanMs": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sha256",
+          "bytes",
+          "lastUsedMs",
+          "action",
+          "reason"
+        ],
+        "properties": {
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastUsedMs": {
+            "type": "integer"
+          },
+          "action": {
+            "enum": [
+              "keep",
+              "remove"
+            ]
+          },
+          "reason": {
+            "enum": [
+              "current",
+              "latest",
+              "recent",
+              "expired"
+            ]
+          }
+        }
+      }
+    },
+    "removed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "freedBytes": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

@@ -137,6 +137,25 @@ if(NOT configured_grants STREQUAL "${test_root}/grants.json")
   message(FATAL_ERROR "provision --grants did not write grants_path: ${grants_config_text}")
 endif()
 
+# The purge of the store: a plan with the catalog's defaults, nothing kept yet.
+run_json(0 prune_plan prune_plan_error
+  "${MAELYS_AGENT_BIN}" grants-store prune --config "${grants_config}"
+  --format json --compact --non-interactive)
+string(JSON prune_mode GET "${prune_plan}" data mode)
+string(JSON prune_keep GET "${prune_plan}" data keep)
+string(JSON prune_age GET "${prune_plan}" data olderThanMs)
+string(JSON prune_entries LENGTH "${prune_plan}" data entries)
+if(NOT prune_mode STREQUAL "plan" OR NOT prune_keep EQUAL 16 OR NOT prune_age EQUAL 7776000000 OR
+   NOT prune_entries EQUAL 0)
+  message(FATAL_ERROR "grants-store prune plan is not the expected one: ${prune_plan}")
+endif()
+run_json(1 prune_bad prune_bad_error
+  "${MAELYS_AGENT_BIN}" grants-store prune --config "${grants_config}" --older-than 90
+  --format json --compact --non-interactive)
+if(NOT prune_bad_error MATCHES "older-than")
+  message(FATAL_ERROR "a duration without unit was not refused: ${prune_bad_error}")
+endif()
+
 run_json(0 shell_describe shell_describe_error
   "${MAELYS_SHELL_BIN}" describe serve --format json --compact)
 string(JSON shell_mode GET "${shell_describe}" data commands 0 outputMode)

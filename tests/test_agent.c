@@ -7,6 +7,8 @@
 #include <sqlite3.h>
 
 #include <dirent.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -379,12 +381,111 @@ static int test_grants_store_retry(void) {
         CHECK(access(f == 0u ? store : entry, F_OK) == 0); /* left in place */
         g_sync_count = 0u;
         CHECK(mg_grants_store_archive(source, database, &archive, &error) == MAELYS_GIT_OK);
-        CHECK(!strcmp(archive.sha256, sha256));
+        CHECK(!strcmp(archive.sha256, sha256) && archive.lock >= 0);
+        mg_grants_archive_release(&archive);
+        CHECK(archive.lock == -1);
         /* Synced again: the parent, the entry and its directory. */
         CHECK(synced(root) && synced(store));
         CHECK(f == 0u || synced(entry));
     }
     mg_sync_test_failure = NULL;
+    CHECK(test_remove_tree(root));
+    return 1;
+}
+
+/* The purge of the store: the current snapshot, the KEEP most recently used
+ * and the recent ones stay, the others expire; a plan removes nothing, an
+ * apply removes them, syncs and audits, and waits for no running command. */
+static int test_grants_store_prune(void) {
+    char template[] = "/tmp/maelys_git_store_prune_XXXXXX";
+    char *root = mkdtemp(template);
+    CHECK(root != NULL);
+    maelys_git_agent_config_t *config = calloc(1u, sizeof(*config));
+    CHECK(config != NULL);
+    (void)snprintf(config->database_path, sizeof(config->database_path), "%s/agent.sqlite3", root);
+    const int64_t day = 86400000;
+    const int64_t now = mg_now_ms();
+    /* Five snapshots: a (the current one), b, c, d, e. */
+    char sha[5][65], source[5][4200], entry[5][4400];
+    for (int i = 0; i < 5; ++i) {
+        char text[64];
+        (void)snprintf(text, sizeof(text), "snapshot %c", 'a' + i);
+        (void)snprintf(source[i], sizeof(source[i]), "%s/grants-%c.json", root, 'a' + i);
+        CHECK(write_file(source[i], text, 0644));
+        maelys_cli_sha256_hex(text, strlen(text), sha[i]);
+        mg_grants_archive_t archive;
+        maelys_git_error_t error;
+        CHECK(mg_grants_store_archive(source[i], config->database_path, &archive, &error) == MAELYS_GIT_OK);
+        mg_grants_archive_release(&archive);
+        (void)snprintf(entry[i], sizeof(entry[i]), "%s/grants-store/%s.json", root, sha[i]);
+    }
+    (void)snprintf(config->grants_path, sizeof(config->grants_path), "%s", source[0]);
+    /* Written long ago, except e (100 days); d was used 10 days ago. */
+    const int64_t written[5] = {200 * day, 200 * day, 200 * day, 200 * day, 100 * day};
+    for (int i = 0; i < 5; ++i) {
+        struct timeval times[2] = {{(time_t)((now - written[i]) / 1000), 0}, {(time_t)((now - written[i]) / 1000), 0}};
+        CHECK(utimes(entry[i], times) == 0);
+    }
+    maelys_git_agent_store_t *journal = NULL;
+    maelys_git_error_t error = {0};
+    CHECK(mg_store_open(config->database_path, &journal, &error) == MAELYS_GIT_OK);
+    char payload[256];
+    (void)snprintf(payload, sizeof(payload), "{\"path\":\"%s\",\"sha256\":\"%s\"}", entry[3], sha[3]);
+    CHECK(mg_store_audit(journal, "grants:old-command", "grants_snapshot", payload, now - 10 * day, &error) ==
+          MAELYS_GIT_OK);
+    mg_store_close(journal);
+
+    mg_grants_store_prune_t prune;
+    CHECK(mg_grants_store_prune(config, 1u, (uint64_t)(90 * day), now, 0u, 0, &prune, &error) == MAELYS_GIT_OK);
+    CHECK(prune.count == 5u && prune.removed == 3u && prune.freed_bytes == 30);
+    /* Most recently used first: d, then e, then a, b, c by digest. */
+    CHECK(!strcmp(prune.entries[0].sha256, sha[3]) && !strcmp(prune.entries[0].reason, "latest"));
+    CHECK(!strcmp(prune.entries[1].sha256, sha[4]) && !strcmp(prune.entries[1].reason, "expired"));
+    for (size_t i = 0u; i < prune.count; ++i)
+        if (!strcmp(prune.entries[i].sha256, sha[0])) CHECK(prune.entries[i].keep && !strcmp(prune.entries[i].reason, "current"));
+    mg_grants_store_prune_clear(&prune);
+    for (int i = 0; i < 5; ++i) CHECK(access(entry[i], F_OK) == 0); /* a plan removes nothing */
+    char event[64];
+    (void)snprintf(event, sizeof(event), "grants-store-prune:%lld", (long long)now);
+    CHECK(audit_count(config->database_path, event) == 0);
+
+    /* A longer age keeps e as recent. */
+    CHECK(mg_grants_store_prune(config, 1u, (uint64_t)(150 * day), now, 0u, 0, &prune, &error) == MAELYS_GIT_OK);
+    CHECK(prune.removed == 2u && !strcmp(prune.entries[1].reason, "recent"));
+    mg_grants_store_prune_clear(&prune);
+
+    /* A running command holds the store: the purge waits, then refuses. */
+    mg_grants_archive_t running;
+    CHECK(mg_grants_store_archive(source[1], config->database_path, &running, &error) == MAELYS_GIT_OK);
+    CHECK(mg_grants_store_prune(config, 1u, (uint64_t)(90 * day), now, 50u, 1, &prune, &error) ==
+          MAELYS_GIT_ERR_LIMIT);
+    CHECK(strstr(error.message, "in use by a running command") != NULL);
+    mg_grants_archive_release(&running);
+
+    /* Applied: b, c and e go, a and d stay, and the journal says so. */
+    CHECK(mg_grants_store_prune(config, 1u, (uint64_t)(90 * day), now, 0u, 1, &prune, &error) == MAELYS_GIT_OK);
+    CHECK(prune.removed == 3u);
+    mg_grants_store_prune_clear(&prune);
+    CHECK(access(entry[0], F_OK) == 0 && access(entry[3], F_OK) == 0);
+    CHECK(access(entry[1], F_OK) != 0 && access(entry[2], F_OK) != 0 && access(entry[4], F_OK) != 0);
+    char *audited = audit_payload(config->database_path, event);
+    CHECK(audited && strstr(audited, sha[1]) && strstr(audited, sha[2]) && strstr(audited, sha[4]) &&
+          !strstr(audited, sha[0]) && !strstr(audited, sha[3]));
+    free(audited);
+    CHECK(mg_grants_store_prune(config, 1u, (uint64_t)(90 * day), now + 1, 0u, 1, &prune, &error) ==
+          MAELYS_GIT_OK);
+    CHECK(prune.count == 2u && prune.removed == 0u);
+    mg_grants_store_prune_clear(&prune);
+
+    /* No store yet: nothing to judge, and a plan creates no journal. */
+    char elsewhere[4200];
+    (void)snprintf(elsewhere, sizeof(elsewhere), "%s/elsewhere", root);
+    CHECK(mkdir(elsewhere, 0700) == 0);
+    (void)snprintf(config->database_path, sizeof(config->database_path), "%s/agent.sqlite3", elsewhere);
+    CHECK(mg_grants_store_prune(config, 16u, (uint64_t)(90 * day), now, 0u, 0, &prune, &error) == MAELYS_GIT_OK);
+    CHECK(prune.count == 0u && access(config->database_path, F_OK) != 0);
+    mg_grants_store_prune_clear(&prune);
+    free(config);
     CHECK(test_remove_tree(root));
     return 1;
 }
@@ -397,7 +498,7 @@ static int test_grants_audit(void) {
     char sha256[65], other[65];
     memset(sha256, 'a', 64u); sha256[64] = '\0';
     memset(other, 'b', 64u); other[64] = '\0';
-    mg_grants_archive_t archive = {{0}, {0}}, none = {{0}, {0}};
+    mg_grants_archive_t archive = {{0}, {0}, -1}, none = {{0}, {0}, -1};
     (void)snprintf(archive.sha256, sizeof(archive.sha256), "%s", sha256);
     (void)snprintf(archive.path, sizeof(archive.path), "%s%s.json", kept, sha256);
     char v2[256], v2_other[256];
@@ -726,7 +827,8 @@ int main(void) {
     passed += test_diff_beyond_line();
     passed += test_grants_audit();
     passed += test_grants_store_retry();
-    if (passed != 11) return 1;
+    passed += test_grants_store_prune();
+    if (passed != 12) return 1;
     (void)printf("ok: %d agent test groups passed\n", passed);
     return 0;
 }

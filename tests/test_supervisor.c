@@ -4,6 +4,8 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -97,6 +99,18 @@ static int record_arguments(int argc, char **argv) {
     FILE *file = fopen(path, "w");
     if (!file) return 2;
     for (int i = 1; i < argc; ++i) (void)fprintf(file, "%s\n", argv[i]);
+    /* The store's lock, as a purge would try it while this executor runs. */
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (strcmp(argv[i], "--grants") != 0) continue;
+        char lock_path[4200];
+        (void)snprintf(lock_path, sizeof(lock_path), "%s", argv[i + 1]);
+        char *slash = strrchr(lock_path, '/');
+        if (slash) (void)snprintf(slash, sizeof(lock_path) - (size_t)(slash - lock_path), "/.lock");
+        int lock = open(lock_path, O_RDWR | O_CLOEXEC);
+        int held = lock >= 0 && flock(lock, LOCK_EX | LOCK_NB) != 0 && errno == EWOULDBLOCK;
+        if (lock >= 0) (void)close(lock);
+        (void)fprintf(file, "store lock %s\n", held ? "held" : "free");
+    }
     if (fclose(file) != 0) return 2;
     (void)fputs(valid_result, stdout);
     (void)fputc('\n', stdout);
@@ -301,6 +315,8 @@ int main(int argc, char **argv) {
             if (!strstr(arguments, expected) || strstr(arguments, source) || strcmp(grants.sha256, first_sha) != 0 ||
                 strcmp(grants.path, kept) != 0)
                 return fail("the executor did not receive the kept snapshot and its digest");
+            if (!strstr(arguments, "\nstore lock held\n") || grants.lock != -1)
+                return fail("the store was not locked while the executor ran, or stayed locked after it");
             /* Kept before the executor started: private, read-only, these bytes. */
             char bytes[256];
             struct stat entry, holder;

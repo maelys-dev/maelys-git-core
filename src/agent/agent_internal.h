@@ -183,6 +183,7 @@ void mg_receipt_events_clear(mg_receipt_events_t *events);
 typedef struct {
     char sha256[65];
     char path[4096];
+    int lock; /* the store's lock, held shared until released; -1 when none */
 } mg_grants_archive_t;
 
 /* Reads the snapshot at GRANTS_PATH and keeps its bytes in the store beside
@@ -192,6 +193,42 @@ typedef struct {
  * bytes its name says. Nothing is returned on failure. */
 maelys_git_result_t mg_grants_store_archive(const char *grants_path, const char *database_path,
                                             mg_grants_archive_t *out, maelys_git_error_t *error);
+/* Releases the lock an archive holds, once the executor that reads its
+ * file has exited; nothing for an archive without one. */
+void mg_grants_archive_release(mg_grants_archive_t *archive);
+
+/* One file of the store, as a purge judges it. */
+typedef struct {
+    char sha256[65];
+    int64_t bytes;
+    int64_t last_used_ms; /* its last grants_snapshot event, or its writing if later */
+    int keep;
+    const char *reason;   /* "current", "latest", "recent" or "expired" */
+} mg_grants_store_entry_t;
+
+typedef struct {
+    char store[4096];
+    mg_grants_store_entry_t *entries; /* most recently used first */
+    size_t count;
+    size_t removed;      /* removed, or to remove in a plan */
+    int64_t freed_bytes;
+} mg_grants_store_prune_t;
+
+/* Judges the files of the store beside the journal of CONFIG: it keeps the
+ * snapshot grants_path holds now, the KEEP most recently used, and those
+ * used less than MAX_AGE_MS before NOW_MS; the others expire. With APPLY,
+ * it takes the store's lock exclusive (waiting at most WAIT_MS for running
+ * commands), removes the expired files, syncs the directory and audits a
+ * grants_store_pruned event. A missing store gives an empty result. */
+maelys_git_result_t mg_grants_store_prune(const maelys_git_agent_config_t *config, size_t keep,
+                                          uint64_t max_age_ms, int64_t now_ms, uint64_t wait_ms, int apply,
+                                          mg_grants_store_prune_t *out, maelys_git_error_t *error);
+void mg_grants_store_prune_clear(mg_grants_store_prune_t *result);
+
+/* Gives VISIT the digest and the time of every grants_snapshot event. */
+maelys_git_result_t mg_store_grants_uses(maelys_git_agent_store_t *store,
+                                         void (*visit)(const char *sha256, int64_t at_ms, void *context),
+                                         void *context, maelys_git_error_t *error);
 
 /* Adds to EVENTS the snapshot ARCHIVE names, which the agent audits with the
  * completion. A receipt of version 2 must name those grants, and a receipt
