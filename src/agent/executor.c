@@ -577,6 +577,9 @@ maelys_git_result_t mg_executor_execute(maelys_git_policy_t *policy,
         maelys_json_value_type(message->document, message->payload) != MAELYS_JSON_TYPE_OBJECT)
         return MAELYS_GIT_ERR_INVALID_ARGUMENT;
     *out_result_json = NULL;
+    /* Every command counts, so that a pinned stream's first command, and it
+     * alone, uses the reading verified at startup. */
+    mg_policy_begin_command(policy);
     int64_t now = mg_now_ms();
     if (now > message->expires_at_ms || message->issued_at_ms > now + 300000) {
         *out_result_json = failure(message, "failed", MAELYS_GIT_ERR_DENIED,

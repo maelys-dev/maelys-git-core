@@ -38,7 +38,8 @@ static const maelys_cli_option_t serve_options[] = {
      "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads; "
      "read again before each command.")},
     {MAELYS_CLI_HEX("expected-grants-fingerprint", "SHA256",
-     "SHA-256 every reading of --grants must have; a reading with other bytes refuses the command.", 64u),
+     "SHA-256 every reading of --grants must have; a reading with other bytes refuses the command. "
+     "The reading at startup serves the first command, whatever it is; every later command reads again.", 64u),
      .depends_on = "grants"},
     {MAELYS_CLI_PATH("root", "DIR", "Repository root."), .required = 1},
     MAELYS_GIT_CLI_GIT_OPTION,
