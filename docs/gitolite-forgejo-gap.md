@@ -72,7 +72,10 @@ miroirs et l'ecosysteme d'extensions historiques.
 Gitolite ancre un refex au debut et non a la fin, complete par `refs/heads/`
 un nom qui ne commence pas par `refs/`, et lit un `$` final comme une egalite.
 La migration ne convertit que des noms litteraux, composes de
-`[A-Za-z0-9._/-]`, et seulement sous une forme dont l'equivalence est exacte :
+`[A-Za-z0-9_/-]` et du point echappe `\.`, et seulement sous une forme dont
+l'equivalence est exacte. Un `.` nu est un caractere quelconque pour Gitolite :
+aucun litteral ne couvre ce qu'il y lit, il est donc refuse, en refus comme en
+attribution.
 
 | Forme Gitolite | Resultat | Remarque |
 | --- | --- | --- |
@@ -81,6 +84,9 @@ La migration ne convertit que des noms litteraux, composes de
 | `RW refs/heads/stable$ = alice` | fait exact sur `refs/heads/stable` | egalite |
 | `RW refs/heads/main = alice` | fait exact sur `refs/heads/main` | plus strict que Gitolite, qui y lit un prefixe |
 | `- refs/heads/main = mallory` | regle `starts_with(F, "refs/heads/main")` | comme Gitolite ; refuse aussi `main-hotfix` |
+| `RW refs/tags/v1\.0$ = alice` | fait exact sur `refs/tags/v1.0` | point litteral |
+| `- refs/tags/v1\. = mallory` | regle `starts_with(F, "refs/tags/v1.")` | comme Gitolite |
+| `- refs/tags/v1.0 = mallory`, `RW refs/tags/v1.0$ = alice` | refuse, `'.' is any character in Gitolite` | Gitolite refuse aussi `v1x0` ; ecrire `\.` |
 | `RW refs/heads/(main|dev) = alice` | refuse, `unsupported refex syntax` | alternance |
 | `RW refs/heads/feature/.* = alice`, `[a-z]+`, `^...` | refuse, `unsupported refex syntax` | repetition, classe, ancre |
 | prefixe de plus de 63 octets ou de plus de 16 `/` | regle `starts_with` | hors des faits `ref_prefix` |

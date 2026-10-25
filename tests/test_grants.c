@@ -306,9 +306,10 @@ static int test_bounds(void) {
 }
 
 /* The generator and the reader judge a ref pattern by one rule: each refex
- * of the corpus is migrated, and its normalized tuple read. One difference
- * is by design: an exact ref of more than 63 bytes was refused as a policy
- * atom, and is a string of a slice. */
+ * of the corpus is migrated, and its normalized tuple read. Two differences
+ * are by design: an exact ref of more than 63 bytes was refused as a policy
+ * atom, and is a string of a slice; a '.' is any character in a refex, and
+ * a literal dot in a pattern of the snapshot. */
 static int write_file(const char *path, const char *text, mode_t mode);
 
 static int test_patterns_against_generator(void) {
@@ -324,7 +325,10 @@ static int test_patterns_against_generator(void) {
         {"- main = alice", "prefix", "refs/heads/main", "-", 1, 1},
         {"RW refs/heads/a..b$ = alice", "exact", "refs/heads/a..b", "RW", 0, 0},
         {"RW refs/heads//x/ = alice", "prefix", "refs/heads//x/", "RW", 0, 0},
-        {"RW refs/tags/v1.0$ = alice", "exact", "refs/tags/v1.0", "RW", 1, 1},
+        {"RW refs/tags/v1.0$ = alice", "exact", "refs/tags/v1.0", "RW", 0, 1},
+        {"RW refs/tags/v1\\.0$ = alice", "exact", "refs/tags/v1.0", "RW", 1, 1},
+        {"- refs/tags/v1.0 = alice", "prefix", "refs/tags/v1.0", "-", 0, 1},
+        {"- refs/tags/v1\\. = alice", "prefix", "refs/tags/v1.", "-", 1, 1},
         /* 64 bytes: one past the policy atom bound. */
         {"RW refs/heads/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$ = alice", "exact",
          "refs/heads/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "RW", 0, 1},
