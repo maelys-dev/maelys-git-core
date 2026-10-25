@@ -471,6 +471,32 @@ maelys_git_result_t mg_store_audit(maelys_git_agent_store_t *store,
     return step == SQLITE_DONE ? MAELYS_GIT_OK : database_error(store->database, error, "write audit event");
 }
 
+maelys_git_result_t mg_store_grants_uses(maelys_git_agent_store_t *store,
+                                         void (*visit)(const char *sha256, int64_t at_ms, void *context),
+                                         void *context, maelys_git_error_t *error) {
+    if (!store || !visit) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    sqlite3_stmt *statement = NULL;
+    const char *sql = "SELECT payload,created_at_ms FROM audit WHERE kind='grants_snapshot'";
+    if (sqlite3_prepare_v2(store->database, sql, -1, &statement, NULL) != SQLITE_OK)
+        return database_error(store->database, error, "prepare grants uses");
+    const maelys_json_limits_t limits = {.maximum_bytes = 8192u, .maximum_depth = 2u, .maximum_tokens = 16u};
+    int step;
+    while ((step = sqlite3_step(statement)) == SQLITE_ROW) {
+        const char *payload = (const char *)sqlite3_column_text(statement, 0);
+        maelys_json_document_t *document = NULL;
+        maelys_json_view_t sha256;
+        if (payload && maelys_json_document_parse(payload, strlen(payload), MAELYS_JSON_PROFILE_RFC8259, &limits,
+                                                  &document, NULL) == MAELYS_JSON_OK &&
+            maelys_json_object_get_string(document, maelys_json_document_root(document), "sha256", &sha256) ==
+                MAELYS_JSON_OK &&
+            sha256.size == 64u)
+            visit(sha256.data, sqlite3_column_int64(statement, 1), context);
+        maelys_json_document_release(document);
+    }
+    sqlite3_finalize(statement);
+    return step == SQLITE_DONE ? MAELYS_GIT_OK : database_error(store->database, error, "read grants uses");
+}
+
 /* ---- receipts of executor results ------------------------------------------- */
 
 void mg_receipt_events_clear(mg_receipt_events_t *events) {

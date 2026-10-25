@@ -100,37 +100,15 @@ static int write_all_until(int fd, const void *bytes, size_t length,
     return ok;
 }
 
-maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *config,
-                                          const mg_agent_message_t *command,
-                                          const char *request_json,
-                                          mg_grants_archive_t *out_grants,
-                                          char **out_response_json,
-                                          int *out_succeeded,
-                                          maelys_git_error_t *error) {
-    if (!out_response_json || !out_succeeded) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
-    *out_response_json = NULL;
-    *out_succeeded = 0;
-    mg_grants_archive_t local_grants;
-    mg_grants_archive_t *grants = out_grants ? out_grants : &local_grants;
-    memset(grants, 0, sizeof(*grants));
-    if (!config || !command || !request_json) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
-    /* The bytes the executor will read are kept before it starts; without
-     * them it does not start. */
-    if (config->grants_path[0]) {
-        maelys_git_error_t store_error = {0};
-        maelys_git_result_t stored = mg_grants_store_archive(config->grants_path, config->database_path,
-                                                             grants, &store_error);
-        if (stored != MAELYS_GIT_OK) {
-            char reason[MAELYS_GIT_MAX_ERROR];
-            (void)snprintf(reason, sizeof(reason), "grants store unavailable: %.900s", store_error.message);
-            mg_json_t json;
-            mg_protocol_result_begin(&json, command, "failed");
-            mg_json_string(&json, "code", maelys_git_result_name(stored));
-            mg_json_string(&json, "message", reason);
-            *out_response_json = mg_protocol_result_end(&json, error);
-            return *out_response_json ? MAELYS_GIT_OK : MAELYS_GIT_ERR_IO;
-        }
-    }
+/* One executor for COMMAND, on the kept snapshot GRANTS names (none when its
+ * digest is empty). */
+static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
+                                        const mg_agent_message_t *command,
+                                        const char *request_json,
+                                        const mg_grants_archive_t *grants,
+                                        char **out_response_json,
+                                        int *out_succeeded,
+                                        maelys_git_error_t *error) {
     int input_pipe[2] = {-1, -1};
     int output_pipe[2] = {-1, -1};
     if (!open_request_channel(input_pipe) || !mg_pipe_cloexec(output_pipe)) {
@@ -173,9 +151,9 @@ maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *confi
      * reading of it must have. */
     if (grants->sha256[0]) {
         argv[8] = "--grants";
-        argv[9] = grants->path;
+        argv[9] = (char *)grants->path;
         argv[10] = "--expected-grants-fingerprint";
-        argv[11] = grants->sha256;
+        argv[11] = (char *)grants->sha256;
     }
     pid_t child = -1;
     maelys_git_result_t spawn_result = mg_spawn_executor(
@@ -269,4 +247,44 @@ maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *confi
     }
     *out_response_json = response;
     return MAELYS_GIT_OK;
+}
+
+maelys_git_result_t mg_supervisor_execute(const maelys_git_agent_config_t *config,
+                                          const mg_agent_message_t *command,
+                                          const char *request_json,
+                                          mg_grants_archive_t *out_grants,
+                                          char **out_response_json,
+                                          int *out_succeeded,
+                                          maelys_git_error_t *error) {
+    if (!out_response_json || !out_succeeded) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    *out_response_json = NULL;
+    *out_succeeded = 0;
+    mg_grants_archive_t local_grants;
+    mg_grants_archive_t *grants = out_grants ? out_grants : &local_grants;
+    memset(grants, 0, sizeof(*grants));
+    grants->lock = -1;
+    if (!config || !command || !request_json) return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    /* The bytes the executor will read are kept before it starts; without
+     * them it does not start. */
+    if (config->grants_path[0]) {
+        maelys_git_error_t store_error = {0};
+        maelys_git_result_t stored = mg_grants_store_archive(config->grants_path, config->database_path,
+                                                             grants, &store_error);
+        if (stored != MAELYS_GIT_OK) {
+            char reason[MAELYS_GIT_MAX_ERROR];
+            (void)snprintf(reason, sizeof(reason), "grants store unavailable: %.900s", store_error.message);
+            mg_json_t json;
+            mg_protocol_result_begin(&json, command, "failed");
+            mg_json_string(&json, "code", maelys_git_result_name(stored));
+            mg_json_string(&json, "message", reason);
+            *out_response_json = mg_protocol_result_end(&json, error);
+            return *out_response_json ? MAELYS_GIT_OK : MAELYS_GIT_ERR_IO;
+        }
+    }
+    /* The store stays locked, shared, until the executor has exited: a purge
+     * never removes the file it reads. */
+    maelys_git_result_t result = run_executor(config, command, request_json, grants, out_response_json,
+                                              out_succeeded, error);
+    mg_grants_archive_release(grants);
+    return result;
 }

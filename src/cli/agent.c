@@ -5,6 +5,8 @@
 #include "cli/json_support.h"
 #include "maelys_git_agent.h"
 
+#include <string.h>
+
 /* Every provisioned path becomes durable configuration: absolute only. */
 static const maelys_cli_option_t provision_options[] = {
     {MAELYS_CLI_ABSOLUTE_PATH("config", "FILE", "Configuration file to create."),
@@ -30,6 +32,17 @@ static const maelys_cli_option_t provision_options[] = {
 static const maelys_cli_option_t run_options[] = {
     {MAELYS_CLI_PATH("config", "FILE", "Agent configuration file (v1, at most 64 KiB)."), .required = 1},
     {MAELYS_CLI_FLAG("once", "Run one synchronization cycle.")},
+};
+
+/* The defaults of a purge are the catalog's alone. */
+static const maelys_cli_option_t prune_options[] = {
+    {MAELYS_CLI_PATH("config", "FILE", "Agent configuration file (v1, at most 64 KiB)."), .required = 1},
+    {MAELYS_CLI_UNSIGNED("keep", "N", "The most recently used snapshots to keep whatever their age.", 0u, 1000000u),
+     .default_text = "16"},
+    {MAELYS_CLI_DURATION("older-than", "DURATION",
+     "Beyond the kept ones, a snapshot unused for longer expires.", 1u, UINT64_C(315360000000)),
+     .default_text = "90d"},
+    {MAELYS_CLI_FLAG("apply", "Remove the expired snapshots.")},
 };
 
 static const maelys_cli_option_t serve_options[] = {
@@ -82,6 +95,53 @@ static int command_provision(maelys_cli_context_t *context) {
     return maelys_git_cli_succeed_document(context, &data,
         apply ? "Agent configuration created." :
                 "Plan only; add --apply to create the agent configuration.",
+        MAELYS_CLI_EXIT_OK);
+}
+
+/* The snapshots of grants the agent kept for its executors: the current
+ * one, the most recently used and the recent ones stay; the others expire. */
+static int command_grants_store_prune(maelys_cli_context_t *context) {
+    uint64_t keep = 0u, older_than = 0u;
+    (void)maelys_cli_option_unsigned(context, "keep", &keep);
+    (void)maelys_cli_option_unsigned(context, "older-than", &older_than);
+    int apply = maelys_cli_flag(context, "apply");
+    maelys_git_error_t error = {0};
+    maelys_git_agent_config_t *config = NULL;
+    maelys_git_result_t result = mg_config_load(maelys_cli_option(context, "config"), &config, &error);
+    mg_grants_store_prune_t prune;
+    memset(&prune, 0, sizeof(prune));
+    if (result == MAELYS_GIT_OK)
+        result = mg_grants_store_prune(config, (size_t)keep, older_than, mg_now_ms(), 10000u, apply, &prune,
+                                       &error);
+    mg_config_free(config);
+    if (result != MAELYS_GIT_OK) return maelys_git_cli_fail_result(context, result, &error);
+    mg_json_t data;
+    mg_json_begin(&data, MG_JSON_DATA);
+    mg_json_object(&data, NULL);
+    mg_json_string(&data, "mode", apply ? "apply" : "plan");
+    mg_json_boolean(&data, "changed", apply && prune.removed > 0u);
+    mg_json_string(&data, "store", prune.store);
+    mg_json_i64(&data, "keep", (int64_t)keep);
+    mg_json_i64(&data, "olderThanMs", (int64_t)older_than);
+    mg_json_array(&data, "entries");
+    for (size_t i = 0u; i < prune.count; ++i) {
+        const mg_grants_store_entry_t *entry = &prune.entries[i];
+        mg_json_object(&data, NULL);
+        mg_json_string(&data, "sha256", entry->sha256);
+        mg_json_i64(&data, "bytes", entry->bytes);
+        mg_json_i64(&data, "lastUsedMs", entry->last_used_ms);
+        mg_json_string(&data, "action", entry->keep ? "keep" : "remove");
+        mg_json_string(&data, "reason", entry->reason);
+        mg_json_end_object(&data);
+    }
+    mg_json_end_array(&data);
+    mg_json_i64(&data, "removed", (int64_t)prune.removed);
+    mg_json_i64(&data, "freedBytes", prune.freed_bytes);
+    mg_json_end_object(&data);
+    mg_grants_store_prune_clear(&prune);
+    return maelys_git_cli_succeed_document(context, &data,
+        apply ? "Expired snapshots of grants removed." :
+                "Plan only; add --apply to remove the expired snapshots of grants.",
         MAELYS_CLI_EXIT_OK);
 }
 
@@ -153,6 +213,11 @@ static const maelys_cli_command_t agent_commands[] = {
      .unavailable = "This binary was built without Cloud support; rebuild with "
                     "MAELYS_GIT_ENABLE_CLOUD_AGENT=ON."},
 #endif
+    {MAELYS_CLI_TRANSACTION("grants-store.prune", "grants-store prune",
+     "Plan or remove the expired snapshots of grants the agent kept for its executors.",
+     command_grants_store_prune),
+     MAELYS_CLI_OPTIONS(prune_options),
+     MAELYS_CLI_SCHEMA(maelys_git_schema_agent_grants_store_prune)},
     {MAELYS_CLI_PROTOCOL_STREAM("stdio", "stdio", "Serve the executor JSONL protocol on stdio.",
      command_stdio, MAELYS_GIT_AGENT_PROTOCOL),
      MAELYS_CLI_OPTIONS(serve_options),

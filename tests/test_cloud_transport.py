@@ -343,7 +343,8 @@ with tempfile.TemporaryDirectory(prefix="maelys-cloud-test-") as temporary:
             assert result["message_id"] == "grants-refused" and result["payload"]["code"] == "denied", result
             assert result["payload"]["message"].startswith("grants store unavailable: "), result
             assert connection.execute("SELECT count(*) FROM audit WHERE kind='grants_snapshot'").fetchone() == (0,)
-        assert sorted(entry.name for entry in store.iterdir()) == [sha256 + ".json"]
+        # Beside the kept snapshot, only the store's lock, which commands share.
+        assert sorted(entry.name for entry in store.iterdir()) == [".lock", sha256 + ".json"]
         del config["grants_path"]
         config["manifest_path"] = MANIFEST
         config["database_path"] = str(database)

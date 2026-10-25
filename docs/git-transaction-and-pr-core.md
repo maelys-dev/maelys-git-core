@@ -181,6 +181,17 @@ journal audits the digest with the completion, and a receipt that names other
 grants fails the command. `agent provision --grants FILE` writes
 `grants_path`.
 
+The store keeps every snapshot until the operator purges it:
+`maelys-git-agent grants-store prune --config FILE` plans, and `--apply`
+removes. It keeps the snapshot `grants_path` holds now, the `--keep` most
+recently used (16 by default) and those used within `--older-than` (90 days
+by default), a snapshot's last use being its last `grants_snapshot` event or
+its writing. A command holds the store's lock, shared, from its archive to
+its executor's exit, and a purge takes it exclusive, waiting at most ten
+seconds for running commands: it never removes a file an executor reads. A
+purge syncs the directory and audits the digests it removed as a
+`grants_store_pruned` event.
+
 All Git subprocess capture paths have a 120-second execution deadline and
 bounded output. Large tree, diff, commit, and blob-batch streams are spooled to
 temporary files with explicit quotas rather than accumulated in RAM.
