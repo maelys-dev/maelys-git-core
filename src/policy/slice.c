@@ -207,18 +207,52 @@ static size_t first_nested(const mg_grants_view_t *view, const char *group) {
 
 /* ---- extraction ----------------------------------------------------------- */
 
+/* The groups a user reaches, in the order reached, with an index on their
+ * text: open addressing, linear probing, at most half full, so that a
+ * closure of G groups costs about G lookups rather than G squared
+ * comparisons. */
 typedef struct {
     const char **names;
     size_t count, capacity;
+    size_t *slots;      /* 1 + the index of a name in names; 0 for a free slot */
+    size_t slot_count;  /* a power of two */
 } names_t;
 
-static int names_has(const names_t *names, const char *name) {
-    for (size_t i = 0u; i < names->count; ++i)
-        if (!strcmp(names->names[i], name)) return 1;
-    return 0;
+/* FNV-1a over the bytes of NAME. */
+static size_t name_hash(const char *name) {
+    uint64_t hash = UINT64_C(14695981039346656037);
+    for (const unsigned char *p = (const unsigned char *)name; *p; ++p) {
+        hash ^= *p;
+        hash *= UINT64_C(1099511628211);
+    }
+    return (size_t)hash;
 }
 
-static int names_add(names_t *names, const char *name) {
+/* The slot that holds NAME, or the free slot where it would go. */
+static size_t names_slot(const names_t *names, const char *name) {
+    size_t mask = names->slot_count - 1u;
+    size_t slot = name_hash(name) & mask;
+    while (names->slots[slot] && strcmp(names->names[names->slots[slot] - 1u], name))
+        slot = (slot + 1u) & mask;
+    return slot;
+}
+
+static int names_grow(names_t *names) {
+    size_t slot_count = names->slot_count ? names->slot_count * 2u : 32u;
+    size_t *slots = calloc(slot_count, sizeof(*slots));
+    if (!slots) return 0;
+    free(names->slots);
+    names->slots = slots;
+    names->slot_count = slot_count;
+    for (size_t i = 0u; i < names->count; ++i) names->slots[names_slot(names, names->names[i])] = i + 1u;
+    return 1;
+}
+
+/* Appends NAME unless it is there already; 0 when memory runs out. */
+static int names_insert(names_t *names, const char *name) {
+    if (2u * (names->count + 1u) > names->slot_count && !names_grow(names)) return 0;
+    size_t slot = names_slot(names, name);
+    if (names->slots[slot]) return 1;
     if (names->count == names->capacity) {
         size_t capacity = names->capacity ? names->capacity * 2u : 16u;
         const char **grown = realloc(names->names, capacity * sizeof(*grown));
@@ -227,6 +261,7 @@ static int names_add(names_t *names, const char *name) {
         names->capacity = capacity;
     }
     names->names[names->count++] = name;
+    names->slots[slot] = names->count;
     return 1;
 }
 
@@ -307,14 +342,14 @@ maelys_git_result_t mg_slice_extract(const mg_grants_t *grants, const mg_slice_r
     for (size_t i = first_member(&view, request->user);
          ok && i < view.member_count && !strcmp(view.members[i].user, request->user); ++i) {
         ok = mg_slice_add(out, MG_SLICE_MEMBER, request->user, view.members[i].group, NULL, 0);
-        if (ok && !names_has(&groups, view.members[i].group)) ok = names_add(&groups, view.members[i].group);
+        if (ok) ok = names_insert(&groups, view.members[i].group);
     }
     for (size_t g = 0u; ok && g < groups.count; ++g) {
         const char *group = groups.names[g];
         for (size_t i = first_nested(&view, group);
              ok && i < view.nested_count && !strcmp(view.nested[i].group, group); ++i) {
             ok = mg_slice_add(out, MG_SLICE_NESTED, group, view.nested[i].parent, NULL, 0);
-            if (ok && !names_has(&groups, view.nested[i].parent)) ok = names_add(&groups, view.nested[i].parent);
+            if (ok) ok = names_insert(&groups, view.nested[i].parent);
         }
     }
     char owned_buffer[512];
@@ -331,6 +366,7 @@ maelys_git_result_t mg_slice_extract(const mg_grants_t *grants, const mg_slice_r
                                   NULL, 0);
     }
     free(groups.names);
+    free(groups.slots);
     if (!ok) {
         mg_slice_clear(out);
         mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "out of memory while extracting a slice");
