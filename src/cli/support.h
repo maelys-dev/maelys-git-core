@@ -32,8 +32,10 @@
 /* Value of --git; the catalog default applies when absent. */
 const char *maelys_git_cli_git(const maelys_cli_context_t *context);
 
-/* Diagnostic line of a protocol-stream command. stdout is never touched;
- * returns MAELYS_CLI_EXIT_FAILURE. */
+/* Failure of a protocol-stream command, on stderr only: the line
+ * `PROGRAM OPERATION error [result]: message`, or the JSON failure envelope
+ * of maelys_git_cli_fail_result() when MAELYS_CLI_FORMAT=json. stdout is
+ * never touched; returns MAELYS_CLI_EXIT_FAILURE. */
 int maelys_git_cli_stream_error(
     maelys_cli_context_t *context,
     const char *operation,

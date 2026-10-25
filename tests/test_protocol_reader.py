@@ -17,9 +17,12 @@ MAX_BYTES = 65536
 I64_MAX = 9223372036854775807
 
 
-def run(*args, data=None):
+TEXT_ENV = {key: value for key, value in ENV.items() if key != "MAELYS_CLI_FORMAT"}
+
+
+def run(*args, data=None, env=ENV):
     return subprocess.run(list(map(str, args)), input=data, capture_output=True,
-                          env=ENV, timeout=15)
+                          env=env, timeout=15)
 
 
 def command(name="health", payload=None, **fields):
@@ -66,7 +69,16 @@ with tempfile.TemporaryDirectory(prefix="maelys-protocol-reader-") as temporary:
             if exit_code == 0:
                 assert not result.stderr, result.stderr
             else:
-                assert b"stream error [" in result.stderr, result.stderr
+                # MAELYS_CLI_FORMAT=json: the failure is the envelope on
+                # stderr; without it, the text line. stdout is the same.
+                envelope = json.loads(result.stderr)
+                assert envelope["contract"] == "agent-cli/v2" and envelope["command"] == stream, envelope
+                assert not envelope["ok"] and envelope["exitCode"] == 1, envelope
+                assert envelope["error"]["code"] and envelope["error"]["message"], envelope
+                text = run(binary, stream, "--manifest", MANIFEST, "--root", root, data=data,
+                           env=TEXT_ENV)
+                assert text.returncode == exit_code and text.stdout == result.stdout, text
+                assert text.stderr.startswith(Path(binary).name.encode() + b" stream error ["), text.stderr
             return [json.loads(line) for line in result.stdout.splitlines()]
 
         valid = encode(command())

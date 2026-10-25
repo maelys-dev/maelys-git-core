@@ -1,6 +1,6 @@
 /* maelys-git-hook: Git receive hooks. `pre-receive` authorizes a bounded
  * transaction read from stdin; `post-receive` converts updates into JSONL
- * events. Both are protocol streams and never render CLI envelopes. */
+ * events. Both are protocol streams: stdout never carries a CLI envelope. */
 #include "cli/support.h"
 #include "internal.h"
 #include "receipt/receipt_internal.h"

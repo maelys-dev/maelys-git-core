@@ -101,6 +101,14 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   Gitolite program. Without a snapshot a receipt stays version 1, byte for
   byte; `maelys_git_receipt_verify` accepts both. The output schema of
   `authorize` admits both.
+- A stream command (`maelys-git-executor serve`, `maelys-git-agent stdio`,
+  `maelys-git-shell serve`, `maelys-git-hook pre-receive` and
+  `post-receive`) run with `MAELYS_CLI_FORMAT=json` reports its failure as
+  the JSON failure envelope on stderr, with the `error.code` an envelope
+  command gives the same result, as the maelys-cli contract states. It
+  wrote the text line `PROGRAM OPERATION error [result]: message` whatever
+  the variable said; that line is unchanged without it. stdout is untouched
+  either way.
 - maelys-json is pinned to 0.3.1 (was 0.3.0). Its canonical check answers
   without copying the document: the grants snapshot reader runs it on every
   load, and on macOS forty reloads of a 4 MiB snapshot no longer raise the

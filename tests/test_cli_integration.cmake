@@ -1,6 +1,6 @@
 if(NOT DEFINED MAELYS_GIT_BIN OR NOT DEFINED MAELYS_AGENT_BIN OR
    NOT DEFINED MAELYS_EXECUTOR_BIN OR NOT DEFINED MAELYS_SHELL_BIN OR
-   NOT DEFINED TEST_MANIFEST)
+   NOT DEFINED MAELYS_HOOK_BIN OR NOT DEFINED TEST_MANIFEST)
   message(FATAL_ERROR "CLI integration paths are required")
 endif()
 
@@ -172,5 +172,52 @@ run_json(1 stream_stdout stream_stderr
 if(NOT stream_stdout STREQUAL "" OR NOT stream_stderr MATCHES "stream command")
   message(FATAL_ERROR "stream rendering boundary failed: stdout=${stream_stdout} stderr=${stream_stderr}")
 endif()
+
+# A stream fails on stderr only: the text line by default, and the JSON
+# failure envelope when MAELYS_CLI_FORMAT=json asks for it.
+function(check_stream_failure label command_id expected_code text_prefix)
+  set(clean_env "${CMAKE_COMMAND}" -E env --unset=MAELYS_CLI_FORMAT
+    --unset=SSH_ORIGINAL_COMMAND --unset=MAELYS_GIT_PRINCIPAL)
+  run_json(1 text_stdout text_stderr ${clean_env} ${ARGN})
+  string(FIND "${text_stderr}" "${text_prefix}" text_at)
+  if(NOT text_stdout STREQUAL "" OR NOT text_at EQUAL 0)
+    message(FATAL_ERROR "${label}: text failure drift: stdout=${text_stdout} stderr=${text_stderr}")
+  endif()
+  run_json(1 json_stdout json_stderr ${clean_env} MAELYS_CLI_FORMAT=json ${ARGN})
+  if(NOT json_stdout STREQUAL "")
+    message(FATAL_ERROR "${label}: JSON failure polluted stdout: ${json_stdout}")
+  endif()
+  string(JSON json_contract ERROR_VARIABLE json_invalid GET "${json_stderr}" contract)
+  if(json_invalid)
+    message(FATAL_ERROR "${label}: stderr is not a JSON envelope: ${json_stderr}")
+  endif()
+  string(JSON json_command GET "${json_stderr}" command)
+  string(JSON json_ok GET "${json_stderr}" ok)
+  string(JSON json_exit GET "${json_stderr}" exitCode)
+  string(JSON json_code GET "${json_stderr}" error code)
+  string(JSON json_message GET "${json_stderr}" error message)
+  string(JSON json_hint GET "${json_stderr}" error hint)
+  if(NOT json_contract STREQUAL "agent-cli/v2" OR NOT json_command STREQUAL command_id OR
+     json_ok OR NOT json_exit EQUAL 1 OR NOT json_code STREQUAL expected_code OR
+     json_message STREQUAL "" OR json_hint STREQUAL "")
+    message(FATAL_ERROR "${label}: invalid stream failure envelope: ${json_stderr}")
+  endif()
+endfunction()
+
+check_stream_failure(executor serve POLICY_FAILED
+  "maelys-git-executor stream error [policy_error]: policy load failed"
+  "${MAELYS_EXECUTOR_BIN}" serve --manifest "${test_root}/absent-manifest.json"
+  --root "${test_root}")
+check_stream_failure(shell serve VALIDATION_FAILED
+  "maelys-git-shell stream error [invalid_argument]: SSH_ORIGINAL_COMMAND is missing"
+  "${MAELYS_SHELL_BIN}" serve --user alice --root "${test_root}"
+  --manifest "${TEST_MANIFEST}")
+check_stream_failure(pre-receive pre-receive VALIDATION_FAILED
+  "maelys-git-hook pre-receive error [invalid_argument]: principal is missing"
+  "${MAELYS_HOOK_BIN}" pre-receive --repository example.git
+  --manifest "${TEST_MANIFEST}")
+check_stream_failure(post-receive post-receive VALIDATION_FAILED
+  "maelys-git-hook post-receive error [invalid_argument]: principal is missing"
+  "${MAELYS_HOOK_BIN}" post-receive --repository example.git)
 
 file(REMOVE_RECURSE "${test_root}")
