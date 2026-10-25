@@ -2,6 +2,7 @@
 import hashlib
 import http.server
 import json
+import os
 from pathlib import Path
 import sqlite3
 import ssl
@@ -300,14 +301,26 @@ with tempfile.TemporaryDirectory(prefix="maelys-cloud-test-") as temporary:
             assert audited and json.loads(audited[0]) == dict(path=str(kept), sha256=sha256), audited
         # The executor itself refuses a snapshot whose bytes are not the digest
         # it was given, before it answers anything.
-        for expected, refused in [(sha256, False), ("0" * 64, True)]:
+        text_env = {key: value for key, value in os.environ.items() if key != "MAELYS_CLI_FORMAT"}
+        for expected, refused, env in [(sha256, False, text_env), ("0" * 64, True, text_env),
+                                       ("0" * 64, True, dict(text_env, MAELYS_CLI_FORMAT="json"))]:
             served = subprocess.run([EXECUTOR, "serve", "--manifest", str(generated / "manifest.json"),
                                      "--grants", str(kept), "--expected-grants-fingerprint", expected,
                                      "--root", str(root)],
-                                    input=json.dumps(authorize) + "\n", capture_output=True, text=True, timeout=20)
-            if refused:
+                                    input=json.dumps(authorize) + "\n", capture_output=True, text=True,
+                                    env=env, timeout=20)
+            if refused and "MAELYS_CLI_FORMAT" in env:
+                # The same refusal as the JSON failure envelope, on stderr only.
                 assert served.returncode == 1 and not served.stdout, served
-                assert "stream error [process_error]" in served.stderr, served.stderr
+                envelope = json.loads(served.stderr)
+                assert envelope["contract"] == "agent-cli/v2" and envelope["command"] == "serve", envelope
+                assert not envelope["ok"] and envelope["exitCode"] == 1, envelope
+                assert envelope["error"]["code"] == "PROCESS_FAILED", envelope
+                assert "is not the expected one" in envelope["error"]["message"], envelope
+                assert envelope["error"]["hint"], envelope
+            elif refused:
+                assert served.returncode == 1 and not served.stdout, served
+                assert served.stderr.startswith("maelys-git-executor stream error [process_error]: "), served.stderr
                 assert "is not the expected one" in served.stderr, served.stderr
             else:
                 assert served.returncode == 0 and json.loads(served.stdout)["payload"]["allowed"], served
