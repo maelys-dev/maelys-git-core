@@ -53,7 +53,7 @@ License: https://creativecommons.org/licenses/by/4.0/
 When sharing adaptations, retain attribution and indicate your changes.
 -->
 
-# Maelys CLI framework (maelys-cli 0.7.0, 7a8c6f6)
+# Maelys CLI framework (maelys-cli 0.13.0, 4c28484)
 
 This project builds its command-line interface on `libmaelys_cli`. The
 complete guide is in `docs/maelys-cli-guide.md`; this block is the summary
@@ -126,7 +126,10 @@ one handler and one JSON Schema file. In the same change, update:
 4. focused tests: accepted and refused inputs, plan without write, `--apply`
    with write, error codes and exit codes, `describe COMMAND_ID` exposing the
    exact contract;
-5. the generated CLI reference when the project keeps one.
+5. the generated CLI reference when the project keeps one, and its manual
+   page or site page rendered from the catalog, never by hand:
+   `maelys-cli-man PROGRAM` (roff), `--format mdx` for a documentation
+   site.
 
 A product written in Python builds on `python/maelys_cli.py` of the same
 pinned maelys-cli (one file, standard library only): the same declarations

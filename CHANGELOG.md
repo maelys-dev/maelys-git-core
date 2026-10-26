@@ -5,6 +5,20 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- maelys-cli is pinned to 0.13.0 (was 0.7.0), which includes 0.8.0 to
+  0.12.4. No source change was needed and no command of Git Core changes:
+  the envelopes, error codes and exit codes are the same. What the
+  framework generates moves with it: the built-in commands (`help`,
+  `version`, `describe`) have new summaries, the catalog `describe`
+  returns carries each program's summary as `x-maelys-summary`,
+  `--lang TAG` is a global option of every command and `version` also
+  returns the language it answers in (`lang`); the CLI reference is
+  regenerated.
+  The agent instructions (`AGENTS.md` and `CLAUDE.md` blocks,
+  `docs/maelys-cli-guide.md`, the `maelys-cli-command` skill) are
+  regenerated with `maelys agents install`. The release brings `maelys/cli/regex.h`, with a search in a
+  scratch the caller provides, which never allocates, for the refexes of
+  the Gitolite migration.
 - The Gitolite migration refuses a refex holding a bare `.`, which Gitolite
   reads as any character: it was converted as a literal dot, so that
   `- refs/tags/v1.0` denied after migration fewer refs than Gitolite did

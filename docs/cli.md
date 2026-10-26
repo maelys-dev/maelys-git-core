@@ -14,9 +14,9 @@ reste indiquée par `describe` dans chaque binaire.
 
 | Identifiant | Usage | Effet | Sortie | But |
 | --- | --- | --- | --- | --- |
-| help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the generated CLI guide or one command's help. |
-| version | `version \| --version` | read | json-envelope | Return product identity. |
-| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
+| help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the help of the program, of one command or of one family. |
+| version | `version \| --version` | read | json-envelope | Show the product, program, version and contract. |
+| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Show the machine-readable catalog, its summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
 | validate | `validate MANIFEST [--grants FILE]` | read | json-envelope | Validate a Datalog policy manifest. |
@@ -49,15 +49,16 @@ Options globales :
 - `--verbose`: Add the details of the run on stderr in text mode; silent in JSON.
 - `--pager auto|always|never`: Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive.
 - `--field NAME`: Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules.
+- `--lang TAG`: Language of the human text.
 - `--help`: Show the help of the selected command.
 
 ## `maelys-git-agent` (Maelys Git Agent)
 
 | Identifiant | Usage | Effet | Sortie | But |
 | --- | --- | --- | --- | --- |
-| help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the generated CLI guide or one command's help. |
-| version | `version \| --version` | read | json-envelope | Return product identity. |
-| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
+| help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the help of the program, of one command or of one family. |
+| version | `version \| --version` | read | json-envelope | Show the product, program, version and contract. |
+| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Show the machine-readable catalog, its summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
 | provision | `provision --config FILE --agent-id ID --authority HOST[:PORT] --ca FILE --token FILE --database FILE --manifest FILE --root DIR --executor FILE [--grants FILE] [--apply]` | preview then apply with --apply | json-envelope | Plan or create an agent configuration. |
@@ -77,15 +78,16 @@ Options globales :
 - `--verbose`: Add the details of the run on stderr in text mode; silent in JSON.
 - `--pager auto|always|never`: Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive.
 - `--field NAME`: Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules.
+- `--lang TAG`: Language of the human text.
 - `--help`: Show the help of the selected command.
 
 ## `maelys-git-executor` (Maelys Git Executor)
 
 | Identifiant | Usage | Effet | Sortie | But |
 | --- | --- | --- | --- | --- |
-| help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the generated CLI guide or one command's help. |
-| version | `version \| --version` | read | json-envelope | Return product identity. |
-| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
+| help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the help of the program, of one command or of one family. |
+| version | `version \| --version` | read | json-envelope | Show the product, program, version and contract. |
+| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Show the machine-readable catalog, its summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
 | serve | `serve --manifest FILE --root DIR [--grants FILE] [--expected-grants-fingerprint SHA256] [--git FILE]` | stream | protocol-stream (maelys-git-agent/1) | Serve one-command-at-a-time JSONL execution. |
@@ -102,15 +104,16 @@ Options globales :
 - `--verbose`: Add the details of the run on stderr in text mode; silent in JSON.
 - `--pager auto|always|never`: Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive.
 - `--field NAME`: Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules.
+- `--lang TAG`: Language of the human text.
 - `--help`: Show the help of the selected command.
 
 ## `maelys-git-shell` (Maelys Git Shell)
 
 | Identifiant | Usage | Effet | Sortie | But |
 | --- | --- | --- | --- | --- |
-| help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the generated CLI guide or one command's help. |
-| version | `version \| --version` | read | json-envelope | Return product identity. |
-| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
+| help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the help of the program, of one command or of one family. |
+| version | `version \| --version` | read | json-envelope | Show the product, program, version and contract. |
+| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Show the machine-readable catalog, its summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
 | serve | `serve --user PRINCIPAL --root DIR --manifest FILE [--grants FILE] [--git FILE] [--restrict-repository NAME] [--read-only]` | stream | protocol-stream (git-smart) | Authorize SSH_ORIGINAL_COMMAND then replace the process with Git. |
@@ -127,15 +130,16 @@ Options globales :
 - `--verbose`: Add the details of the run on stderr in text mode; silent in JSON.
 - `--pager auto|always|never`: Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive.
 - `--field NAME`: Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules.
+- `--lang TAG`: Language of the human text.
 - `--help`: Show the help of the selected command.
 
 ## `maelys-git-hook` (Maelys Git Hook)
 
 | Identifiant | Usage | Effet | Sortie | But |
 | --- | --- | --- | --- | --- |
-| help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the generated CLI guide or one command's help. |
-| version | `version \| --version` | read | json-envelope | Return product identity. |
-| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Return the machine-readable catalog, summary or one descriptor. |
+| help | `help [COMMAND_ID] \| --help` | read | json-envelope | Show the help of the program, of one command or of one family. |
+| version | `version \| --version` | read | json-envelope | Show the product, program, version and contract. |
+| describe | `describe [COMMAND_ID] [--summary] [--prefix PREFIX]` | read | json-envelope | Show the machine-readable catalog, its summary or one descriptor. |
 | completion | `completion SHELL` | read | json-envelope | Print the shell completion script generated from the catalog. |
 | complete.candidates | `__complete [WORDS...]` | read | json-records | Return completion candidates for a partial command line. |
 | pre-receive | `pre-receive --repository NAME --manifest FILE [--grants FILE] [--user PRINCIPAL] [--git FILE] [--git-dir DIR] [--max-commits COUNT] [--max-changes COUNT] [--max-total-blob-bytes BYTES] [--max-inspected-blob-bytes BYTES] [--receipts FILE]` | stream | protocol-stream (git-hook) | Authorize a quota-bounded Git receive transaction from stdin. |
@@ -153,4 +157,5 @@ Options globales :
 - `--verbose`: Add the details of the run on stderr in text mode; silent in JSON.
 - `--pager auto|always|never`: Page the text rendering when stdout is a terminal; never in a pipe, in JSON or under --non-interactive.
 - `--field NAME`: Render one top-level member of data instead of the whole result, by the text or jsonl rendering rules.
+- `--lang TAG`: Language of the human text.
 - `--help`: Show the help of the selected command.
