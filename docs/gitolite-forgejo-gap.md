@@ -86,6 +86,7 @@ attribution.
 | `- refs/heads/main = mallory` | regle `starts_with(F, "refs/heads/main")` | comme Gitolite ; refuse aussi `main-hotfix` |
 | `RW refs/tags/v1\.0$ = alice` | fait exact sur `refs/tags/v1.0` | point litteral |
 | `- refs/tags/v1\. = mallory` | regle `starts_with(F, "refs/tags/v1.")` | comme Gitolite |
+| `RW+ personal/USER/ = @all`, `- USER/ = mallory`, `- VREF/NAME/USER/x = mallory` | refuse, `'/USER/' is the user's own name in Gitolite` | Gitolite y met le nom de chaque utilisateur, une fois le refex complete |
 | `- refs/tags/v1.0 = mallory`, `RW refs/tags/v1.0$ = alice` | refuse, `'.' is any character in Gitolite` | Gitolite refuse aussi `v1x0` ; ecrire `\.` |
 | `RW refs/heads/(main|dev) = alice` | refuse, `unsupported refex syntax` | alternance |
 | `RW refs/heads/feature/.* = alice`, `[a-z]+`, `^...` | refuse, `unsupported refex syntax` | repetition, classe, ancre |

@@ -415,6 +415,16 @@ int mg_gitolite_pattern_is_valid(const char *pattern, int prefix, int deny) {
     return pattern[length - 1u] != '/' && maelys_git_ref_name_is_valid(pattern);
 }
 
+/* Gitolite replaces the first /USER/ of a completed refex, VREFs included,
+ * by the name of the user it decides for (access() of Conf/Load.pm): a rule
+ * naming it is one rule per user, which no migrated pattern holds. */
+static const char k_names_user[] = "'/USER/' is the user's own name in Gitolite; not supported";
+
+static int names_user(const char *implied, const char *text) {
+    /* IMPLIED, when not empty, ends with '/'. */
+    return strstr(text, "/USER/") != NULL || (*implied && strncmp(text, "USER/", 5u) == 0);
+}
+
 /* Reads one Gitolite refex and returns NULL, or the stable reason it is
  * refused. Gitolite anchors a refex at its start only, completes a name that
  * does not begin with refs/ by refs/heads/, and takes a final $ as equality.
@@ -426,13 +436,19 @@ int mg_gitolite_pattern_is_valid(const char *pattern, int prefix, int deny) {
  * A '.' is any character in Gitolite: a literal dot is written '\.', and a
  * bare '.' is refused, since no literal covers what Gitolite reads, for a
  * deny as for a grant. Alternation, classes, repetition and any other
- * regular-expression syntax have no bounded equivalent and are refused. */
+ * regular-expression syntax have no bounded equivalent and are refused.
+ *
+ * As Gitolite does, the refex is completed as written, before any escape is
+ * read, and a completed refex naming /USER/ is refused before anything else
+ * is accepted: Gitolite puts the name of each user there. */
 static const char *classify_refex(const char *text, int deny, refex_kind_t *out_kind,
                                   char out_value[MG_REF_PATTERN_MAX + 1u]) {
     size_t length = strlen(text);
     int anchored = length > 0u && text[length - 1u] == '$';
     size_t body = anchored ? length - 1u : length;
     if (body == 0u) return "unsupported refex syntax";
+    const char *implied = strncmp(text, "refs/", 5u) == 0 ? "" : "refs/heads/";
+    if (names_user(implied, text)) return k_names_user;
     /* Other syntax first: a '.' is named only in an otherwise literal refex. */
     int any_character = 0;
     for (size_t i = 0u; i < body; ++i) {
@@ -453,7 +469,6 @@ static const char *classify_refex(const char *text, int deny, refex_kind_t *out_
         literal[used++] = text[i];
     }
     literal[used] = '\0';
-    const char *implied = strncmp(literal, "refs/", 5u) == 0 ? "" : "refs/heads/";
     if (strlen(implied) + used > MG_REF_PATTERN_MAX) return "ref pattern exceeds 256 bytes";
     (void)snprintf(out_value, MG_REF_PATTERN_MAX + 1u, "%s%s", implied, literal);
     int open_namespace = out_value[strlen(out_value) - 1u] == '/';
@@ -876,6 +891,11 @@ static maelys_git_result_t parse_gitolite(FILE *input,
         vref_rule_t vref = {0};
         if (right[0] == '-') {
             char *descriptor = trim(right + 1u);
+            if (strncmp(descriptor, "VREF/", 5u) == 0 && names_user("", descriptor)) {
+                if (!add_unsupported(migration, line_number, k_names_user, original))
+                    return MAELYS_GIT_ERR_IO;
+                continue;
+            }
             if (parse_vref_rule(descriptor, &vref)) {
                 is_vref = 1;
             } else if (strncmp(descriptor, "VREF/", 5u) == 0) {
