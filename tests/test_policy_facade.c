@@ -407,7 +407,14 @@ static int test_unsupported_refex(void) {
     CHECK(unsupported_with("star", "RW refs/heads/feature/.* = alice", "unsupported refex syntax"));
     CHECK(unsupported_with("class", "RW refs/heads/[a-z]+ = alice", "unsupported refex syntax"));
     CHECK(unsupported_with("caret", "- ^refs/heads/main = alice", "unsupported refex syntax"));
-    CHECK(unsupported_with("dots", "RW refs/heads/../main = alice", "unsupported refex syntax"));
+    CHECK(unsupported_with("dots", "RW refs/heads/../main = alice", "'.' is any character"));
+    CHECK(unsupported_with("escaped-dots", "RW refs/heads/\\.\\./main = alice", "unsupported refex syntax"));
+    /* Gitolite reads '.' as any character: a deny would cover less after
+     * migration, a grant less than its author meant. Both are refused. */
+    CHECK(unsupported_with("dot-deny", "- refs/tags/v1.0 = alice", "'.' is any character"));
+    CHECK(unsupported_with("dot-grant", "RW refs/tags/v1.0$ = alice", "'.' is any character"));
+    CHECK(unsupported_with("escape", "RW refs/heads/a\\d = alice", "unsupported refex syntax"));
+    CHECK(unsupported_with("escape-end", "RW refs/heads/a\\$ = alice", "unsupported refex syntax"));
     CHECK(unsupported_with("vref", "RW+ VREF/NAME/ = alice", "full-ref"));
     char rule[400], pattern[300];
     memset(pattern, 'x', sizeof(pattern));

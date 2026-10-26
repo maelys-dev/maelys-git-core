@@ -5,6 +5,15 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- The Gitolite migration refuses a refex holding a bare `.`, which Gitolite
+  reads as any character: it was converted as a literal dot, so that
+  `- refs/tags/v1.0` denied after migration fewer refs than Gitolite did
+  (`refs/tags/v1x0` was allowed), and `RW refs/tags/v1.0$` granted fewer.
+  The entry is reported as `'.' is any character in Gitolite; write '\.'
+  for a literal dot` and blocks `--apply`; `\.`, a literal dot in Gitolite
+  too, is now accepted. Other regular-expression syntax is still reported
+  first as `unsupported refex syntax`. A snapshot of grants still reads `.`
+  in a pattern as a literal dot.
 - `maelys-git-agent grants-store prune --config FILE` purges the agent's
   store of grants snapshots: a plan by default, `--apply` to remove. It keeps
   the current snapshot, the `--keep` most recently used (16 by default) and

@@ -912,6 +912,48 @@ static int test_engine_bounds(void) {
 
 /* Test 7: the stress fixture vref-65 decides, and its slice holds the VREF
  * names of the pushed paths only. */
+/* A literal dot is written '\.' in a refex, and both encodings read it as
+ * Gitolite does: a deny of v1\.0 covers v1.0 and what follows it, never v1x0. */
+static int test_escaped_dot(void) {
+    maelys_git_policy_t *compiled = NULL, *grants = NULL;
+    CHECK(migrate_both("escaped-dot",
+                       "repo app\n"
+                       "    - refs/tags/v1\\.0 = mallory\n"
+                       "    RW+ refs/tags/ = mallory\n"
+                       "    RW refs/tags/v2\\.0$ = alice\n",
+                       &compiled, &grants));
+    CHECK(compiled != NULL);
+    static const struct {
+        const char *user, *ref;
+        int allowed, explicit_deny;
+    } cases[] = {
+        {"mallory", "refs/tags/v1.0", 0, 1},
+        {"mallory", "refs/tags/v1.0.1", 0, 1},
+        {"mallory", "refs/tags/v1x0", 1, 0},
+        {"alice", "refs/tags/v2.0", 1, 0},
+        {"alice", "refs/tags/v2x0", 0, 0},
+        {"alice", "refs/tags/v2.0.1", 0, 0},
+    };
+    maelys_git_policy_t *policies[2] = {compiled, grants};
+    for (size_t p = 0u; p < 2u; ++p) {
+        for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+            maelys_git_policy_request_t push = {.request_id = "d", .principal = cases[i].user,
+                                                .repository = "app.git", .operation = "push",
+                                                .ref_name = cases[i].ref, .update_kind = "create"};
+            maelys_git_policy_decision_t decision;
+            maelys_git_error_t error;
+            CHECK(maelys_git_policy_authorize(policies[p], &push, &decision, &error) == MAELYS_GIT_OK);
+            if (decision.allowed != cases[i].allowed || decision.explicit_deny != cases[i].explicit_deny)
+                (void)fprintf(stderr, "%s %s %s: allowed %d explicit %d\n", p ? "grants" : "compiled",
+                              cases[i].user, cases[i].ref, decision.allowed, decision.explicit_deny);
+            CHECK(decision.allowed == cases[i].allowed && decision.explicit_deny == cases[i].explicit_deny);
+        }
+    }
+    maelys_git_policy_close(compiled);
+    maelys_git_policy_close(grants);
+    return 1;
+}
+
 static int test_vref_filtering(void) {
     char text[4096] = "@juniors = alice\nrepo app\n    RW = alice\n";
     for (int i = 1; i <= 65; ++i)
@@ -984,7 +1026,7 @@ int main(void) {
     (void)snprintf(g_root, sizeof(g_root), "%s", root);
     int ok = test_identity() && test_audited_consumer() && test_mixed_routing() && test_fixed_program() &&
              test_written_snapshot() && test_counterexamples() && test_quotas() && test_engine_bounds() &&
-             test_vref_filtering() && test_admission() && test_total_bound() && test_parity();
+             test_escaped_dot() && test_vref_filtering() && test_admission() && test_total_bound() && test_parity();
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok) puts("audited Gitolite program: identity, consumer, routing, parity: ok");
     return ok ? 0 : 1;
