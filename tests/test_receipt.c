@@ -541,10 +541,10 @@ static int test_version_two(void) {
     CHECK(produce(policy, &write, MAELYS_GIT_EXPLAIN_NEVER, NULL, 0u, &produced));
     CHECK(produced.result == MAELYS_GIT_OK && produced.receipt.decision == MAELYS_GIT_RECEIPT_ALLOW);
     const maelys_git_receipt_grants_t *grants = &produced.receipt.grants;
-    CHECK(grants->present && grants->facts == 2u && !strcmp(grants->sha256, mg_policy_grants_sha256(policy)));
+    CHECK(grants->present && grants->facts == 3u && !strcmp(grants->sha256, mg_policy_grants_sha256(policy)));
     char expected[512];
     (void)snprintf(expected, sizeof(expected),
-                   "\"grants\":{\"facts\":2,\"format\":\"maelys-git-grants/1\","
+                   "\"grants\":{\"facts\":3,\"format\":\"maelys-git-grants/1\","
                    "\"program\":\"maelys-git-gitolite-program/1\",\"sha256\":\"%s\","
                    "\"slice\":\"maelys-git-slice/1\"},\"matched\":", grants->sha256);
     CHECK(strstr(produced.bytes, expected) != NULL);
@@ -581,8 +581,8 @@ static int test_version_two(void) {
     (void)snprintf(sha64, sizeof(sha64), "\"sha256\":\"%s\"", grants->sha256);
     CHECK(refused(bytes, "\"version\":2}", "\"version\":1}"));                             /* grants in v1 */
     CHECK(refused(bytes, "\"version\":2}", "\"version\":3}"));                             /* unknown version */
-    CHECK(refused(bytes, "\"facts\":2", "\"facts\":-2"));                                   /* negative */
-    CHECK(refused(bytes, "\"facts\":2", "\"facts\":2.0"));                                  /* fraction */
+    CHECK(refused(bytes, "\"facts\":3", "\"facts\":-3"));                                   /* negative */
+    CHECK(refused(bytes, "\"facts\":3", "\"facts\":3.0"));                                  /* fraction */
     CHECK(refused(bytes, "\"maelys-git-grants/1\"", "\"maelys-git-grants/2\""));            /* format */
     CHECK(refused(bytes, "\"maelys-git-slice/1\"", "\"maelys-git-slice/2\""));              /* slice */
     CHECK(refused(bytes, "\"maelys-git-gitolite-program/1\"", "\"maelys-git-gitolite-program/2\""));

@@ -277,7 +277,7 @@ static int test_mixed_routing(void) {
     CHECK(decision.allowed && decision.matched_policy == 0u);
     size_t context = 0u, slice = 0u;
     mg_policy_slice_counts(policy, &context, &slice);
-    CHECK(context > 0u && slice == 2u); /* slice_member and slice_access */
+    CHECK(context > 0u && slice == 3u); /* slice_member twice (all) and slice_access */
     CHECK(mg_policy_entry_facts(policy, 0u) == context + slice);
     CHECK(mg_policy_entry_facts(policy, 1u) == context && mg_policy_entry_facts(policy, 2u) == context);
     /* The receipt counts the context, as for the written policies alone. */
@@ -291,13 +291,13 @@ static int test_mixed_routing(void) {
     request.principal = "bob";
     CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) == MAELYS_GIT_OK);
     CHECK(!decision.allowed && decision.explicit_deny && decision.matched_policy == 1u);
-    /* carol: nothing in the snapshot, a written allow. */
+    /* carol: nothing in the snapshot but all, a written allow. */
     request.principal = "carol";
     request.operation = "read";
     CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) == MAELYS_GIT_OK);
     CHECK(decision.allowed && decision.matched_policy == 2u);
     mg_policy_slice_counts(policy, &context, &slice);
-    CHECK(slice == 0u);
+    CHECK(slice == 1u); /* slice_member(carol, all) */
     maelys_git_policy_close(policy);
     maelys_git_policy_close(hand);
     return 1;
@@ -523,9 +523,9 @@ static void append(char *text, size_t size, const char *piece) {
     (void)snprintf(text + used, size - used, "%s", piece);
 }
 
-/* A configuration of the supported subset: nested groups, plain grants,
- * exact and prefix refs, bare and anchored denies, VREFs, and a CREATOR
- * namespace. */
+/* A configuration of the supported subset: nested groups, @all, plain
+ * grants, exact and prefix refs, bare and anchored denies, VREFs, and a
+ * CREATOR namespace. */
 static void random_configuration(char *text, size_t size) {
     static const char *const users[] = {"u0", "u1", "u2", "u3", "u4", "u5"};
     static const char *const levels[] = {"R", "RW", "RW+", "C"};
@@ -550,7 +550,9 @@ static void random_configuration(char *text, size_t size) {
         (void)snprintf(line, sizeof(line), "repo r%u\n", r);
         append(text, size, line);
         for (unsigned k = 0u, n = 2u + next_random(5u); k < n; ++k) {
-            if (next_random(2u)) (void)snprintf(subject, sizeof(subject), "@g%u", next_random(4u));
+            unsigned pick = next_random(6u);
+            if (pick == 0u) (void)snprintf(subject, sizeof(subject), "@all");
+            else if (pick <= 3u) (void)snprintf(subject, sizeof(subject), "@g%u", next_random(4u));
             else (void)snprintf(subject, sizeof(subject), "%s", users[next_random(6u)]);
             const char *right = next_random(2u) ? levels[next_random(4u)] : ref_rules[next_random(15u)];
             (void)snprintf(line, sizeof(line), "    %s = %s\n", right, subject);
@@ -711,7 +713,7 @@ static int test_quotas(void) {
     CHECK(maelys_git_policy_authorize(grants, &push, &decision, &error) == MAELYS_GIT_OK && decision.allowed);
     size_t context = 0u, slice = 0u;
     mg_policy_slice_counts(grants, &context, &slice);
-    CHECK(slice == 1u + 1u + own + group); /* member, access, both thresholds */
+    CHECK(slice == 2u + 1u + own + group); /* members (juniors, all), access, both thresholds */
     if (compiled) {
         CHECK(maelys_git_policy_authorize(compiled, &push, &decision, &error) == MAELYS_GIT_OK && decision.allowed);
     }
@@ -775,21 +777,26 @@ static int test_total_bound(void) {
     const size_t capacity = 400000u;
     char *json = calloc(capacity, 1u);
     CHECK(json);
+    /* alice's N groups: all, which every user belongs to and which cannot
+     * be nested, then g01..; h00 is reached through g01. */
+    char names[64][8];
+    for (size_t g = 0u; g < n; ++g) (void)snprintf(names[g], sizeof(names[g]), g ? "g%02zu" : "all", g);
     int ok = add_json(json, capacity, "{\"access\":[");
     for (size_t g = 0u; ok && g < n; ++g)
-        ok = add_json(json, capacity, "[\"group\",\"g%02zu\",\"%s\",\"R\"],", g, repository);
+        ok = add_json(json, capacity, "[\"group\",\"%s\",\"%s\",\"R\"],", names[g], repository);
     static const char *const access_levels[] = {"C", "R", "RW", "RW+"};
     for (size_t l = 0u; ok && l < 4u; ++l)
         ok = add_json(json, capacity, "[\"user\",\"alice\",\"%s\",\"%s\"]%s", repository, access_levels[l],
                       l < 3u ? "," : "");
     ok = ok && add_json(json, capacity, "],\"format\":\"maelys-git-grants/1\",\"members\":[");
-    for (size_t g = 0u; ok && g < n; ++g)
-        ok = add_json(json, capacity, "[\"alice\",\"g%02zu\"]%s", g, g + 1u < n ? "," : "");
+    for (size_t g = 1u; ok && g < n; ++g)
+        ok = add_json(json, capacity, "[\"alice\",\"%s\"]%s", names[g], g + 1u < n ? "," : "");
     ok = ok && add_json(json, capacity, "],\"namespace_creators\":[");
-    for (size_t g = 0u; ok && g < n; ++g) ok = add_json(json, capacity, "[\"group\",\"g%02zu\",\"users\"],", g);
+    for (size_t g = 0u; ok && g < n; ++g) ok = add_json(json, capacity, "[\"group\",\"%s\",\"users\"],", names[g]);
     ok = ok && add_json(json, capacity, "[\"user\",\"alice\",\"users\"]],\"nested\":[");
-    for (size_t g = 0u; ok && g < n; ++g)
-        ok = add_json(json, capacity, "[\"g%02zu\",\"h%02zu\"]%s", g, g, g + 1u < n ? "," : "");
+    ok = ok && add_json(json, capacity, "[\"g01\",\"h00\"]%s", n > 1u ? "," : "");
+    for (size_t g = 1u; ok && g < n; ++g)
+        ok = add_json(json, capacity, "[\"%s\",\"h%02zu\"]%s", names[g], g, g + 1u < n ? "," : "");
     ok = ok && add_json(json, capacity,
                         "],\"owner_access\":[[\"users\",\"R\"],[\"users\",\"RW\"],[\"users\",\"RW+\"]],\"refs\":[");
     for (size_t g = 0u; ok && g < n; ++g)
@@ -803,7 +810,7 @@ static int test_total_bound(void) {
     static const char *const limits[] = {"count", "max_new_binary", "new_count"};
     for (size_t g = 0u; ok && g < n; ++g)
         for (size_t l = 0u; ok && l < 3u; ++l)
-            ok = add_json(json, capacity, "[\"group\",\"g%02zu\",\"%s\",\"%s\",5],", g, repository, limits[l]);
+            ok = add_json(json, capacity, "[\"group\",\"%s\",\"%s\",\"%s\",5],", names[g], repository, limits[l]);
     for (size_t l = 0u; ok && l < 3u; ++l)
         for (size_t v = 1u; ok && v <= n; ++v)
             ok = add_json(json, capacity, "[\"user\",\"alice\",\"%s\",\"%s\",%zu]%s", repository, limits[l], v,
@@ -862,7 +869,8 @@ static int test_engine_bounds(void) {
     CHECK(json);
     (void)strcpy(json, "{\"access\":[");
     char name[1001];
-    for (int i = 0; i < 64; ++i) {
+    /* 63 groups of alice, 64 with all: the bound of direct groups. */
+    for (int i = 0; i < 63; ++i) {
         (void)snprintf(name, sizeof(name), "%02d", i);
         memset(name + 2, 'g', 997);
         name[999] = '\0';
@@ -870,7 +878,7 @@ static int test_engine_bounds(void) {
                        i ? "," : "", name);
     }
     (void)strcat(json, "],\"format\":\"maelys-git-grants/1\",\"members\":[");
-    for (int i = 0; i < 64; ++i) {
+    for (int i = 0; i < 63; ++i) {
         (void)snprintf(name, sizeof(name), "%02d", i);
         memset(name + 2, 'g', 997);
         name[999] = '\0';
@@ -891,13 +899,13 @@ static int test_engine_bounds(void) {
     maelys_git_result_t result = maelys_git_policy_authorize(policy, &read, &decision, &error);
     size_t context = 0u, slice = 0u;
     mg_policy_slice_counts(policy, &context, &slice);
-    CHECK(slice == 128u); /* whole: 64 memberships, 64 group grants */
-    /* 64 names of 999 bytes do not fit the engine's pool of input text: the
+    CHECK(slice == 127u); /* whole: 64 memberships (all included), 63 group grants */
+    /* 63 names of 999 bytes do not fit the engine's pool of input text: the
      * request is refused whole, as a capacity that names the bound, the
      * attempted bytes above it (engine 0.26.0). */
     size_t pool = 0u;
     CHECK(maelys_datalog_limit_get(MAELYS_DATALOG_LIMIT_STRING_POOL_BYTES, &pool) == MAELYS_DATALOG_STATUS_OK);
-    CHECK(pool < 64u * 1000u);
+    CHECK(pool < 63u * 1000u);
     CHECK(result == MAELYS_GIT_ERR_POLICY && error.detail.kind == MAELYS_GIT_FAILURE_CAPACITY);
     CHECK(!strcmp(error.detail.budget, "STRING_POOL_BYTES"));
     CHECK(error.detail.limit == pool && error.detail.requested > pool);
@@ -954,6 +962,70 @@ static int test_escaped_dot(void) {
     return 1;
 }
 
+/* Gitolite's @all is every user, known to the configuration or not
+ * (Conf/Load.pm:375), and the first rule that applies decides: a deny of
+ * @all before a grant refuses, on both encodings. A definition naming @all
+ * changes nothing in Gitolite and is refused. Calibrated against Gitolite
+ * 3.6.15 (evidence of GIT-C08, calibration-all). */
+static int decides(maelys_git_policy_t *policy, const char *user, const char *ref, const char *kind,
+                   int allowed) {
+    maelys_git_policy_request_t request = {.request_id = "a", .principal = user, .repository = "app.git",
+                                           .operation = ref ? "push" : "write", .ref_name = ref,
+                                           .update_kind = kind};
+    maelys_git_policy_decision_t decision;
+    maelys_git_error_t error;
+    CHECK(maelys_git_policy_authorize(policy, &request, &decision, &error) == MAELYS_GIT_OK);
+    if (decision.allowed != allowed)
+        (void)fprintf(stderr, "%s %s %s: allowed %d\n", user, ref ? ref : "-", kind ? kind : "-",
+                      decision.allowed);
+    return decision.allowed == allowed;
+}
+
+static int test_all(void) {
+    maelys_git_policy_t *policies[2] = {NULL, NULL};
+    CHECK(migrate_both("all-deny-first",
+                       "repo app\n    - refs/heads/frozen/ = @all\n    RW+ = alice\n    RW refs/heads/ = bob\n",
+                       &policies[0], &policies[1]));
+    for (size_t p = 0u; p < 2u; ++p) {
+        CHECK(policies[p] != NULL);
+        CHECK(decides(policies[p], "alice", "refs/heads/frozen/x", "fast_forward", 0));
+        CHECK(decides(policies[p], "bob", "refs/heads/frozen/x", "fast_forward", 0));
+        CHECK(decides(policies[p], "alice", "refs/heads/main", "force", 1));
+        CHECK(decides(policies[p], "zed", "refs/heads/main", "fast_forward", 0));
+        maelys_git_policy_close(policies[p]);
+    }
+    /* Gitolite's own default configuration: everyone, a stranger included. */
+    CHECK(migrate_both("all-default", "repo app\n    RW+ = @all\n", &policies[0], &policies[1]));
+    for (size_t p = 0u; p < 2u; ++p) {
+        CHECK(policies[p] != NULL);
+        CHECK(decides(policies[p], "zed", "refs/heads/main", "force", 1));
+        CHECK(decides(policies[p], "alice", NULL, NULL, 1));
+        maelys_git_policy_close(policies[p]);
+    }
+    static const struct {
+        const char *configuration, *reason;
+    } refused[] = {
+        {"@everyone = @all\nrepo app\n    RW+ refs/heads/g/ = @everyone\n", "'@all' in a group definition"},
+        {"@all = alice\nrepo app\n    RW refs/heads/open/ = @all\n", "'@all' holds every user"},
+        {"@admins = carol\n@all = @admins\nrepo app\n    RW+ = @admins\n", "'@all' holds every user"},
+    };
+    for (size_t i = 0u; i < sizeof(refused) / sizeof(refused[0]); ++i) {
+        char input[400], output[400];
+        (void)snprintf(input, sizeof(input), "%s/all-refused-%zu.conf", g_root, i);
+        (void)snprintf(output, sizeof(output), "%s/all-refused-%zu", g_root, i);
+        CHECK(write_text(input, refused[i].configuration));
+        maelys_git_gitolite_migration_result_t migration;
+        maelys_git_error_t error;
+        CHECK(mg_migrate_gitolite_grants(input, output, 0, &migration, &error) == MAELYS_GIT_OK);
+        CHECK(migration.unsupported_count == 1u && strstr(migration.unsupported[0], refused[i].reason));
+        maelys_git_gitolite_migration_result_clear(&migration);
+        CHECK(mg_migrate_gitolite_compiled(input, output, 0, &migration, &error) == MAELYS_GIT_OK);
+        CHECK(migration.unsupported_count == 1u && strstr(migration.unsupported[0], refused[i].reason));
+        maelys_git_gitolite_migration_result_clear(&migration);
+    }
+    return 1;
+}
+
 static int test_vref_filtering(void) {
     char text[4096] = "@juniors = alice\nrepo app\n    RW = alice\n";
     for (int i = 1; i <= 65; ++i)
@@ -970,7 +1042,7 @@ static int test_vref_filtering(void) {
     CHECK(maelys_git_policy_authorize(grants, &push, &decision, &error) == MAELYS_GIT_OK && decision.explicit_deny);
     size_t context = 0u, slice = 0u;
     mg_policy_slice_counts(grants, &context, &slice);
-    CHECK(slice == 3u); /* member, access, one VREF name */
+    CHECK(slice == 4u); /* members (juniors, all), access, one VREF name */
     push.paths = path + 1;
     push.path_count = 1u;
     CHECK(maelys_git_policy_authorize(grants, &push, &decision, &error) == MAELYS_GIT_OK && decision.allowed);
@@ -1026,7 +1098,7 @@ int main(void) {
     (void)snprintf(g_root, sizeof(g_root), "%s", root);
     int ok = test_identity() && test_audited_consumer() && test_mixed_routing() && test_fixed_program() &&
              test_written_snapshot() && test_counterexamples() && test_quotas() && test_engine_bounds() &&
-             test_escaped_dot() && test_vref_filtering() && test_admission() && test_total_bound() && test_parity();
+             test_escaped_dot() && test_all() && test_vref_filtering() && test_admission() && test_total_bound() && test_parity();
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok) puts("audited Gitolite program: identity, consumer, routing, parity: ok");
     return ok ? 0 : 1;

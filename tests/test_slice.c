@@ -94,11 +94,11 @@ static int has_fact(const mg_slice_t *slice, mg_slice_predicate_t predicate, con
 
 static int test_written_slice(void) {
     char *text = snapshot(
-        "[\"group\",\"all\",\"app.git\",\"R\"],[\"group\",\"devs\",\"app.git\",\"RW\"],"
+        "[\"group\",\"devs\",\"app.git\",\"RW\"],[\"group\",\"staff\",\"app.git\",\"R\"],"
         "[\"user\",\"alice\",\"other.git\",\"RW+\"]",
         "[\"alice\",\"devs\"],[\"bob\",\"ops\"]",
         "[\"user\",\"alice\",\"team\"]",
-        "[\"devs\",\"eng\"],[\"eng\",\"all\"]",
+        "[\"devs\",\"eng\"],[\"eng\",\"staff\"]",
         "[\"team\",\"RW\"]",
         "[\"group\",\"devs\",\"app.git\",\"prefix\",\"refs/heads/rel/\",\"RW\"],"
         "[\"group\",\"eng\",\"app.git\",\"prefix\",\"refs/heads/main\",\"-\"],"
@@ -112,12 +112,13 @@ static int test_written_slice(void) {
     mg_slice_t slice;
     maelys_git_error_t error = {0};
     CHECK(mg_slice_extract(grants, &request, &slice, &error) == MAELYS_GIT_OK);
-    /* Groups closed through two nesting edges. */
+    /* Groups closed through two nesting edges, and all, every user's. */
+    CHECK(has_fact(&slice, MG_SLICE_MEMBER, "alice", "all", NULL, 0));
     CHECK(has_fact(&slice, MG_SLICE_MEMBER, "alice", "devs", NULL, 0));
     CHECK(has_fact(&slice, MG_SLICE_NESTED, "devs", "eng", NULL, 0));
-    CHECK(has_fact(&slice, MG_SLICE_NESTED, "eng", "all", NULL, 0));
+    CHECK(has_fact(&slice, MG_SLICE_NESTED, "eng", "staff", NULL, 0));
     /* Access on the repository only, for alice's groups. */
-    CHECK(has_fact(&slice, MG_SLICE_GROUP_ACCESS, "all", "app.git", "R", 0));
+    CHECK(has_fact(&slice, MG_SLICE_GROUP_ACCESS, "staff", "app.git", "R", 0));
     CHECK(has_fact(&slice, MG_SLICE_GROUP_ACCESS, "devs", "app.git", "RW", 0));
     /* The bare deny of eng matches main; alice's exact feature ref does not. */
     CHECK(has_fact(&slice, MG_SLICE_GROUP_REF_MATCH, "eng", "app.git", "-", 0));
@@ -127,8 +128,15 @@ static int test_written_slice(void) {
     /* A VREF name of the request's paths; the limits all. Not bob's group. */
     CHECK(has_fact(&slice, MG_SLICE_GROUP_VREF_NAME, "devs", "app.git", "docs/secret.txt", 0));
     CHECK(has_fact(&slice, MG_SLICE_GROUP_VREF_COUNT, "devs", "app.git", NULL, 5));
-    if (slice.count != 10u) print_slice("written slice", &slice);
-    CHECK(slice.count == 10u);
+    if (slice.count != 11u) print_slice("written slice", &slice);
+    CHECK(slice.count == 11u);
+    mg_slice_clear(&slice);
+
+    /* A user the snapshot never names is a member of all, and of no other. */
+    mg_slice_request_t stranger = {"zed", "app.git", NULL, NULL, 0u};
+    CHECK(mg_slice_extract(grants, &stranger, &slice, &error) == MAELYS_GIT_OK);
+    CHECK(has_fact(&slice, MG_SLICE_MEMBER, "zed", "all", NULL, 0));
+    CHECK(!has_fact(&slice, MG_SLICE_MEMBER, "zed", "devs", NULL, 0));
     mg_slice_clear(&slice);
 
     /* In the namespace alice owns: its creator and owner access. */
@@ -349,17 +357,19 @@ static int test_oracle(void) {
     return 1;
 }
 
-/* Hundreds of groups and a cycle: alice belongs to 64 groups, each nested
- * in 8 others, each of those in one of 16 more, the first of which closes a
+/* Hundreds of groups and a cycle: alice belongs directly to 63 groups, 64
+ * with all, and reaches the 64th through the first; each is nested in 8
+ * others, each of those in one of 16 more, the first of which closes a
  * cycle back to a group of alice; bob belongs to one group in the middle.
  * The index of the groups reached grows several times and its slots
  * collide; the slices must still be the full scan's. */
 static int test_many_groups(void) {
     text_t members = {0}, nested = {0}, access = {0};
     int ok = 1;
-    for (unsigned d = 0u; ok && d < 64u; ++d)
+    for (unsigned d = 0u; ok && d < 63u; ++d)
         ok = append(&members, "%s[\"alice\",\"d%02u\"]", d ? "," : "", d);
     ok = ok && append(&members, ",[\"bob\",\"p100\"]");
+    ok = ok && append(&nested, "[\"d00\",\"d63\"]");
     for (unsigned d = 0u; ok && d < 64u; ++d)
         for (unsigned k = 0u; ok && k < 8u; ++k)
             ok = append(&nested, "%s[\"d%02u\",\"p%03u\"]", nested.length ? "," : "", d, d * 8u + k);
@@ -392,8 +402,9 @@ static int test_many_groups(void) {
             mg_slice_clear(&indexed);
             mg_slice_clear(&reference);
         }
-    /* alice reaches 64 + 512 + 16 groups: every edge, the cycle's included. */
-    CHECK(alice_nested == 512u + 512u + 1u);
+    /* alice reaches 64 + 512 + 16 groups and all: every edge, the cycle's
+     * and the one to d63 included. */
+    CHECK(alice_nested == 512u + 512u + 1u + 1u);
     mg_grants_free(grants);
     return 1;
 }

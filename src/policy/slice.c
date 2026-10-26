@@ -336,9 +336,10 @@ maelys_git_result_t mg_slice_extract(const mg_grants_t *grants, const mg_slice_r
     mg_grants_view_t view;
     mg_grants_view(grants, &view);
     names_t groups = {0};
-    int ok = 1;
-    /* The groups of U: the direct ones, then each nesting edge from a group
-     * already reached, breadth first. */
+    /* The groups of U: all, which holds every user, the direct ones, then
+     * each nesting edge from a group already reached, breadth first. */
+    int ok = mg_slice_add(out, MG_SLICE_MEMBER, request->user, MG_GRANTS_ALL_GROUP, NULL, 0) &&
+             names_insert(&groups, MG_GRANTS_ALL_GROUP);
     for (size_t i = first_member(&view, request->user);
          ok && i < view.member_count && !strcmp(view.members[i].user, request->user); ++i) {
         ok = mg_slice_add(out, MG_SLICE_MEMBER, request->user, view.members[i].group, NULL, 0);

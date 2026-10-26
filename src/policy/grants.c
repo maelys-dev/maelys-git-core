@@ -171,6 +171,9 @@ static int read_member(reader_t *reader, maelys_json_value_t tuple, field_t *fie
     if (!(member->user = fields[0].text = string_at(reader, tuple, 0u)) ||
         !(member->group = fields[1].text = string_at(reader, tuple, 1u)))
         return 0;
+    if (!strcmp(member->group, MG_GRANTS_ALL_GROUP))
+        return refuse(reader, MAELYS_GIT_ERR_INVALID_ARGUMENT,
+                      "the group all holds every user and has no explicit member");
     return name(reader, member->user) && name(reader, member->group);
 }
 
@@ -179,6 +182,9 @@ static int read_nested(reader_t *reader, maelys_json_value_t tuple, field_t *fie
     if (!(nested->group = fields[0].text = string_at(reader, tuple, 0u)) ||
         !(nested->parent = fields[1].text = string_at(reader, tuple, 1u)))
         return 0;
+    if (!strcmp(nested->group, MG_GRANTS_ALL_GROUP) || !strcmp(nested->parent, MG_GRANTS_ALL_GROUP))
+        return refuse(reader, MAELYS_GIT_ERR_INVALID_ARGUMENT,
+                      "the group all holds every user and is not nested");
     return name(reader, nested->group) && name(reader, nested->parent);
 }
 
@@ -267,15 +273,17 @@ static int compare_names(const void *a, const void *b) {
     return strcmp(*(const char *const *)a, *(const char *const *)b);
 }
 
-/* The distinct groups the snapshot names, and at most
- * MG_GRANTS_MAX_DIRECT_GROUPS direct groups for any member. */
+/* The distinct groups the snapshot names, the group all always among them,
+ * and at most MG_GRANTS_MAX_DIRECT_GROUPS direct groups for any member, all
+ * included: every one is a slice_member fact of its requests. */
 static int count_groups(reader_t *reader, mg_grants_view_t *view) {
     reader->section = "members";
     for (size_t i = 0u, run = 0u; i < view->member_count; ++i) {
         run = i && !strcmp(view->members[i].user, view->members[i - 1u].user) ? run + 1u : 1u;
         reader->index = i;
-        if (run > MG_GRANTS_MAX_DIRECT_GROUPS)
-            return refuse(reader, MAELYS_GIT_ERR_LIMIT, "a member belongs directly to more than 64 groups");
+        if (run + 1u > MG_GRANTS_MAX_DIRECT_GROUPS)
+            return refuse(reader, MAELYS_GIT_ERR_LIMIT,
+                          "a member belongs directly to more than 64 groups, the group all included");
     }
     size_t capacity = view->member_count + 2u * view->nested_count + view->access_count + view->ref_count +
                       view->creator_count + view->vref_name_count + view->vref_limit_count;
@@ -298,14 +306,19 @@ static int count_groups(reader_t *reader, mg_grants_view_t *view) {
 #undef GROUP_SUBJECTS
     if (used) qsort(names, used, sizeof(*names), compare_names);
     size_t distinct = 0u;
-    for (size_t i = 0u; i < used; ++i)
+    int all_named = 0;
+    for (size_t i = 0u; i < used; ++i) {
         if (!i || strcmp(names[i], names[i - 1u])) ++distinct;
+        if (!strcmp(names[i], MG_GRANTS_ALL_GROUP)) all_named = 1;
+    }
+    if (!all_named) ++distinct;
     free(names);
     view->group_count = distinct;
     reader->section = "groups";
     reader->index = distinct;
     return distinct <= MG_GRANTS_MAX_GROUPS ||
-           refuse(reader, MAELYS_GIT_ERR_LIMIT, "the snapshot names more than 4096 groups");
+           refuse(reader, MAELYS_GIT_ERR_LIMIT,
+                  "the snapshot names more than 4096 groups, the group all included");
 }
 
 static const char *const k_sections[] = {"access", "format", "members", "namespace_creators", "nested",
