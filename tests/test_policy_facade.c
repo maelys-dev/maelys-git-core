@@ -402,6 +402,28 @@ static int unsupported_with(const char *name, const char *rule, const char *reas
     return 1;
 }
 
+/* A refused /USER/ rule refuses the configuration: the broader grant beside
+ * it is never migrated without it. */
+static int test_user_refuses_configuration(void) {
+    static const char *const configurations[] = {
+        "repo app\n    RW+ refs/heads/ = alice\n    - USER/ = alice\n",
+        "@devs = alice bob\nrepo app\n    RW+ personal/USER/ = @devs\n    RW refs/heads/main = bob\n",
+    };
+    for (size_t i = 0u; i < sizeof(configurations) / sizeof(configurations[0]); ++i) {
+        char name[32];
+        (void)snprintf(name, sizeof(name), "user-conf-%zu", i);
+        maelys_git_gitolite_migration_result_t migration;
+        CHECK(migrate(name, configurations[i], 0, &migration, NULL));
+        CHECK(migration.unsupported_count == 1u);
+        CHECK(strstr(migration.unsupported[0], "'/USER/'") != NULL);
+        maelys_git_gitolite_migration_result_clear(&migration);
+        CHECK(!migrate(name, configurations[i], 1, &migration, NULL));
+        maelys_git_gitolite_migration_result_clear(&migration);
+        CHECK(!output_exists(name));
+    }
+    return 1;
+}
+
 static int test_unsupported_refex(void) {
     CHECK(unsupported_with("alt", "RW refs/heads/(main|dev) = alice", "unsupported refex syntax"));
     CHECK(unsupported_with("star", "RW refs/heads/feature/.* = alice", "unsupported refex syntax"));
@@ -415,6 +437,12 @@ static int test_unsupported_refex(void) {
     CHECK(unsupported_with("dot-grant", "RW refs/tags/v1.0$ = alice", "'.' is any character"));
     CHECK(unsupported_with("escape", "RW refs/heads/a\\d = alice", "unsupported refex syntax"));
     CHECK(unsupported_with("escape-end", "RW refs/heads/a\\$ = alice", "unsupported refex syntax"));
+    /* Gitolite puts each user's name in place of /USER/, once completed. */
+    CHECK(unsupported_with("user-grant", "RW+ personal/USER/ = alice", "'/USER/'"));
+    CHECK(unsupported_with("user-deny", "- USER/ = alice", "'/USER/'"));
+    CHECK(unsupported_with("user-full", "- refs/heads/USER/x = alice", "'/USER/'"));
+    CHECK(unsupported_with("user-vref", "- VREF/NAME/USER/secret = alice", "'/USER/'"));
+    CHECK(unsupported_with("user-first", "RW USER/(a|b) = alice", "'/USER/'"));
     CHECK(unsupported_with("vref", "RW+ VREF/NAME/ = alice", "full-ref"));
     char rule[400], pattern[300];
     memset(pattern, 'x', sizeof(pattern));
@@ -957,7 +985,7 @@ int main(void) {
              test_filter_pattern_not_an_atom() && test_refused_manifests() &&
              test_fingerprints_unchanged() &&
              test_gitolite_prefixes() && test_exact_refs_one_fact() &&
-             test_unsupported_refex() &&
+             test_unsupported_refex() && test_user_refuses_configuration() &&
              test_explanations() && test_explain_multiple_policies() && test_refusals();
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok) puts("local vocabulary, engine limits, Gitolite prefixes, explanations and identities: ok");

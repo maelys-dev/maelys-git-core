@@ -5,6 +5,18 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- The Gitolite migration refuses a refex that names `/USER/` once
+  completed by `refs/heads/`, and a `VREF/NAME/` path that names it:
+  Gitolite replaces it with the name of each user it decides for. It was
+  migrated as a literal, so that `RW+ personal/USER/ = @all` granted
+  everyone the namespace `refs/heads/personal/USER/` and no one their own,
+  and `- USER/` denied fewer refs than Gitolite did. The entry is reported
+  as `'/USER/' is the user's own name in Gitolite; not supported` and blocks
+  `--apply`, for a grant as for a deny, before any other reason.
+  `refs/heads/USER$`, which Gitolite does not replace, is still a literal.
+  The refex is completed as written, before its escapes are read, as
+  Gitolite does. A configuration migrated before keeps its literal grant
+  until it is migrated again.
 - maelys-cli is pinned to 0.13.0 (was 0.7.0), which includes 0.8.0 to
   0.12.4. No source change was needed and no command of Git Core changes:
   the envelopes, error codes and exit codes are the same. What the

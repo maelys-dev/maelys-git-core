@@ -329,6 +329,12 @@ static int test_patterns_against_generator(void) {
         {"RW refs/tags/v1\\.0$ = alice", "exact", "refs/tags/v1.0", "RW", 1, 1},
         {"- refs/tags/v1.0 = alice", "prefix", "refs/tags/v1.0", "-", 0, 1},
         {"- refs/tags/v1\\. = alice", "prefix", "refs/tags/v1.", "-", 1, 1},
+        /* /USER/ once completed is each user's name in Gitolite; a ref of
+         * that name is a literal in a snapshot. */
+        {"RW+ personal/USER/ = alice", "prefix", "refs/heads/personal/USER/", "RW+", 0, 1},
+        {"- USER/ = alice", "prefix", "refs/heads/USER/", "-", 0, 1},
+        {"RW refs/heads/USER$ = alice", "exact", "refs/heads/USER", "RW", 1, 1},
+        {"RW refs/heads/x/USER = alice", "exact", "refs/heads/x/USER", "RW", 1, 1},
         /* 64 bytes: one past the policy atom bound. */
         {"RW refs/heads/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$ = alice", "exact",
          "refs/heads/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "RW", 0, 1},
