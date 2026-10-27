@@ -600,6 +600,11 @@ if(MAELYS_GIT_BUILD_TESTS)
             $<TARGET_FILE:maelys-git-hook> $<TARGET_FILE:maelys-git-executor>)
     set_tests_properties(maelys-git-receive-authorization PROPERTIES TIMEOUT 120)
 
+    add_test(NAME maelys-git-gitolite-ref-domain
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gitolite_ref_domain.py
+            $<TARGET_FILE:maelys-git> $<TARGET_FILE:maelys-git-hook> $<TARGET_FILE:maelys-git-executor>
+            $<TARGET_FILE:maelys-git-shell>)
+
     add_test(NAME maelys-git-audit-regressions
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_audit_regressions.py
             $<TARGET_FILE:maelys-git> $<TARGET_FILE:maelys-git-hook>

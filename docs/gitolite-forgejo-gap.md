@@ -124,6 +124,23 @@ lecture. Chez Git Core, "chacun" est tout principal authentifie : il
 n'y a pas d'acces anonyme `daemon` ou `gitweb`. `all` compte parmi les
 groupes d'un utilisateur : 63 groupes directs au plus, 64 avec lui.
 
+### Refs admises
+
+Gitolite 3.6.15, avec ses motifs d'admission par defaut
+(`REF_OR_FILENAME_PATT` de `Rc.pm`), refuse une ref hors de son alphabet
+avant toute regle. Git Core fait de meme pour tout ensemble de politiques
+qui contient le programme Gitolite audite, reconnu a son empreinte : une
+ref invalide, qui ne commence pas par une lettre ou un chiffre, qui contient
+autre chose que `[-0-9A-Za-z._@/+,]` ou qui depasse 511 octets est une requete
+invalide (`invalid_argument`), refusee avant toute evaluation, meme si une
+politique ecrite a la main de l'ensemble l'autoriserait ; aucun recu de
+decision n'est produit. Une requete sans ref et les chemins de fichiers ne
+sont pas concernes. Un ensemble ecrit a la main seul garde son
+comportement. Une configuration qui redefinit ces motifs dans
+`.gitolite.rc` est hors du perimetre de fidelite garanti. Une ancienne
+politique compilee (`gitolite-migrated.dl`, sans instantane) n'est pas
+reconnue : elle est a regenerer en droits comme donnees.
+
 Le plan fait compiler la politique par le moteur et calcule le pire cas de
 son execution : le nombre de groupes d'un utilisateur, imbrications
 comprises et `all` compris, que `effective_group_member` contient pour une

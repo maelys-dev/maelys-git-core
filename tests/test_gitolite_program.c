@@ -1026,6 +1026,100 @@ static int test_all(void) {
     return 1;
 }
 
+/* D7 (b) of GIT-C08: a set holding the audited Gitolite program decides
+ * only the refs Gitolite 3.6.15 admits by default (REF_OR_FILENAME_PATT,
+ * calibrated): any other is an INVALID_ARGUMENT, with no failure kind (a
+ * kind describes only a policy failure), before any policy is evaluated, a
+ * hand-written one of a mixed set included, and no decision receipt is
+ * finalized. A set written by hand alone, a request
+ * without a ref and the paths are not concerned. */
+static int refused_ref(maelys_git_policy_t *policy, const char *ref) {
+    maelys_git_policy_request_t push = {.request_id = "d", .principal = "alice", .repository = "app.git",
+                                        .operation = "push", .ref_name = ref, .update_kind = "fast_forward"};
+    maelys_git_policy_decision_t decision;
+    maelys_git_error_t error;
+    if (maelys_git_policy_authorize(policy, &push, &decision, &error) != MAELYS_GIT_ERR_INVALID_ARGUMENT ||
+        error.detail.kind != MAELYS_GIT_FAILURE_NONE || !strstr(error.message, "Gitolite admits")) {
+        (void)fprintf(stderr, "ref %s not refused at admission: %s (kind %d)\n", ref, error.message,
+                      (int)error.detail.kind);
+        return 0;
+    }
+    maelys_git_receipt_t receipt;
+    char text[4096];
+    CHECK(maelys_git_policy_authorize_receipt(policy, &push, MAELYS_GIT_EXPLAIN_NEVER, text, sizeof(text),
+                                              &decision, &receipt, &error) == MAELYS_GIT_ERR_INVALID_ARGUMENT);
+    CHECK(error.detail.kind == MAELYS_GIT_FAILURE_NONE && strstr(error.message, "Gitolite admits"));
+    return 1;
+}
+
+static int allowed_ref(maelys_git_policy_t *policy, const char *ref, const char *const *paths, size_t count) {
+    maelys_git_policy_request_t push = {.request_id = "d", .principal = "alice", .repository = "app.git",
+                                        .operation = "push", .ref_name = ref, .update_kind = "fast_forward",
+                                        .paths = paths, .path_count = count, .has_change_details = count > 0u,
+                                        .change_kind = count ? "modified" : NULL};
+    maelys_git_policy_decision_t decision;
+    maelys_git_error_t error;
+    if (maelys_git_policy_authorize(policy, &push, &decision, &error) != MAELYS_GIT_OK || !decision.allowed) {
+        (void)fprintf(stderr, "ref %s not allowed: %s\n", ref, error.message);
+        return 0;
+    }
+    return 1;
+}
+
+static int test_ref_domain(void) {
+    /* Outside Gitolite's alphabet, then within it but not a valid ref. */
+    static const char *const outside[] = {"refs/heads/\xc3\xa9", "refs/heads/a%b", "refs/heads/a#b",
+                                          "refs/heads/a=b", "refs/heads/a!b", "refs/heads/a&b",
+                                          "refs/heads/x..y", "refs/heads/x/", "refs/heads/x.",
+                                          "refs/heads/x//y", "refs/heads/x@{1}"};
+    static const char *const inside[] = {"refs/heads/main", "refs/heads/a-b.c_d", "refs/heads/a@b",
+                                         "refs/heads/a+b", "refs/heads/a,b", "refs/tags/v1.0"};
+    char longest[MAELYS_GIT_MAX_REF];
+    (void)snprintf(longest, sizeof(longest), "refs/heads/");
+    while (strlen(longest) < MAELYS_GIT_MAX_REF - 1u) (void)strcat(longest, "x");
+    static const char *const paths[] = {"docs/\xc3\xa9t\xc3\xa9.txt", "a%b#c=d!e"};
+
+    maelys_git_policy_t *compiled = NULL, *grants = NULL;
+    CHECK(migrate_both("ref-domain", "repo app\n    RW+ refs/heads/ = alice\n    RW+ refs/tags/ = alice\n",
+                       &compiled, &grants));
+    for (size_t i = 0u; i < sizeof(outside) / sizeof(outside[0]); ++i) CHECK(refused_ref(grants, outside[i]));
+    for (size_t i = 0u; i < sizeof(inside) / sizeof(inside[0]); ++i) CHECK(allowed_ref(grants, inside[i], NULL, 0u));
+    CHECK(strlen(longest) == MAELYS_GIT_MAX_REF - 1u && allowed_ref(grants, longest, NULL, 0u));
+    CHECK(allowed_ref(grants, "refs/heads/main", paths, 2u));
+    maelys_git_policy_request_t write = {.request_id = "d", .principal = "alice", .repository = "app.git",
+                                         .operation = "write"};
+    maelys_git_policy_decision_t decision;
+    maelys_git_error_t error;
+    CHECK(maelys_git_policy_authorize(grants, &write, &decision, &error) == MAELYS_GIT_OK && decision.allowed);
+    maelys_git_policy_close(grants);
+    /* The compiled encoding is not recognized by approximation: an old
+     * compiled policy is to be generated again as grants as data. */
+    if (compiled) CHECK(allowed_ref(compiled, outside[0], NULL, 0u));
+    maelys_git_policy_close(compiled);
+
+    /* A mixed set: a hand-written policy allowing every push cannot allow a
+     * ref refused at admission. A set written by hand alone decides it. */
+    static const char k_allow_all[] = "allow(R) :- request(R), operation(\"push\").\n";
+    const char *snapshot = write_grants("domain-grants", EMPTY_GRANTS);
+    const char *const sources[] = {mg_gitolite_program_text(NULL), k_allow_all};
+    const char *mixed = write_set("domain-mixed", 2u, sources);
+    CHECK(snapshot && mixed);
+    char mixed_manifest[512];
+    (void)snprintf(mixed_manifest, sizeof(mixed_manifest), "%s", mixed);
+    maelys_git_policy_t *policy = NULL;
+    CHECK(mg_policy_open_grants(mixed_manifest, snapshot, &policy, &error) == MAELYS_GIT_OK);
+    for (size_t i = 0u; i < sizeof(outside) / sizeof(outside[0]); ++i) CHECK(refused_ref(policy, outside[i]));
+    CHECK(allowed_ref(policy, "refs/heads/main", NULL, 0u));
+    maelys_git_policy_close(policy);
+    const char *const hand_sources[] = {k_allow_all};
+    const char *hand = write_set("domain-hand", 1u, hand_sources);
+    CHECK(hand && maelys_git_policy_open(hand, &policy, &error) == MAELYS_GIT_OK);
+    for (size_t i = 0u; i < sizeof(outside) / sizeof(outside[0]); ++i)
+        CHECK(allowed_ref(policy, outside[i], NULL, 0u));
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
 static int test_vref_filtering(void) {
     char text[4096] = "@juniors = alice\nrepo app\n    RW = alice\n";
     for (int i = 1; i <= 65; ++i)
@@ -1098,7 +1192,7 @@ int main(void) {
     (void)snprintf(g_root, sizeof(g_root), "%s", root);
     int ok = test_identity() && test_audited_consumer() && test_mixed_routing() && test_fixed_program() &&
              test_written_snapshot() && test_counterexamples() && test_quotas() && test_engine_bounds() &&
-             test_escaped_dot() && test_all() && test_vref_filtering() && test_admission() && test_total_bound() && test_parity();
+             test_escaped_dot() && test_all() && test_ref_domain() && test_vref_filtering() && test_admission() && test_total_bound() && test_parity();
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok) puts("audited Gitolite program: identity, consumer, routing, parity: ok");
     return ok ? 0 : 1;

@@ -402,6 +402,17 @@ typedef enum {
 /* The longest filter pattern the policy language accepts. */
 #define MG_REF_PATTERN_MAX 256u
 
+int mg_gitolite_ref_admitted(const char *ref) {
+    size_t length = ref ? strlen(ref) : 0u;
+    if (length == 0u || length >= MAELYS_GIT_MAX_REF) return 0;
+    for (size_t i = 0u; i < length; ++i) {
+        unsigned char ch = (unsigned char)ref[i];
+        int alnum = (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
+        if (!alnum && (i == 0u || !strchr("-._@/+,", ch))) return 0;
+    }
+    return maelys_git_ref_name_is_valid(ref);
+}
+
 int mg_gitolite_pattern_is_valid(const char *pattern, int prefix, int deny) {
     size_t length = pattern ? strlen(pattern) : 0u;
     if (length < 5u || length > MG_REF_PATTERN_MAX || strncmp(pattern, "refs/", 5u) ||

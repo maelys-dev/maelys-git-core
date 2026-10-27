@@ -228,6 +228,11 @@ int mg_gitolite_name_is_valid(const char *name);
  * denies as a prefix; an exact ref is a valid ref name. The generator and
  * the snapshot of grants read patterns by this one rule. */
 int mg_gitolite_pattern_is_valid(const char *pattern, int prefix, int deny);
+/* Whether REF is a ref Git Core accepts (maelys_git_ref_name_is_valid) and
+ * within what Gitolite 3.6.15 admits by default (REF_OR_FILENAME_PATT of
+ * Rc.pm): a letter or a digit, then [-0-9A-Za-z._@/+,], at most
+ * MAELYS_GIT_MAX_REF - 1 bytes. */
+int mg_gitolite_ref_admitted(const char *ref);
 /* The '/'-terminated prefixes of a request's ref given as ref_prefix facts. */
 #define MG_REF_PREFIX_FACTS 16u
 
