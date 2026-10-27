@@ -305,8 +305,8 @@ static int test_large_group(void) {
 }
 
 /* The groups of one user are what effective_group_member holds for one
- * request: the plan computes them, through nesting, and refuses beyond the
- * engine's bound; at the bound, the user is authorized. */
+ * request, all included: the plan computes them, through nesting, and
+ * refuses beyond the engine's bound; at the bound, the user is authorized. */
 static int test_groups_of_a_user(void) {
     size_t limit = g_minimal.derived_per_predicate_limit;
     /* The policy holds one fact per group and one grant: within the fact
@@ -317,11 +317,11 @@ static int test_groups_of_a_user(void) {
     }
     maelys_git_gitolite_migration_result_t migration;
     maelys_git_error_t error;
-    char *text = configuration("", limit, member_line);
+    char *text = configuration("", limit - 1u, member_line);
     CHECK(text != NULL);
     char *full = malloc(strlen(text) + 64u);
     CHECK(full != NULL);
-    (void)snprintf(full, strlen(text) + 64u, "%srepo app\n    RW = @g%zu\n", text, limit);
+    (void)snprintf(full, strlen(text) + 64u, "%srepo app\n    RW = @g%zu\n", text, limit - 1u);
     free(text);
     CHECK(migrate("groups-at", full, 1, &migration, &error) == MAELYS_GIT_OK);
     free(full);
@@ -333,7 +333,7 @@ static int test_groups_of_a_user(void) {
     maelys_git_policy_close(policy);
 
     /* One group more, reached through nesting rather than directly. */
-    text = configuration("", limit, member_line);
+    text = configuration("", limit - 1u, member_line);
     CHECK(text != NULL);
     full = malloc(strlen(text) + 96u);
     CHECK(full != NULL);

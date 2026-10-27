@@ -56,7 +56,8 @@ static int test_accepted(void) {
     CHECK(!strcmp(mg_grants_sha256(grants), digest));
     mg_grants_view_t view;
     mg_grants_view(grants, &view);
-    CHECK(view.member_count == 0u && view.access_count == 0u && view.group_count == 0u);
+    /* The group all exists in every snapshot. */
+    CHECK(view.member_count == 0u && view.access_count == 0u && view.group_count == 1u);
     mg_grants_free(grants);
     free(empty);
 
@@ -76,7 +77,7 @@ static int test_accepted(void) {
     CHECK(view.member_count == 2u && view.nested_count == 1u && view.access_count == 2u &&
           view.ref_count == 3u && view.creator_count == 1u && view.owner_count == 1u &&
           view.vref_name_count == 1u && view.vref_limit_count == 2u);
-    CHECK(view.group_count == 2u);  /* devs, eng */
+    CHECK(view.group_count == 3u);  /* all, devs, eng */
     CHECK(view.refs[0].prefix == 1 && !strcmp(view.refs[0].pattern, "refs/heads/rel/"));
     CHECK(view.access[1].kind == MG_SUBJECT_USER && !strcmp(view.access[1].level, "RW+"));
     CHECK(view.vref_limits[0].value == 100 && view.index_bytes > 0u);
@@ -241,6 +242,25 @@ static char *sized_snapshot(size_t size) {
     return text;
 }
 
+/* all is the group every user belongs to: it holds rights, never an
+ * explicit member nor a nesting edge. A user named all is a user. */
+static int test_all_reserved(void) {
+    char *text = snapshot("[\"alice\",\"all\"]", NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    CHECK(text && refused(text, MAELYS_GIT_ERR_INVALID_ARGUMENT, "the group all holds every user"));
+    free(text);
+    text = snapshot("[\"alice\",\"admins\"]", "[\"all\",\"admins\"]", NULL, NULL, NULL, NULL, NULL, NULL);
+    CHECK(text && refused(text, MAELYS_GIT_ERR_INVALID_ARGUMENT, "the group all holds every user"));
+    free(text);
+    text = snapshot("[\"alice\",\"admins\"]", "[\"admins\",\"all\"]", NULL, NULL, NULL, NULL, NULL, NULL);
+    CHECK(text && refused(text, MAELYS_GIT_ERR_INVALID_ARGUMENT, "the group all holds every user"));
+    free(text);
+    text = snapshot("[\"all\",\"devs\"]", NULL, "[\"group\",\"all\",\"app.git\",\"R\"]", NULL, NULL, NULL,
+                    NULL, NULL);
+    CHECK(text && accepted(text));
+    free(text);
+    return 1;
+}
+
 static int test_bounds(void) {
     /* 65 536 grants, then one more. */
     char *text = many_access(MG_GRANTS_MAX_TUPLES, 0);
@@ -249,21 +269,21 @@ static int test_bounds(void) {
     text = many_access(MG_GRANTS_MAX_TUPLES + 1u, 0);
     CHECK(text && refused(text, MAELYS_GIT_ERR_LIMIT, "more than 65536 grants"));
     free(text);
-    /* 4 096 groups, then one more. */
-    text = many_access(MG_GRANTS_MAX_GROUPS, 1);
+    /* 4 096 groups, the group all included, then one more. */
+    text = many_access(MG_GRANTS_MAX_GROUPS - 1u, 1);
     CHECK(text && accepted(text));
     free(text);
-    text = many_access(MG_GRANTS_MAX_GROUPS + 1u, 1);
+    text = many_access(MG_GRANTS_MAX_GROUPS, 1);
     CHECK(text && refused(text, MAELYS_GIT_ERR_LIMIT, "more than 4096 groups"));
     free(text);
-    /* 64 direct groups of one member, then 65. */
-    for (size_t count = MG_GRANTS_MAX_DIRECT_GROUPS; count <= MG_GRANTS_MAX_DIRECT_GROUPS + 1u; ++count) {
+    /* 64 direct groups of one member, the group all included, then 65. */
+    for (size_t count = MG_GRANTS_MAX_DIRECT_GROUPS - 1u; count <= MG_GRANTS_MAX_DIRECT_GROUPS; ++count) {
         text_t members = {0};
         for (size_t i = 0u; i < count; ++i)
             CHECK(append(&members, "%s[\"alice\",\"g%03zu\"]", i ? "," : "", i));
         text = snapshot(members.data, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
         free(members.data);
-        CHECK(text && (count == MG_GRANTS_MAX_DIRECT_GROUPS
+        CHECK(text && (count == MG_GRANTS_MAX_DIRECT_GROUPS - 1u
                            ? accepted(text)
                            : refused(text, MAELYS_GIT_ERR_LIMIT, "more than 64 groups")));
         free(text);
@@ -429,7 +449,7 @@ int main(void) {
     char *root = mkdtemp(template);
     if (!root) return 1;
     (void)snprintf(g_root, sizeof(g_root), "%s", root);
-    int ok = test_accepted() && test_refused_shapes() && test_bounds() && test_trusted_read() &&
+    int ok = test_accepted() && test_refused_shapes() && test_all_reserved() && test_bounds() && test_trusted_read() &&
              test_patterns_against_generator();
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok) puts("grants snapshot: closed form, order, bounds, trusted read: ok");

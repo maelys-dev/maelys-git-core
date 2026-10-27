@@ -52,6 +52,8 @@ static int reference_slice(const mg_grants_t *grants, const mg_slice_request_t *
     mg_grants_view(grants, &view);
     memset(out, 0, sizeof(*out));
     group_set_t groups = {0};
+    groups.names[groups.count++] = MG_GRANTS_ALL_GROUP;
+    CHECK(mg_slice_add(out, MG_SLICE_MEMBER, request->user, MG_GRANTS_ALL_GROUP, NULL, 0));
     for (size_t i = 0u; i < view.member_count; ++i)
         if (!strcmp(view.members[i].user, request->user) && !in_set(&groups, view.members[i].group)) {
             CHECK(groups.count < MG_GRANTS_MAX_GROUPS);

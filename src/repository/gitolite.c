@@ -581,7 +581,8 @@ static int append_ref_grant(text_buffer_t *policy,
  * allow rules. */
 static int append_authorization_rules(text_buffer_t *policy) {
     if (!append_text(policy,
-        "\neffective_group_member(U, G) :- user(U), group_member(U, G).\n"
+        "\neffective_group_member(U, \"" MG_GRANTS_ALL_GROUP "\") :- user(U).\n"
+        "effective_group_member(U, G) :- user(U), group_member(U, G).\n"
         "effective_group_member(U, G) :- user(U), effective_group_member(U, C), group_in_group(C, G).\n"
         "can_create_namespace(U, N) :- user(U), repository_owner_namespace(N, U), namespace_creator(U, N).\n"
         "can_create_namespace(U, N) :- user(U), repository_owner_namespace(N, U), effective_group_member(U, G), group_namespace_creator(G, N).\n"
@@ -770,7 +771,8 @@ static int most_groups_of_a_user(const memberships_t *graph, size_t *out) {
         if (count > most) most = count;
     }
     free(reached);
-    *out = most;
+    /* Every user is also a member of all. */
+    *out = most + 1u;
     return 1;
 }
 
@@ -824,12 +826,26 @@ static maelys_git_result_t parse_gitolite(FILE *input,
                     return MAELYS_GIT_ERR_IO;
                 continue;
             }
+            /* @all holds every user in Gitolite, and a definition naming it,
+             * on either side, changes nothing there (Conf/Store.pm). */
+            if (!strcmp(group, MG_GRANTS_ALL_GROUP)) {
+                if (!add_unsupported(migration, line_number,
+                                     "'@all' holds every user in Gitolite and cannot be defined", original))
+                    return MAELYS_GIT_ERR_IO;
+                continue;
+            }
             int supported = 1;
+            const char *refused = "unsafe group member";
             char *save = NULL;
             for (char *member = strtok_r(members, " \t", &save);
                  member; member = strtok_r(NULL, " \t", &save)) {
                 const char *name = member[0] == '@' ? member + 1u : member;
                 if (!safe_atom(name)) { supported = 0; break; }
+                if (member[0] == '@' && !strcmp(name, MG_GRANTS_ALL_GROUP)) {
+                    refused = "'@all' in a group definition is inert in Gitolite; not supported";
+                    supported = 0;
+                    break;
+                }
                 if (member[0] == '@') {
                     if (!append_text(policy, "group_in_group(\"%s\", \"%s\").\n",
                                      name, group)) return MAELYS_GIT_ERR_IO;
@@ -841,8 +857,7 @@ static maelys_git_result_t parse_gitolite(FILE *input,
                     return MAELYS_GIT_ERR_IO;
             }
             if (!supported) {
-                if (!add_unsupported(migration, line_number,
-                                     "unsafe group member", original))
+                if (!add_unsupported(migration, line_number, refused, original))
                     return MAELYS_GIT_ERR_IO;
             } else {
                 ++migration->group_count;

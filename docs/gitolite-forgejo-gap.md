@@ -112,6 +112,18 @@ coute un fait et un atome ; quand ces budgets refusent la politique, la
 migration la regenere avec ses prefixes en regles et la garde si elle tient :
 une configuration admise par la forme en regles reste admise.
 
+### `@all`
+
+Comme Gitolite, `@all` est le groupe de tout utilisateur, connu de la
+configuration ou non : `RW+ = @all` (la configuration par defaut de
+Gitolite) donne l'acces a chacun, et un refus `- refs/heads/x/ = @all`
+s'applique a chacun. Le groupe `all` est reserve : `@g = @all` et
+`@all = ...`, sans effet chez Gitolite, sont refuses a la migration, et un
+instantane qui donne un membre a `all` ou l'imbrique est refuse a la
+lecture. Chez Git Core, "chacun" est tout principal authentifie : il
+n'y a pas d'acces anonyme `daemon` ou `gitweb`. `all` compte parmi les
+groupes d'un utilisateur : 63 groupes directs au plus, 64 avec lui.
+
 ### Refs admises
 
 Gitolite 3.6.15, avec ses motifs d'admission par defaut
@@ -131,7 +143,8 @@ reconnue : elle est a regenerer en droits comme donnees.
 
 Le plan fait compiler la politique par le moteur et calcule le pire cas de
 son execution : le nombre de groupes d'un utilisateur, imbrications
-comprises, que `effective_group_member` contient pour une requete. Il rend
+comprises et `all` compris, que `effective_group_member` contient pour une
+requete. Il rend
 `budget`, les comptes du moteur, les bornes et ce pire cas ; un budget
 depasse est une entree non migrable, `policy budget exceeded: BUDGET N
 requested, limit L`, et `budget.failure` la decrit en machine. Rien n'est
