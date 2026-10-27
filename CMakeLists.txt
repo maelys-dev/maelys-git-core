@@ -131,6 +131,7 @@ add_library(maelys_git_core STATIC
     src/shell/command.c
     src/policy/policy.c
     src/policy/grants.c
+    src/policy/refex.c
     src/policy/program.c
     src/policy/slice.c
     src/repository/repository.c
@@ -467,6 +468,10 @@ if(MAELYS_GIT_BUILD_TESTS)
     add_executable(bench-maelys-git-slices EXCLUDE_FROM_ALL tests/bench_slices.c)
     target_include_directories(bench-maelys-git-slices PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(bench-maelys-git-slices PRIVATE maelys_git_agent_core maelys_git_build_flags)
+
+    add_executable(bench-maelys-git-refex EXCLUDE_FROM_ALL tests/bench_refex.c)
+    target_include_directories(bench-maelys-git-refex PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(bench-maelys-git-refex PRIVATE maelys_git_core maelys::cli maelys_git_build_flags)
 
     # Production code reaches the engine through its installed SDK only.
     add_test(NAME maelys-git-datalog-boundary

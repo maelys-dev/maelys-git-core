@@ -168,28 +168,28 @@ static int test_matches(void) {
     char deep_ref[320];
     (void)snprintf(deep_ref, sizeof(deep_ref), "%sleaf", deep);
     static const struct {
-        int prefix;
+        mg_ref_form_t form;
         const char *pattern, *ref;
         int expected;
     } corpus[] = {
-        {1, "refs/heads/rel/", "refs/heads/rel/1", 1},
-        {1, "refs/heads/rel/", "refs/heads/release", 0},   /* the '/' is a boundary */
-        {1, "refs/heads/rel/", "refs/heads/rel", 0},
-        {1, "refs/heads/main", "refs/heads/main", 1},      /* a deny's bare literal */
-        {1, "refs/heads/main", "refs/heads/mainline", 1},  /* Gitolite denies it as a prefix */
-        {0, "refs/heads/main", "refs/heads/main", 1},
-        {0, "refs/heads/main", "refs/heads/mainline", 0},
-        {0, "refs/heads/main", "refs/heads/mai", 0},
-        {1, "refs/", "refs/tags/v1", 1},
-        {1, "refs/tags/", "refs/heads/tags/x", 0},
+        {MG_REF_PREFIX, "refs/heads/rel/", "refs/heads/rel/1", 1},
+        {MG_REF_PREFIX, "refs/heads/rel/", "refs/heads/release", 0},   /* the '/' is a boundary */
+        {MG_REF_PREFIX, "refs/heads/rel/", "refs/heads/rel", 0},
+        {MG_REF_PREFIX, "refs/heads/main", "refs/heads/main", 1},      /* a deny's bare literal */
+        {MG_REF_PREFIX, "refs/heads/main", "refs/heads/mainline", 1},  /* Gitolite denies it as a prefix */
+        {MG_REF_EXACT, "refs/heads/main", "refs/heads/main", 1},
+        {MG_REF_EXACT, "refs/heads/main", "refs/heads/mainline", 0},
+        {MG_REF_EXACT, "refs/heads/main", "refs/heads/mai", 0},
+        {MG_REF_PREFIX, "refs/", "refs/tags/v1", 1},
+        {MG_REF_PREFIX, "refs/tags/", "refs/heads/tags/x", 0},
     };
     for (size_t i = 0u; i < sizeof(corpus) / sizeof(corpus[0]); ++i)
-        CHECK(mg_slice_pattern_matches(corpus[i].prefix, corpus[i].pattern, corpus[i].ref) == corpus[i].expected);
+        CHECK(mg_slice_pattern_matches(corpus[i].form, corpus[i].pattern, corpus[i].ref) == corpus[i].expected);
     /* Deeper than 16 '/' and longer than 63 bytes: matches like the others. */
-    CHECK(mg_slice_pattern_matches(1, deep, deep_ref));
-    CHECK(mg_slice_pattern_matches(1, long_pattern, long_ref));
-    CHECK(!mg_slice_pattern_matches(1, long_pattern, "refs/heads/x"));
-    CHECK(!mg_slice_pattern_matches(1, "refs/heads/", NULL));
+    CHECK(mg_slice_pattern_matches(MG_REF_PREFIX, deep, deep_ref));
+    CHECK(mg_slice_pattern_matches(MG_REF_PREFIX, long_pattern, long_ref));
+    CHECK(!mg_slice_pattern_matches(MG_REF_PREFIX, long_pattern, "refs/heads/x"));
+    CHECK(!mg_slice_pattern_matches(MG_REF_PREFIX, "refs/heads/", NULL));
 
     char out[64];
     CHECK(mg_slice_owner_namespace("team/alice/x.git", "alice", out, sizeof(out)) &&
@@ -409,8 +409,39 @@ static int test_many_groups(void) {
     return 1;
 }
 
+/* Until GIT-C08, commit 3, a regex pattern is read (behind the test hook)
+ * but never searched: a request with a ref fails the extraction, never
+ * taking the pattern for one that does not apply; a request without a ref
+ * keeps the write level of the grant. */
+static int test_regex_unsearched(void) {
+    char *text = snapshot(NULL, NULL, NULL, NULL, NULL,
+                          "[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/heads/feature/.*\",\"RW\"]", NULL,
+                          NULL);
+    CHECK(text);
+    char *at = strstr(text, "maelys-git-grants/1");
+    CHECK(at);
+    at[strlen("maelys-git-grants/")] = '2';
+    mg_grants_test_accept_regex = 1;
+    mg_grants_t *grants = load(text);
+    mg_grants_test_accept_regex = 0;
+    free(text);
+    CHECK(grants);
+    mg_slice_request_t push = {"alice", "app.git", "refs/heads/feature/x", NULL, 0u};
+    mg_slice_t slice;
+    maelys_git_error_t error = {0};
+    CHECK(mg_slice_extract(grants, &push, &slice, &error) == MAELYS_GIT_ERR_POLICY);
+    CHECK(strstr(error.message, "not searched") != NULL && slice.count == 0u);
+    mg_slice_request_t write = {"alice", "app.git", NULL, NULL, 0u};
+    CHECK(mg_slice_extract(grants, &write, &slice, &error) == MAELYS_GIT_OK);
+    CHECK(has_fact(&slice, MG_SLICE_REF_LEVEL, "alice", "app.git", "RW", 0));
+    mg_slice_clear(&slice);
+    mg_grants_free(grants);
+    return 1;
+}
+
 int main(void) {
-    int ok = test_written_slice() && test_matches() && test_oracle() && test_many_groups();
+    int ok = test_written_slice() && test_matches() && test_oracle() && test_many_groups() &&
+             test_regex_unsearched();
     if (ok) puts("grants slice: written slice, matches, oracle against the full scan, many groups: ok");
     return ok ? 0 : 1;
 }

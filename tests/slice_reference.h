@@ -85,8 +85,11 @@ static int reference_slice(const mg_grants_t *grants, const mg_slice_request_t *
         if (!is_subject(request, &groups, r->kind, r->subject) || strcmp(r->repository, request->repository))
             continue;
         int group = r->kind == MG_SUBJECT_GROUP;
+        /* A regex pattern is not searched until GIT-C08, commit 3. */
+        CHECK(r->form != MG_REF_REGEX);
         int matches = request->ref &&
-            (r->prefix ? strncmp(request->ref, r->pattern, strlen(r->pattern)) == 0 : !strcmp(request->ref, r->pattern));
+            (r->form == MG_REF_PREFIX ? strncmp(request->ref, r->pattern, strlen(r->pattern)) == 0
+                                      : !strcmp(request->ref, r->pattern));
         if (matches)
             CHECK(mg_slice_add(out, group ? MG_SLICE_GROUP_REF_MATCH : MG_SLICE_REF_MATCH, r->subject,
                                r->repository, r->level, 0));
