@@ -52,6 +52,11 @@
  * that every string of the snapshot can be a fact of a slice. */
 #define MG_GRANTS_MAX_STRING 1024u
 
+/* Gitolite's @all: the group every user belongs to, known to the snapshot
+ * or not. It has no explicit member and is nested in no group; it may hold
+ * rights like any group. A user named all is an ordinary user. */
+#define MG_GRANTS_ALL_GROUP "all"
+
 typedef enum { MG_SUBJECT_USER = 0, MG_SUBJECT_GROUP = 1 } mg_subject_kind_t;
 
 typedef struct {

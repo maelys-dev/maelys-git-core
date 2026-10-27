@@ -5,6 +5,23 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- The Gitolite migration reads `@all` as Gitolite does: the group of every
+  user, known to the configuration or not (`Conf/Load.pm` of Gitolite
+  3.6.15). It was migrated as an ordinary group named `all` with no member:
+  a grant to `@all` granted no one (Gitolite's own default configuration,
+  `RW+ = @all`, gave nothing), and a deny of `@all` placed before a grant
+  denied no one where Gitolite denies everyone. Every slice now holds
+  `slice_member(U, "all")`, and the compiled encoding derives
+  `effective_group_member(U, "all")` for every user. The group `all` is
+  reserved: `@g = @all` and `@all = ...`, which change nothing in Gitolite,
+  are unsupported entries, and a snapshot that gives `all` a member or nests
+  it is refused. It counts among a user's groups: at most 63 direct groups,
+  64 with it, and 4,096 groups in a snapshot with it. The audited program is
+  unchanged; a receipt counts one fact more. A snapshot takes this meaning
+  when it is loaded; a compiled policy already generated keeps the old one
+  until it is generated and deployed again. Everyone is every
+  authenticated principal: there is no anonymous `daemon` or `gitweb`
+  access.
 - The Gitolite migration refuses a refex that names `/USER/` once
   completed by `refs/heads/`, and a `VREF/NAME/` path that names it:
   Gitolite replaces it with the name of each user it decides for. It was
