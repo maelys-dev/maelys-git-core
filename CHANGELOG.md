@@ -5,6 +5,20 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- A policy set holding the audited Gitolite program decides only the refs
+  Gitolite 3.6.15 admits with its default patterns (`REF_OR_FILENAME_PATT`
+  of `Rc.pm`): a ref that is not a valid ref, does not begin with a
+  letter or a digit, holds anything but `[-0-9A-Za-z._@/+,]`, or exceeds
+  511 bytes is an `invalid_argument`, refused before any policy of the set is evaluated,
+  a hand-written one included, and no decision receipt is produced.
+  Gitolite refuses such a ref before any rule; Git Core let a migrated
+  prefix grant allow it (`RW refs/heads/ = @all` allowed `refs/heads/é`).
+  A request without a ref and file paths are not concerned; a set written
+  by hand alone is unchanged. The set is recognized by the fingerprint of
+  the audited program, never by a name: a compiled Gitolite policy written
+  before grants as data is not recognized and is to be generated again. A
+  configuration that redefines Gitolite's patterns in `.gitolite.rc` is
+  outside the fidelity this guarantees.
 - The Gitolite migration refuses a refex that names `/USER/` once
   completed by `refs/heads/`, and a `VREF/NAME/` path that names it:
   Gitolite replaces it with the name of each user it decides for. It was

@@ -1113,6 +1113,19 @@ static maelys_git_result_t decide(maelys_git_policy_t *policy,
             return MAELYS_GIT_ERR_INVALID_ARGUMENT;
         }
     }
+    /* A set holding the audited Gitolite program decides only what Gitolite
+     * admits: a ref outside its alphabet, or not a valid ref, is an invalid
+     * request, refused
+     * before any policy of the set is evaluated, whatever its patterns, as
+     * Gitolite refuses it before any rule; no receipt records a decision.
+     * A request without a ref, and the paths, are not concerned. */
+    if (policy->has_audited && request->ref_name && *request->ref_name &&
+        !mg_gitolite_ref_admitted(request->ref_name)) {
+        mg_error_set(error, MAELYS_GIT_ERR_INVALID_ARGUMENT, 0,
+                     "the ref is not one Gitolite admits: a valid ref of [-0-9A-Za-z._@/+,], at most %u bytes",
+                     MAELYS_GIT_MAX_REF - 1u);
+        return MAELYS_GIT_ERR_INVALID_ARGUMENT;
+    }
     memset(out_decision, 0, sizeof(*out_decision));
     out_decision->matched_policy = SIZE_MAX;
     memcpy(out_decision->policy_set_fingerprint, policy->fingerprint, sizeof(policy->fingerprint));
