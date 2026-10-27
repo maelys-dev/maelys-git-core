@@ -416,6 +416,26 @@ if(MAELYS_GIT_BUILD_TESTS)
         maelys_git_core maelys_git_build_flags)
     add_test(NAME maelys-git-gitolite-differential COMMAND test-maelys-git-gitolite-differential)
 
+    # Git Core's migration against Gitolite's own decisions, through
+    # tests/gitolite_oracle.pl. The oracle is part of the proof: without
+    # Perl the test fails, it is never skipped.
+    add_executable(test-maelys-git-gitolite-oracle-decide tests/gitolite_oracle_decide.c)
+    target_include_directories(test-maelys-git-gitolite-oracle-decide PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-maelys-git-gitolite-oracle-decide PRIVATE
+        maelys_git_core maelys_git_build_flags)
+    find_program(MAELYS_GIT_PERL perl)
+    if(MAELYS_GIT_PERL)
+        add_test(NAME maelys-git-gitolite-oracle
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gitolite_oracle.py
+                ${MAELYS_GIT_PERL} ${CMAKE_CURRENT_SOURCE_DIR}/tests/gitolite_oracle.pl
+                $<TARGET_FILE:test-maelys-git-gitolite-oracle-decide>
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gitolite-oracle
+                ${CMAKE_CURRENT_BINARY_DIR}/gitolite-oracle)
+    else()
+        message(WARNING "perl not found: the Gitolite oracle test fails")
+        add_test(NAME maelys-git-gitolite-oracle COMMAND ${CMAKE_COMMAND} -E false)
+    endif()
+
     add_executable(test-maelys-git-receipt tests/test_receipt.c)
     target_include_directories(test-maelys-git-receipt PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_definitions(test-maelys-git-receipt PRIVATE

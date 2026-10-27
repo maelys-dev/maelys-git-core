@@ -1,0 +1,14 @@
+# case	outcome: "migrates", or "refused: " and a reason the migration reports
+all-default	migrates
+all-defined	refused: '@all' holds every user
+all-deny-first	migrates
+all-grant-first	migrates
+all-in-group	refused: '@all' in a group definition
+all-nested	refused: '@all' holds every user
+alternation	refused: unsupported refex syntax
+deny-rules	refused: only exact full-ref RW/RW+ rules are supported
+escapes	refused: unsupported refex syntax
+literal	migrates
+order	migrates
+regex	refused: unsupported refex syntax
+user	refused: '/USER/' is the user's own name in Gitolite

@@ -1,0 +1,30 @@
+# Where Git Core decides otherwise than Gitolite 3.6.15 (tests/gitolite_oracle.pl,
+# --mode deny-wins, Git Core's rule for the order of rules), each with its kind;
+# the test fails on any other difference, and on a listed one no longer observed.
+# Kinds:
+#   bare-literal-grant  a bare literal grant (RW refs/heads/main) is the exact ref
+#                       in Git Core and a prefix in Gitolite: Git Core denies
+#                       main-hotfix, main/x... Stricter, by design of the migration.
+# Against Gitolite's own first-match rule, the order of rules adds differences,
+# all stricter too; they are not this list's.
+# case	user	aa	ref	git_core	gitolite	kind
+literal	alice	W	refs/heads/main-hotfi	DENY	ALLOW	bare-literal-grant
+literal	alice	W	refs/heads/main-hotfix	DENY	ALLOW	bare-literal-grant
+literal	alice	W	refs/heads/main-hotfix/x	DENY	ALLOW	bare-literal-grant
+literal	alice	W	refs/heads/main-hotfixx	DENY	ALLOW	bare-literal-grant
+literal	alice	W	refs/heads/main/x	DENY	ALLOW	bare-literal-grant
+literal	alice	W	refs/heads/mainde	DENY	ALLOW	bare-literal-grant
+literal	alice	W	refs/heads/maindev	DENY	ALLOW	bare-literal-grant
+literal	alice	W	refs/heads/maindev/x	DENY	ALLOW	bare-literal-grant
+literal	alice	W	refs/heads/maindevx	DENY	ALLOW	bare-literal-grant
+literal	alice	W	refs/heads/mainx	DENY	ALLOW	bare-literal-grant
+literal	bob	W	refs/heads/main-hotfi	DENY	ALLOW	bare-literal-grant
+literal	bob	W	refs/heads/main-hotfix	DENY	ALLOW	bare-literal-grant
+literal	bob	W	refs/heads/main-hotfix/x	DENY	ALLOW	bare-literal-grant
+literal	bob	W	refs/heads/main-hotfixx	DENY	ALLOW	bare-literal-grant
+literal	bob	W	refs/heads/main/x	DENY	ALLOW	bare-literal-grant
+literal	bob	W	refs/heads/mainde	DENY	ALLOW	bare-literal-grant
+literal	bob	W	refs/heads/maindev	DENY	ALLOW	bare-literal-grant
+literal	bob	W	refs/heads/maindev/x	DENY	ALLOW	bare-literal-grant
+literal	bob	W	refs/heads/maindevx	DENY	ALLOW	bare-literal-grant
+literal	bob	W	refs/heads/mainx	DENY	ALLOW	bare-literal-grant
