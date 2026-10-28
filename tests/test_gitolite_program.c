@@ -1188,6 +1188,28 @@ static int test_regex_decisions(void) {
     CHECK(regex_decides(policy, "refs/heads/feature/y", "fast_forward", 1, 0));
     CHECK(mg_policy_regex_searches(policy) == 4u);
     CHECK(regex_decides(policy, "refs/heads/wip/a", "fast_forward", 1, 0));
+    /* A new generation whose largest pattern needs a larger scratch: the
+     * scratch is the new snapshot's. */
+    size_t small = 0u, large = 0u;
+    (void)mg_policy_grants_scratch(policy, &small);
+    CHECK(write_text(snapshot,
+                     "{\"access\":[],\"format\":\"maelys-git-grants/2\",\"members\":[[\"alice\",\"devs\"]],"
+                     "\"namespace_creators\":[],\"nested\":[],\"owner_access\":[],\"refs\":["
+                     "[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/heads/(.*a){16}x\",\"RW\"]"
+                     "],\"vref_limits\":[],\"vref_names\":[]}"));
+    CHECK(mg_policy_refresh_grants(policy, &error) == MAELYS_GIT_OK);
+    (void)mg_policy_grants_scratch(policy, &large);
+    CHECK(large > small);
+    CHECK(regex_decides(policy, "refs/heads/aaaaaaaaaaaaaaaaax", "fast_forward", 1, 0));
+
+    /* A request without a ref searches nothing: the summary of a push
+     * reads the write levels of the ref grants, whatever their form. */
+    size_t searched = mg_policy_regex_searches(policy);
+    maelys_git_policy_request_t summary = {.request_id = "s", .principal = "alice", .repository = "app.git",
+                                           .operation = "push", .has_summary = 1, .commit_count = 1u};
+    maelys_git_policy_decision_t allowed;
+    CHECK(maelys_git_policy_authorize(policy, &summary, &allowed, &error) == MAELYS_GIT_OK && allowed.allowed);
+    CHECK(mg_policy_regex_searches(policy) == searched);
 
     /* A search that fails: refused, the receipt says what failed. */
     mg_grants_test_scratch_shortfall = 1u;

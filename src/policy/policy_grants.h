@@ -48,6 +48,8 @@ const char *mg_policy_grants_sha256(const maelys_git_policy_t *policy);
 /* The regex searches the handle's current snapshot has made (tests and
  * measurements): a new generation starts again from zero. */
 size_t mg_policy_regex_searches(const maelys_git_policy_t *policy);
+/* The scratch of the handle's current snapshot and its size (tests). */
+void *mg_policy_grants_scratch(const maelys_git_policy_t *policy, size_t *out_size);
 
 /* The facts of the last request: its context, which every policy received,
  * and its slice, which the audited program alone received. */

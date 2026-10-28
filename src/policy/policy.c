@@ -676,6 +676,10 @@ size_t mg_policy_regex_searches(const maelys_git_policy_t *policy) {
     return policy && policy->grants ? mg_grants_regex_searches(policy->grants) : 0u;
 }
 
+void *mg_policy_grants_scratch(const maelys_git_policy_t *policy, size_t *out_size) {
+    return mg_grants_scratch(policy ? policy->grants : NULL, out_size);
+}
+
 maelys_git_result_t maelys_git_policy_open_grants(const char *manifest_path, const char *grants_path,
                                                   maelys_git_policy_t **out_policy, maelys_git_error_t *error) {
     return mg_policy_open_grants(manifest_path, grants_path, out_policy, error);

@@ -262,6 +262,16 @@ if "$maelys_git_bin" migrate gitolite "$test_root/alternation.conf" \
   exit 1
 fi
 test ! -e "$test_root/alternation"
+# A regex on a wild repository is refused as any ref rule there is.
+printf '%s\n' \
+  'repo team/CREATOR/..*' \
+  '    C = alice' \
+  '    RW refs/heads/feature/.* = CREATOR' > "$test_root/wild-regex.conf"
+wild_regex=$("$maelys_git_bin" migrate gitolite "$test_root/wild-regex.conf" \
+  "$test_root/wild-regex" --format json --compact)
+printf '%s\n' "$wild_regex" | grep -q '"canApply":false'
+printf '%s\n' "$wild_regex" | grep -q 'line 3: ref/VREF rules on wild repositories are not yet supported'
+printf '%s\n' "$wild_regex" | grep -q '"grantsFormat":"maelys-git-grants/1"'
 
 # The plan's budget: the engine's counts and bounds, the generator's worst
 # cases of execution, and the failure in the shape of a validate diagnostic.

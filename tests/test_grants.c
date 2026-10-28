@@ -463,13 +463,15 @@ static int test_bounds(void) {
 }
 
 /* The generator and the reader judge a ref pattern by one rule: each refex
- * of the corpus is migrated, and its normalized tuple read. Two differences
+ * of the corpus is migrated, the tuple it writes is the one of the corpus,
+ * and that tuple is read. Two differences
  * are by design: an exact ref of more than 63 bytes was refused as a policy
  * atom, and is a string of a slice; /USER/ is each user's name in a refex,
  * and a literal in an exact or a prefix pattern of the snapshot. A refex
  * that is not literal is a pattern of form regex, judged by
  * mg_refex_regex_check on both sides. */
 static int write_file(const char *path, const char *text, mode_t mode);
+static int file_holds(const char *path, const char *needle);
 
 static int test_patterns_against_generator(void) {
     static const struct {
@@ -492,7 +494,7 @@ static int test_patterns_against_generator(void) {
         {"RW ^main = alice", "regex", "refs/heads/^main", "RW", 0, 0},
         {"RW u/USER/.* = alice", "regex", "refs/heads/u/USER/.*", "RW", 0, 0},
         {"- refs/tags/v1\\. = alice", "prefix", "refs/tags/v1.", "-", 1, 1},
-        {"RW refs\\/tags/v1$ = alice", "exact", "refs/tags/v1", "RW", 1, 1},
+        {"RW refs\\/tags/v1$ = alice", "exact", "refs/heads/refs/tags/v1", "RW", 1, 1},
         {"RW v1\\-rc$ = alice", "exact", "refs/heads/v1-rc", "RW", 1, 1},
         /* /USER/ once completed is each user's name in Gitolite; a ref of
          * that name is a literal in a snapshot. */
@@ -518,6 +520,14 @@ static int test_patterns_against_generator(void) {
         char tuple[512];
         (void)snprintf(tuple, sizeof(tuple), "[\"user\",\"alice\",\"app.git\",\"%s\",\"%s\",\"%s\"]",
                        corpus[i].form, corpus[i].pattern, corpus[i].level);
+        if (generator) {
+            char grants_path[600];
+            CHECK(maelys_git_migrate_gitolite(conf, output, 1, &migration, &error) == MAELYS_GIT_OK);
+            maelys_git_gitolite_migration_result_clear(&migration);
+            (void)snprintf(grants_path, sizeof(grants_path), "%s/grants.json", output);
+            if (!file_holds(grants_path, tuple)) (void)fprintf(stderr, "%s: not written as %s\n", corpus[i].line, tuple);
+            CHECK(file_holds(grants_path, tuple));
+        }
         char *snapshot_text = strcmp(corpus[i].form, "regex") == 0
                                   ? regex_snapshot(tuple)
                                   : snapshot(NULL, NULL, NULL, tuple, NULL, NULL, NULL, NULL);
@@ -530,6 +540,17 @@ static int test_patterns_against_generator(void) {
         CHECK(generator == corpus[i].generator && reader == corpus[i].reader);
     }
     return 1;
+}
+
+/* Whether the file at PATH, at most 64 KiB, holds NEEDLE. */
+static int file_holds(const char *path, const char *needle) {
+    static char text[65536];
+    FILE *file = fopen(path, "r");
+    if (!file) return 0;
+    size_t size = fread(text, 1u, sizeof(text) - 1u, file);
+    (void)fclose(file);
+    text[size] = '\0';
+    return strstr(text, needle) != NULL;
 }
 
 static int write_file(const char *path, const char *text, mode_t mode) {
