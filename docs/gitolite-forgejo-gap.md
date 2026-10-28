@@ -205,6 +205,25 @@ requested, limit L`, et `budget.failure` la decrit en machine. Rien n'est
 applique. La politique generee est rechargee par le moteur avant d'etre
 publiee.
 
+### Perimetre de la fidelite mesuree
+
+La fidelite a Gitolite 3.6.15 est mesuree sur l'ecriture : mise a jour
+(`W`), mise a jour forcee (`+`) et ecriture sans ref (`any`), comparees a
+Gitolite lui-meme et a un oracle calibre sur lui. La lecture n'est pas
+comparee, et elle differe :
+
+- **Lecture accordee par un droit de ref seul.** Avec seulement
+  `RW+ refs/heads/feature/ = alice`, Gitolite laisse alice lire le depot
+  (`R any`) ; Git Core lui refuse la lecture et ne lui laisse que
+  l'ecriture. Plus strict, en litteral comme en regex. Un droit `R`, `RW`
+  ou `RW+` sans refex sur le depot donne la lecture dans les deux.
+- **`authorize push` en ligne de commande.** La commande ne transmet pas le
+  type de mise a jour, dont une attribution de ref a besoin : un `push` n'y
+  est decide que par ses refus. Le hook, le shell et l'executeur, qui le
+  connaissent, decident les attributions.
+
+Les deux sont des ecarts connus, a corriger a part.
+
 L'objectif raisonnable n'est pas la compatibilite syntaxique complete. Il faut
 fournir une bibliotheque de politiques typees couvrant les VREF utiles, puis
 faire migrer explicitement chaque construction reconnue. Toute construction

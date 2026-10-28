@@ -41,10 +41,12 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   that applies wins whatever its order in Gitolite (stricter), and a group
   with rights and no member. A regex is migrated as grants as data only:
   the compiled policy refuses it. On three configurations of regex refexes
-  (10,164 decisions), the oracle of the tests decides as Gitolite 3.6.15
-  itself on every one, and Git Core as the oracle read deny-wins; the 11
-  decisions where Gitolite's first match differs are all stricter in Git
-  Core.
+  (10,164 write decisions: updates, forced updates and writes without a
+  ref), the oracle of the tests decides as Gitolite 3.6.15 itself on every
+  one, and Git Core as the oracle read deny-wins; the 11 decisions where
+  Gitolite's first match differs are all stricter in Git Core. Reads are
+  not compared: a ref grant alone gives read access in Gitolite and not in
+  Git Core, a known difference, stricter, to be corrected apart.
 - A policy set holding the audited Gitolite program decides only the refs
   Gitolite 3.6.15 admits with its default patterns (`REF_OR_FILENAME_PATT`
   of `Rc.pm`): a ref that is not a valid ref, does not begin with a
