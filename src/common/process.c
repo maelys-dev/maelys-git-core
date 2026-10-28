@@ -16,6 +16,12 @@
 #include <time.h>
 #include <unistd.h>
 
+#if defined(__APPLE__)
+#include <sys/event.h>
+#elif defined(__linux__)
+#include <sys/syscall.h>
+#endif
+
 static char *const isolated_environment[] = {
     "PATH=/usr/bin:/bin",
     "LANG=C",
@@ -183,9 +189,15 @@ static void reap_child(pid_t pid) {
     }
 }
 
-static int deadline_elapsed(int64_t started, uint64_t timeout_ms) {
+/* 0 once the budget is spent or the clock cannot be trusted. */
+static uint64_t remaining_ms(int64_t started, uint64_t timeout_ms) {
     int64_t now = mg_monotonic_ms();
-    return started < 0 || now < started || (uint64_t)(now - started) >= timeout_ms;
+    if (started < 0 || now < started || (uint64_t)(now - started) >= timeout_ms) return 0u;
+    return timeout_ms - (uint64_t)(now - started);
+}
+
+static int deadline_elapsed(int64_t started, uint64_t timeout_ms) {
+    return remaining_ms(started, timeout_ms) == 0u;
 }
 
 static maelys_git_result_t timeout_failure(maelys_git_error_t *error, uint64_t timeout_ms) {
@@ -195,29 +207,95 @@ static maelys_git_result_t timeout_failure(maelys_git_error_t *error, uint64_t t
     return MAELYS_GIT_ERR_PROCESS;
 }
 
+/* An exit watcher lets the wait block until the child exits, bounded by the
+ * remaining budget, instead of sleeping a fixed quantum: kqueue EVFILT_PROC
+ * on macOS, a pidfd on Linux. No signal handler is installed. -1 means no
+ * watcher; the wait then backs off. Either descriptor is close-on-exec: a
+ * kqueue is never inherited, pidfd_open sets O_CLOEXEC. */
+static int exit_watcher_open(pid_t pid) {
+#if defined(__APPLE__)
+    int queue = kqueue();
+    if (queue < 0) return -1;
+    struct kevent change;
+    EV_SET(&change, (uintptr_t)pid, EVFILT_PROC, EV_ADD | EV_ONESHOT, NOTE_EXIT, 0, NULL);
+    if (kevent(queue, &change, 1, NULL, 0, NULL) != 0) {
+        (void)close(queue);
+        return -1;
+    }
+    return queue;
+#elif defined(__linux__) && defined(SYS_pidfd_open)
+    long descriptor = syscall(SYS_pidfd_open, pid, 0u);
+    return descriptor < 0 ? -1 : (int)descriptor;
+#else
+    (void)pid;
+    return -1;
+#endif
+}
+
+/* 1 when the watcher reported the exit, 0 on timeout or interruption, -1 when
+ * it failed. */
+static int exit_watcher_wait(int watcher, uint64_t budget_ms) {
+    if (budget_ms > INT32_MAX) budget_ms = INT32_MAX;
+#if defined(__APPLE__)
+    struct timespec limit = {.tv_sec = (time_t)(budget_ms / 1000u),
+                             .tv_nsec = (long)(budget_ms % 1000u) * 1000000L};
+    struct kevent event;
+    int ready = kevent(watcher, NULL, 0, &event, 1, &limit);
+#else
+    struct pollfd descriptor = {.fd = watcher, .events = POLLIN};
+    int ready = poll(&descriptor, 1u, (int)budget_ms);
+#endif
+    if (ready < 0) return errno == EINTR ? 0 : -1;
+    return ready > 0;
+}
+
 static maelys_git_result_t wait_child(pid_t pid,
+                                      int64_t started,
                                       uint64_t timeout_ms,
                                       int *out_exit_status,
                                       int require_success,
                                       maelys_git_error_t *error) {
     int status = 0;
-    int64_t started = mg_monotonic_ms();
+    int watcher = -1, watched = 0;
+    long backoff_ns = 50000L;
     for (;;) {
         pid_t waited = waitpid(pid, &status, WNOHANG);
         if (waited == pid) break;
         if (waited < 0 && errno != EINTR) {
-            mg_error_set(error, MAELYS_GIT_ERR_PROCESS, errno,
-                         "waitpid failed: %s", strerror(errno));
+            int saved = errno;
+            if (watcher >= 0) (void)close(watcher);
+            mg_error_set(error, MAELYS_GIT_ERR_PROCESS, saved,
+                         "waitpid failed: %s", strerror(saved));
             return MAELYS_GIT_ERR_PROCESS;
         }
-        if (deadline_elapsed(started, timeout_ms)) {
+        uint64_t remaining = remaining_ms(started, timeout_ms);
+        if (remaining == 0u) {
+            if (watcher >= 0) (void)close(watcher);
             mg_terminate_process_group(pid);
             reap_child(pid);
             return timeout_failure(error, timeout_ms);
         }
-        struct timespec pause = {.tv_sec = 0, .tv_nsec = 10000000L};
-        (void)nanosleep(&pause, NULL);
+        /* Look again once the watcher exists: an exit just before it was
+         * registered may not be reported. */
+        if (!watched) {
+            watched = 1;
+            watcher = exit_watcher_open(pid);
+            continue;
+        }
+        /* A reported exit can precede the moment waitpid sees it; a kqueue
+         * reports it once and a pidfd stays readable: back off after it. */
+        if (watcher >= 0 && exit_watcher_wait(watcher, remaining) != 0) {
+            (void)close(watcher);
+            watcher = -1;
+        } else if (watcher < 0) {
+            long limit_ns = remaining < 10u ? (long)remaining * 1000000L : 10000000L;
+            struct timespec pause = {.tv_sec = 0,
+                                     .tv_nsec = backoff_ns < limit_ns ? backoff_ns : limit_ns};
+            (void)nanosleep(&pause, NULL);
+            if (backoff_ns < 10000000L) backoff_ns *= 2;
+        }
     }
+    if (watcher >= 0) (void)close(watcher);
     int exit_status = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
     if (out_exit_status) *out_exit_status = exit_status;
     if (!WIFEXITED(status) || (require_success && exit_status != 0)) {
@@ -379,14 +457,13 @@ static maelys_git_result_t pump_output(child_output_t *child,
 static maelys_git_result_t finish_child(child_output_t *child, int64_t started,
                                         uint64_t timeout_ms, int *status,
                                         maelys_git_error_t *error) {
-    int64_t now = mg_monotonic_ms();
-    uint64_t elapsed = started >= 0 && now >= started ? (uint64_t)(now - started) : timeout_ms;
-    if (elapsed >= timeout_ms) {
+    if (deadline_elapsed(started, timeout_ms)) {
         mg_terminate_process_group(child->pid);
         reap_child(child->pid);
         return timeout_failure(error, timeout_ms);
     }
-    maelys_git_result_t result = wait_child(child->pid, timeout_ms - elapsed, status, 0, error);
+    /* The budget runs from the spawn: a timeout names the configured limit. */
+    maelys_git_result_t result = wait_child(child->pid, started, timeout_ms, status, 0, error);
     if (result == MAELYS_GIT_OK)
         mg_error_set(error, MAELYS_GIT_OK, 0, "%s", *status ? child->diagnostic : "");
     return result;
