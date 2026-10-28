@@ -222,7 +222,9 @@ membres sont ceux de la version 1.
   tranche est refusée avant d'être donnée, par exemple pour une capacité.
 - `stats.edbFacts` compte les faits de la requête seuls, ceux que reçoit
   chaque policy du jeu. La tranche n'est donnée qu'au programme audité.
-- `format`, `slice` et `program` sont fixés par la version 2.
+- `format` est le format de l'instantané lu : `maelys-git-grants/1`, ou
+  `maelys-git-grants/2` quand il porte des motifs de ref `regex` (GIT-C08).
+  `slice` et `program` sont fixés par la version 2.
 
 Sans instantané, le reçu reste en version 1, octet pour octet. Le lecteur
 accepte les deux versions : `grants` en version 2, et seulement là.

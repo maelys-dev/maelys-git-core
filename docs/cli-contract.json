@@ -337,7 +337,7 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads."
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1 or /2) the audited Gitolite program reads."
               }
             ],
             "passthrough": false,
@@ -498,7 +498,7 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads."
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1 or /2) the audited Gitolite program reads."
               }
             ],
             "passthrough": false,
@@ -733,7 +733,11 @@
                         "type": "integer"
                       },
                       "format": {
-                        "const": "maelys-git-grants/1"
+                        "description": "The format of the snapshot read: /2 when it holds regex ref patterns.",
+                        "enum": [
+                          "maelys-git-grants/1",
+                          "maelys-git-grants/2"
+                        ]
                       },
                       "program": {
                         "const": "maelys-git-gitolite-program/1"
@@ -3075,7 +3079,7 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads."
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1 or /2) the audited Gitolite program reads."
               },
               {
                 "argument": {
@@ -4025,7 +4029,7 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads; the agent keeps the bytes each executor reads in grants-store/ beside the journal."
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1 or /2) the audited Gitolite program reads; the agent keeps the bytes each executor reads in grants-store/ beside the journal."
               },
               {
                 "argument": {
@@ -4395,7 +4399,7 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads; read again before each command."
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1 or /2) the audited Gitolite program reads; read again before each command."
               },
               {
                 "argument": {
@@ -4973,7 +4977,7 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads; read again before each command."
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1 or /2) the audited Gitolite program reads; read again before each command."
               },
               {
                 "argument": {
@@ -5555,7 +5559,7 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads."
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1 or /2) the audited Gitolite program reads."
               },
               {
                 "argument": {
@@ -6293,7 +6297,7 @@
                 "repeatable": false,
                 "required": false,
                 "requires": [],
-                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads."
+                "summary": "Snapshot of Gitolite grants (maelys-git-grants/1 or /2) the audited Gitolite program reads."
               },
               {
                 "argument": {

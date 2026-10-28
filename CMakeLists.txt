@@ -382,7 +382,7 @@ if(MAELYS_GIT_BUILD_TESTS)
 
     add_executable(test-maelys-git-slice tests/test_slice.c)
     target_include_directories(test-maelys-git-slice PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(test-maelys-git-slice PRIVATE maelys_git_core maelys_git_build_flags)
+    target_link_libraries(test-maelys-git-slice PRIVATE maelys_git_core maelys::cli maelys_git_build_flags)
     add_test(NAME maelys-git-slice COMMAND test-maelys-git-slice)
     set_tests_properties(maelys-git-slice PROPERTIES TIMEOUT 120)
 
@@ -467,7 +467,7 @@ if(MAELYS_GIT_BUILD_TESTS)
         maelys_git_receipt maelys_git_build_flags)
     add_executable(bench-maelys-git-slices EXCLUDE_FROM_ALL tests/bench_slices.c)
     target_include_directories(bench-maelys-git-slices PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(bench-maelys-git-slices PRIVATE maelys_git_agent_core maelys_git_build_flags)
+    target_link_libraries(bench-maelys-git-slices PRIVATE maelys_git_agent_core maelys::cli maelys_git_build_flags)
 
     add_executable(bench-maelys-git-refex EXCLUDE_FROM_ALL tests/bench_refex.c)
     target_include_directories(bench-maelys-git-refex PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

@@ -9,6 +9,8 @@
 #include "policy/slice.h"
 #include "test_support.h"
 
+#include <maelys/cli/regex.h>
+
 typedef struct {
     const char *names[MG_GRANTS_MAX_GROUPS];
     size_t count;
@@ -44,6 +46,19 @@ static const char *reference_owned(const char *repository, const char *user, cha
     if (count < 3u || strcmp(segments[1], user)) return NULL;
     (void)snprintf(out, size, "%s", segments[0]);
     return out;
+}
+
+/* A regex pattern, compiled anew and anchored at its start, searched by the
+ * allocating search of maelys-cli: neither the snapshot's compiled
+ * patterns, nor its scratch, nor its memo. */
+static int reference_regex(const char *pattern, const char *ref) {
+    char anchored[300];
+    (void)snprintf(anchored, sizeof(anchored), "^%s", pattern);
+    maelys_cli_regex_t *regex = NULL;
+    if (maelys_cli_regex_compile(anchored, strlen(anchored), &regex, NULL) != MAELYS_CLI_REGEX_OK) return 0;
+    int found = maelys_cli_regex_search(regex, ref, strlen(ref));
+    maelys_cli_regex_free(regex);
+    return found == 1;
 }
 
 /* Every fact of the snapshot that the definitions admit, by a full scan. */
@@ -85,11 +100,10 @@ static int reference_slice(const mg_grants_t *grants, const mg_slice_request_t *
         if (!is_subject(request, &groups, r->kind, r->subject) || strcmp(r->repository, request->repository))
             continue;
         int group = r->kind == MG_SUBJECT_GROUP;
-        /* A regex pattern is not searched until GIT-C08, commit 3. */
-        CHECK(r->form != MG_REF_REGEX);
         int matches = request->ref &&
-            (r->form == MG_REF_PREFIX ? strncmp(request->ref, r->pattern, strlen(r->pattern)) == 0
-                                      : !strcmp(request->ref, r->pattern));
+            (r->form == MG_REF_REGEX    ? reference_regex(r->pattern, request->ref)
+             : r->form == MG_REF_PREFIX ? strncmp(request->ref, r->pattern, strlen(r->pattern)) == 0
+                                        : !strcmp(request->ref, r->pattern));
         if (matches)
             CHECK(mg_slice_add(out, group ? MG_SLICE_GROUP_REF_MATCH : MG_SLICE_REF_MATCH, r->subject,
                                r->repository, r->level, 0));

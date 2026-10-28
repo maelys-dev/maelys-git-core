@@ -88,10 +88,10 @@ typedef struct {
 const char *mg_slice_predicate_name(mg_slice_predicate_t predicate);
 size_t mg_slice_predicate_arity(mg_slice_predicate_t predicate);
 
-/* Whether a ref grant's pattern applies to REF: 1 or 0. An exact pattern
- * is the ref; a prefix (and a deny's bare literal) begins it, byte for byte.
- * A "regex" pattern is not searched yet (GIT-C08, commit 3): -1, which
- * fails the extraction, never "does not apply". */
+/* Whether a literal ref grant's pattern applies to REF: 1 or 0. An exact
+ * pattern is the ref; a prefix (and a deny's bare literal) begins it, byte
+ * for byte. A "regex" pattern is searched by its snapshot
+ * (mg_grants_regex_matches): -1 here, never "does not apply". */
 int mg_slice_pattern_matches(mg_ref_form_t form, const char *pattern, const char *ref);
 
 /* The namespace N such that the request gives repository_owner_namespace(N,

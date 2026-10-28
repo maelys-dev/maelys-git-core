@@ -21,7 +21,7 @@ static const maelys_cli_option_t provision_options[] = {
     {MAELYS_CLI_ABSOLUTE_PATH("manifest", "FILE", "Datalog manifest path."),
      .required = 1},
     {MAELYS_CLI_ABSOLUTE_PATH("grants", "FILE",
-     "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads; "
+     "Snapshot of Gitolite grants (maelys-git-grants/1 or /2) the audited Gitolite program reads; "
      "the agent keeps the bytes each executor reads in grants-store/ beside the journal.")},
     {MAELYS_CLI_ABSOLUTE_PATH("root", "DIR", "Repository root."), .required = 1},
     {MAELYS_CLI_ABSOLUTE_PATH("executor", "FILE", "Executor binary path."),
@@ -48,7 +48,7 @@ static const maelys_cli_option_t prune_options[] = {
 static const maelys_cli_option_t serve_options[] = {
     {MAELYS_CLI_PATH("manifest", "FILE", "Datalog manifest path."), .required = 1},
     {MAELYS_CLI_PATH("grants", "FILE",
-     "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads; "
+     "Snapshot of Gitolite grants (maelys-git-grants/1 or /2) the audited Gitolite program reads; "
      "read again before each command.")},
     {MAELYS_CLI_HEX("expected-grants-fingerprint", "SHA256",
      "SHA-256 every reading of --grants must have; a reading with other bytes refuses the command. "

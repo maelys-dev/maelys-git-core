@@ -116,7 +116,7 @@ static int test_refused_shapes(void) {
     CHECK(refused(renamed, MAELYS_GIT_ERR_INVALID_ARGUMENT, "an unknown member"));
     free(renamed);
     char *format = strdup(text);
-    memcpy(strstr(format, "grants/1"), "grants/2", 8u);
+    memcpy(strstr(format, "grants/1"), "grants/3", 8u);
     CHECK(refused(format, MAELYS_GIT_ERR_INVALID_ARGUMENT, "format is not maelys-git-grants/1"));
     free(format);
     free(text);
@@ -262,7 +262,7 @@ static int test_all_reserved(void) {
     return 1;
 }
 
-/* ---- regex patterns (GIT-C08, commit 2) ---------------------------------- */
+/* ---- regex patterns (GIT-C08) -------------------------------------------- */
 
 /* The snapshot of REFS (tuples already in order) as maelys-git-grants/2. */
 static char *regex_snapshot(const char *refs) {
@@ -294,11 +294,11 @@ static char *many_regex(size_t repositories, size_t per, size_t extra) {
     size_t made = 0u;
     for (size_t r = 0u; r < repositories; ++r)
         for (size_t p = 0u; p < per; ++p, ++made)
-            if (!append(&refs, "%s[\"user\",\"alice\",\"r%02zu.git\",\"regex\",\"refs/heads/(a{255}){16}%c%c\",\"RW\"]",
+            if (!append(&refs, "%s[\"user\",\"alice\",\"r%03zu.git\",\"regex\",\"refs/heads/(a{255}){16}%c%c\",\"RW\"]",
                         made ? "," : "", r, (char)('a' + made / 26u), (char)('a' + made % 26u)))
                 return NULL;
     for (size_t e = 0u; e < extra; ++e, ++made)
-        if (!append(&refs, "%s[\"user\",\"alice\",\"r%02zu.git\",\"regex\",\"refs/heads/(a{255}){16}%c%c\",\"RW\"]",
+        if (!append(&refs, "%s[\"user\",\"alice\",\"r%03zu.git\",\"regex\",\"refs/heads/(a{255}){16}%c%c\",\"RW\"]",
                     made ? "," : "", repositories, (char)('a' + made / 26u), (char)('a' + made % 26u)))
             return NULL;
     char *text = regex_snapshot(refs.data);
@@ -312,10 +312,8 @@ static int test_regex_patterns(void) {
         "[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/heads/(main|dev)$\",\"RW\"],"
         "[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/heads/feature/.*\",\"RW+\"],"
         "[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/tags/v[0-9]+$\",\"RW\"]";
-    /* Not read until the reader admits the format: the public reading. */
     char *text = regex_snapshot(k_refs);
-    CHECK(text && refused(text, MAELYS_GIT_ERR_INVALID_ARGUMENT, "format is not maelys-git-grants/1"));
-    mg_grants_test_accept_regex = 1;
+    CHECK(text);
     int ok = 0;
     do {
         /* Each distinct pattern compiled once, anchored; the scratch fits all. */
@@ -380,23 +378,22 @@ static int test_regex_patterns(void) {
             free(candidate);
         }
         if (!all) break;
-        /* D3: 16 patterns of 4 095 states on one repository, then 17; 256 in
-         * the snapshot, then 257 (one repository more). */
-        char *budget = many_regex(1u, 16u, 0u);
+        /* D3: one pattern of 4 095 states on a repository, then two; 256 in
+         * the snapshot, one per repository, then 257. */
+        char *budget = many_regex(1u, 1u, 0u);
         int budgets = budget && accepted(budget);
         free(budget);
-        budget = many_regex(1u, 17u, 0u);
-        budgets = budgets && budget && refused(budget, MAELYS_GIT_ERR_LIMIT, "one repository hold more than 65536");
+        budget = many_regex(1u, 2u, 0u);
+        budgets = budgets && budget && refused(budget, MAELYS_GIT_ERR_LIMIT, "one repository hold more than 4096");
         free(budget);
-        budget = many_regex(16u, 16u, 0u);
+        budget = many_regex(256u, 1u, 0u);
         budgets = budgets && budget && accepted(budget);
         free(budget);
-        budget = many_regex(16u, 16u, 1u);
+        budget = many_regex(256u, 1u, 1u);
         budgets = budgets && budget && refused(budget, MAELYS_GIT_ERR_LIMIT, "snapshot hold more than 1048576");
         free(budget);
         ok = budgets;
     } while (0);
-    mg_grants_test_accept_regex = 0;
     free(text);
     return ok;
 }

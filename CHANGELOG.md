@@ -5,6 +5,23 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- A snapshot of grants may be `maelys-git-grants/2`: the format of a
+  snapshot that holds ref patterns of form `regex`, a Gitolite refex
+  completed by `refs/heads/` and anchored at its start, as Gitolite matches
+  it. A snapshot without one stays `/1`, byte for byte, and `/1` refuses the
+  form. A pattern begins with `refs/`, holds at most 256 bytes, has no
+  top-level `|` and no `^` outside a class, does not name `/USER/`, and
+  compiles in the subset of `maelys/cli/regex.h` (maelys-cli 0.13.0) within
+  4,096 states; each distinct pattern is compiled once, when the snapshot
+  is read, the patterns of one repository within 4,096 states and those of
+  the snapshot within 1,048,576. A pattern is searched without allocating,
+  in a scratch the snapshot holds, and each one once per ref: the requests
+  of a push that carry one ref (the update, each commit, each change, the
+  summary) do not search it again, until another ref or a new generation
+  of the snapshot. A search that fails refuses the request (`regex search
+  failed`, kind `engine`). A receipt names the format read, `/1` or `/2`,
+  and the verifier accepts both; `maelys_git_receipt_grants_t` gains the
+  member `format`. The migration does not write regex patterns yet.
 - A policy set holding the audited Gitolite program decides only the refs
   Gitolite 3.6.15 admits with its default patterns (`REF_OR_FILENAME_PATT`
   of `Rc.pm`): a ref that is not a valid ref, does not begin with a

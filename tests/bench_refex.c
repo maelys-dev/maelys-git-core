@@ -3,6 +3,14 @@
  * depend on the machine.
  *
  *   bench-maelys-git-refex [ROUNDS]
+ *   bench-maelys-git-refex push COMMITS CHANGES DIRECTORY
+ *     Through the policy, the requests of a push of one ref as the hook makes
+ *     them (the update, COMMITS commits, CHANGES changed files, a summary),
+ *     on a repository of 50 patterns (.*a){16}xNN (4 000 states) and on the
+ *     same grants as literals: the time of the whole series for each, the
+ *     regex searches made (one per pattern, the memo kept for the ref), and
+ *     the difference, which is what the patterns cost. DIRECTORY receives
+ *     the manifest and the snapshots.
  *   bench-maelys-git-refex peak FAMILY GENERATIONS
  *     In a process of its own, the resident peak of loading GENERATIONS
  *     distinct snapshots of FAMILY (large: 256 patterns of 4 095 states;
@@ -32,7 +40,11 @@
  *             request and with a memo kept for the ref across requests. */
 #include <sys/resource.h>
 #include "policy/grants.h"
+#include "policy/policy_grants.h"
+#include "policy/program.h"
 #include "policy/refex.h"
+
+#include <maelys/cli/digest.h>
 
 #include <maelys/cli/regex.h>
 
@@ -240,8 +252,111 @@ static double request_ms(const char *label, const char *text, const char *ref, s
     return ms;
 }
 
+static int write_bytes(const char *path, const char *text) {
+    FILE *file = fopen(path, "w");
+    if (!file) return 0;
+    int ok = fputs(text, file) >= 0;
+    return fclose(file) == 0 && ok;
+}
+
+/* The series of requests of one push of REF on POLICY: seconds. */
+static double push_series(maelys_git_policy_t *policy, const char *ref, size_t commits, size_t changes) {
+    static const char *const paths[1] = {"src/file.c"};
+    maelys_git_policy_request_t update = {.request_id = "u", .principal = "alice", .repository = "app.git",
+                                          .operation = "push", .ref_name = ref, .update_kind = "fast_forward"};
+    maelys_git_policy_request_t commit = update, change = update, summary = update;
+    commit.request_id = "c";
+    commit.commit_signature_status = "unsigned";
+    change.request_id = "f";
+    change.paths = paths;
+    change.path_count = 1u;
+    change.has_change_details = 1;
+    change.change_kind = "modified";
+    summary.request_id = "s";
+    summary.has_summary = 1;
+    summary.changed_count = changes;
+    summary.commit_count = commits;
+    maelys_git_policy_decision_t decision;
+    maelys_git_error_t error;
+    double start = now_ns();
+    int ok = maelys_git_policy_authorize(policy, &update, &decision, &error) == MAELYS_GIT_OK;
+    for (size_t i = 0u; ok && i < commits; ++i)
+        ok = maelys_git_policy_authorize(policy, &commit, &decision, &error) == MAELYS_GIT_OK;
+    for (size_t i = 0u; ok && i < changes; ++i)
+        ok = maelys_git_policy_authorize(policy, &change, &decision, &error) == MAELYS_GIT_OK;
+    ok = ok && maelys_git_policy_authorize(policy, &summary, &decision, &error) == MAELYS_GIT_OK;
+    if (!ok) {
+        (void)fprintf(stderr, "push: %s\n", error.message);
+        exit(1);
+    }
+    return (now_ns() - start) / 1e9;
+}
+
+static int push_bench(size_t commits, size_t changes, const char *directory) {
+    char path[1024], manifest[4096], digest[MAELYS_CLI_SHA256_HEX_SIZE];
+    size_t length = 0u;
+    const char *program = mg_gitolite_program_text(&length);
+    maelys_cli_sha256_hex(program, length, digest);
+    (void)snprintf(path, sizeof(path), "%s/program.dl", directory);
+    if (!write_bytes(path, program)) return 1;
+    (void)snprintf(manifest, sizeof(manifest),
+        "{\"policy_set_id\":\"bench.refex\",\"policy_set_version\":\"1\",\"manifest_version\":\"1\","
+        "\"default_profile\":\"enforce\",\"created_for\":\"maelys-git-core-bench\",\"strict_loading\":true,"
+        "\"fail_closed\":true,\"capabilities\":[],\"policies\":[{\"policy_id\":\"bench.refex.program\","
+        "\"domain\":\"maelys_git\",\"file\":\"program.dl\",\"sha256\":\"%s\",\"mode\":\"enforce\","
+        "\"enabled\":true,\"description\":\"bench\","
+        "\"queries\":[{\"name\":\"allow\",\"arity\":1},{\"name\":\"deny\",\"arity\":1}]}]}\n", digest);
+    char manifest_path[1024];
+    (void)snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.json", directory);
+    if (!write_bytes(manifest_path, manifest)) return 1;
+    /* The 50 patterns, and one literal prefix that grants the push; the
+     * same grants with literals only. */
+    char *refs = NULL, piece[200];
+    size_t used = 0u, capacity = 0u;
+    add(&refs, &used, &capacity, "[\"user\",\"alice\",\"app.git\",\"prefix\",\"refs/heads/\",\"RW\"]");
+    for (size_t i = 0u; i < 50u; ++i) {
+        (void)snprintf(piece, sizeof(piece),
+                       ",[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/heads/(.*a){16}x%02zu\",\"RW\"]", i);
+        add(&refs, &used, &capacity, piece);
+    }
+    char *with_regex = snapshot_of(refs);
+    free(refs);
+    char *literal = snapshot_of("[\"user\",\"alice\",\"app.git\",\"prefix\",\"refs/heads/\",\"RW\"]");
+    memcpy(strstr(literal, "grants/2"), "grants/1", 8u);
+    char ref[512];
+    (void)snprintf(ref, sizeof(ref), "refs/heads/");
+    memset(ref + 11, 'a', 500u);
+    ref[511] = '\0';
+    const char *texts[2] = {literal, with_regex}, *labels[2] = {"literal", "regex"};
+    double seconds[2] = {0.0, 0.0};
+    size_t searches[2] = {0u, 0u};
+    for (size_t k = 0u; k < 2u; ++k) {
+        char snapshot[1024];
+        (void)snprintf(snapshot, sizeof(snapshot), "%s/grants-%s.json", directory, labels[k]);
+        if (!write_bytes(snapshot, texts[k])) return 1;
+        maelys_git_policy_t *policy = NULL;
+        maelys_git_error_t error;
+        if (mg_policy_open_grants(manifest_path, snapshot, &policy, &error) != MAELYS_GIT_OK) {
+            (void)fprintf(stderr, "open: %s\n", error.message);
+            return 1;
+        }
+        seconds[k] = push_series(policy, ref, commits, changes);
+        searches[k] = mg_policy_regex_searches(policy);
+        maelys_git_policy_close(policy);
+    }
+    size_t requests = 2u + commits + changes;
+    (void)printf("push      %zu requests of one ref of 511 bytes: literal %.3f s; 50 regex patterns %.3f s, "
+                 "%zu searches; the patterns cost %.3f s (%.1f us per request)\n",
+                 requests, seconds[0], seconds[1], searches[1], seconds[1] - seconds[0],
+                 (seconds[1] - seconds[0]) * 1e6 / (double)requests);
+    free(with_regex);
+    free(literal);
+    return 0;
+}
+
 int main(int argc, char **argv) {
-    mg_grants_test_accept_regex = 1;
+    if (argc == 5 && !strcmp(argv[1], "push"))
+        return push_bench((size_t)strtoul(argv[2], NULL, 10), (size_t)strtoul(argv[3], NULL, 10), argv[4]);
     if (argc == 4 && !strcmp(argv[1], "peak")) {
         int small = !strcmp(argv[2], "small");
         size_t generations = (size_t)strtoul(argv[3], NULL, 10);

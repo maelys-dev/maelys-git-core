@@ -203,7 +203,7 @@ maelys_git_result_t maelys_git_policy_open(
     maelys_git_policy_t **out_policy,
     maelys_git_error_t *error);
 /* maelys_git_policy_open with a snapshot of Gitolite grants,
- * maelys-git-grants/1, read once as a trusted file: links are followed and
+ * maelys-git-grants/1 or /2, read once as a trusted file: links are followed and
  * the directory of their target judged; the descriptor read is observed
  * before and after the read. A set whose policy reads the snapshot (the
  * audited Gitolite program, the only one allowed to) must be opened so; a
@@ -307,13 +307,15 @@ typedef struct {
 
 /* The snapshot of grants a decision used: present when a policy of the set
  * read it, which only the audited Gitolite program may (receipt version 2).
- * Its format, the format of the slice and that of the program are fixed by
- * that version: maelys-git-grants/1, maelys-git-slice/1 and
+ * Its format is the one read, maelys-git-grants/1, or /2 when it holds
+ * regex ref patterns; the format of the slice and that of the program are
+ * fixed by that version: maelys-git-slice/1 and
  * maelys-git-gitolite-program/1. */
 typedef struct {
     int present;
     char sha256[65]; /* of the snapshot's bytes */
     size_t facts;    /* distinct tuples of the slice given to the engine */
+    char format[32]; /* maelys-git-grants/1 or maelys-git-grants/2 */
 } maelys_git_receipt_grants_t;
 
 /* The record of one decision, built by the code path that authorizes. It

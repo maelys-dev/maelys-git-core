@@ -20,11 +20,11 @@
 
 /* The budgets of D3, in states of the compiled program, its anchor
  * included: one pattern; the distinct patterns of one repository, which
- * bound the work of a request, a request touching one repository; the
- * distinct patterns of a snapshot, which bound its memory. Provisional
- * values, fixed by the review of D3 before patterns are searched. */
+ * bound the work of a request, a request touching one repository (about
+ * 4 ms at worst, measured); the distinct patterns of a snapshot, which
+ * bound its memory. */
 #define MG_REFEX_MAX_STATES 4096u
-#define MG_REFEX_REPOSITORY_STATES 65536u
+#define MG_REFEX_REPOSITORY_STATES 4096u
 #define MG_REFEX_TOTAL_STATES 1048576u
 
 /* Checks PATTERN against the restrictions and compiles "^" PATTERN. On

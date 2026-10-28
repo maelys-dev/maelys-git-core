@@ -164,16 +164,28 @@ void mg_grants_free(mg_grants_t *grants);
 /* Tests only: called between the read of a snapshot and the second
  * observation of its descriptor, to change the file there. */
 extern void (*mg_grants_test_between_reads)(const char *path);
-/* Tests only, until regex patterns are searched (GIT-C08, commit 3): reads
- * maelys-git-grants/2. Otherwise a snapshot of that format is refused. */
-extern int mg_grants_test_accept_regex;
-
 /* The compiled pattern of a "regex" grant, and the scratch a search of any
  * pattern of GRANTS works in: one scratch per snapshot, and one snapshot
  * per handle, which is confined to a thread (maelys_git.h). */
 struct maelys_cli_regex; /* maelys_cli_regex_t of maelys/cli/regex.h */
 const struct maelys_cli_regex *mg_grants_regex(const mg_grants_t *grants, size_t index);
 void *mg_grants_scratch(const mg_grants_t *grants, size_t *out_size);
+
+/* Whether the distinct pattern INDEX of GRANTS matches REF: 1 or 0, or -1
+ * when the search fails, which no admitted ref and snapshot do. The result
+ * is kept for REF, copied: every request of one ref (the update, each
+ * commit, each change and the summary of a push) searches a pattern once,
+ * until another ref is asked. The snapshot holds it, so that a new
+ * generation searches again and a reading that finds the same bytes keeps
+ * it. Only the match is kept: the facts and the decision are made again
+ * for every request. The search uses the snapshot's scratch: GRANTS, owned
+ * by one handle, is used by one thread at a time. */
+int mg_grants_regex_matches(const mg_grants_t *grants, size_t index, const char *ref);
+/* The searches GRANTS has made, for tests and measurements. */
+size_t mg_grants_regex_searches(const mg_grants_t *grants);
+/* Tests only: bytes taken from the scratch a search is given, so that it
+ * fails (-1) as a violated precondition would. */
+extern size_t mg_grants_test_scratch_shortfall;
 
 /* The SHA-256 of the bytes the snapshot was parsed from, in hex. */
 const char *mg_grants_sha256(const mg_grants_t *grants);
