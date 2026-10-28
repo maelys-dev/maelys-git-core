@@ -453,6 +453,16 @@ static int names_user(const char *implied, const char *text) {
     return strstr(text, "/USER/") != NULL || (*implied && strncmp(text, "USER/", 5u) == 0);
 }
 
+/* The column, from 1, of the refex as written (LENGTH bytes, completed by
+ * IMPLIED bytes) where the byte OFFSET of the completed pattern stands
+ * (section 4.5): a byte of the completion is column 1, and what only the
+ * end reveals, OFFSET at the end of the pattern, is the last column. */
+static size_t refex_column(size_t offset, size_t implied_length, size_t length) {
+    if (offset < implied_length) return 1u;
+    size_t column = offset - implied_length + 1u;
+    return column > length ? length : column;
+}
+
 /* Reads one Gitolite refex and returns NULL, or the reason it is refused
  * (REASON holds it when it names a column). Gitolite completes a refex that
  * does not begin with refs/ by refs/heads/, as written, then matches it as
@@ -473,7 +483,7 @@ static int names_user(const char *implied, const char *text) {
  *   5. a regex is the completed text, kept as written: it passes the
  *      restrictions of policy/refex.h (no top-level '|', no '^' outside a
  *      class, the subset of maelys/cli/regex.h, 4 096 states), or is refused
- *      with the column of the refex as written. */
+ *      with the column of the refex as written (refex_column). */
 static const char *classify_refex(const char *text, int deny, refex_kind_t *out_kind,
                                   char out_value[MG_REF_PATTERN_MAX + 1u], char reason[160]) {
     size_t length = strlen(text);
@@ -492,13 +502,17 @@ static const char *classify_refex(const char *text, int deny, refex_kind_t *out_
             literal_syntax = 0;
     }
     if (!literal_syntax) {
-        if (implied_length + length > MG_REF_PATTERN_MAX) return "ref pattern exceeds 256 bytes";
-        (void)snprintf(out_value, MG_REF_PATTERN_MAX + 1u, "%s%s", implied, text);
-        size_t offset = 0u;
-        const char *refused = mg_refex_regex_check(out_value, NULL, &offset);
+        /* Past the bound, the first byte beyond it, as the reader of a
+         * snapshot reports it. */
+        size_t offset = MG_REF_PATTERN_MAX;
+        const char *refused = "ref pattern exceeds 256 bytes";
+        if (implied_length + length <= MG_REF_PATTERN_MAX) {
+            (void)snprintf(out_value, MG_REF_PATTERN_MAX + 1u, "%s%s", implied, text);
+            refused = mg_refex_regex_check(out_value, NULL, &offset);
+        }
         if (refused) {
-            size_t column = offset >= implied_length ? offset - implied_length + 1u : 1u;
-            (void)snprintf(reason, 160u, "refex refused at column %zu: %s", column, refused);
+            (void)snprintf(reason, 160u, "refex refused at column %zu: %s",
+                           refex_column(offset, implied_length, length), refused);
             return reason;
         }
         *out_kind = REFEX_REGEX;

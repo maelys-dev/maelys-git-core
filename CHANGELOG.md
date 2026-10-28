@@ -32,7 +32,9 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   migrated as before (exact or prefix); any other is a regex, checked by
   the rules of the reader of a snapshot, and refused with the column of the
   refex as written where reading stopped (`refex refused at column 5: a
-  '|' at the top level`). The snapshot is `maelys-git-grants/2` only when
+  '|' at the top level`): its last column for a limit only its end
+  reveals, the first byte past the bound for one that exceeds 256 bytes
+  once completed. The snapshot is `maelys-git-grants/2` only when
   it holds a regex pattern, `/1` otherwise; the plan states it in
   `grantsFormat`. The plan also gives `remarks`, which never block a
   migration: a repository with write grants and ref denies, where any deny

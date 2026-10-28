@@ -85,7 +85,11 @@ La migration lit un refex dans cet ordre :
    instantane (`mg_refex_regex_check`) : au plus 256 octets complete
    compris, pas de `|` au niveau superieur, pas de `^` hors d'une classe,
    au plus 4 096 etats. Un refus donne la colonne du refex tel qu'ecrit ou
-   la lecture s'est arretee.
+   la lecture s'est arretee : sa derniere colonne pour une limite que seule
+   la fin revele (`(a{255}){17}` : colonne 12), le premier octet au-dela
+   de la borne pour un refex de plus de 256 octets une fois complete. Un
+   echappement hors du sous-ensemble est signale sur le caractere echappe :
+   `a\d` en colonne 3, `refs/heads/a\d` en colonne 14.
 
 L'instantane n'est `/2` que s'il contient un motif regex ; sinon il reste
 `/1`, octet pour octet. Le plan le dit dans `grantsFormat`. Une regex n'est
@@ -108,7 +112,7 @@ migree qu'en droits comme donnees : la politique compilee la refuse
 | `RW main\|dev = alice` | refuse, `refex refused at column 5: a '\|' at the top level` | Gitolite y lit `^main` ou `dev` n'importe ou |
 | `RW ^main = alice`, `RW refs/heads/a\d = alice` | refuse, `refex refused at column N: ...` | ancre deja posee ; echappement hors du sous-ensemble |
 | prefixe de plus de 63 octets ou de plus de 16 `/` | regle `starts_with` | hors des faits `ref_prefix` |
-| motif de plus de 256 octets | refuse, `ref pattern exceeds 256 bytes` | borne du moteur |
+| motif de plus de 256 octets | refuse, `ref pattern exceeds 256 bytes`, avec la colonne pour une regex | borne du moteur |
 
 Une regex de l'instantane est compilee une fois, a sa lecture, dans les
 budgets de D3 : 4 096 etats par motif, 4 096 pour les motifs distincts d'un
