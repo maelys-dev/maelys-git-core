@@ -801,6 +801,14 @@ typedef struct {
     char **unsupported;
     size_t unsupported_count;
     maelys_git_policy_budget_t budget;
+    /* The format of grants.json: maelys-git-grants/1, or /2 when a refex is
+     * migrated as a regex pattern. */
+    char grants_format[32];
+    /* What applies otherwise than in Gitolite without refusing the entry:
+     * a repository whose ref denies win over its grants whatever their
+     * order, a group that holds rights without a member. */
+    char **remarks;
+    size_t remark_count;
 } maelys_git_gitolite_migration_result_t;
 
 void maelys_git_gitolite_migration_result_clear(

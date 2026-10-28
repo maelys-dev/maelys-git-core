@@ -465,8 +465,10 @@ static int test_bounds(void) {
 /* The generator and the reader judge a ref pattern by one rule: each refex
  * of the corpus is migrated, and its normalized tuple read. Two differences
  * are by design: an exact ref of more than 63 bytes was refused as a policy
- * atom, and is a string of a slice; a '.' is any character in a refex, and
- * a literal dot in a pattern of the snapshot. */
+ * atom, and is a string of a slice; /USER/ is each user's name in a refex,
+ * and a literal in an exact or a prefix pattern of the snapshot. A refex
+ * that is not literal is a pattern of form regex, judged by
+ * mg_refex_regex_check on both sides. */
 static int write_file(const char *path, const char *text, mode_t mode);
 
 static int test_patterns_against_generator(void) {
@@ -475,17 +477,23 @@ static int test_patterns_against_generator(void) {
         int generator, reader;
     } corpus[] = {
         {"RW refs/ = alice", "prefix", "refs/", "RW", 1, 1},
-        {"RW refs/heads/a+b$ = alice", "exact", "refs/heads/a+b", "RW", 0, 0},
+        {"RW refs/heads/a+b$ = alice", "regex", "refs/heads/a+b$", "RW", 1, 1},
         {"RW main = alice", "exact", "refs/heads/main", "RW", 1, 1},
         {"RW feature/x$ = alice", "exact", "refs/heads/feature/x", "RW", 1, 1},
         {"RW rel/ = alice", "prefix", "refs/heads/rel/", "RW", 1, 1},
         {"- main = alice", "prefix", "refs/heads/main", "-", 1, 1},
-        {"RW refs/heads/a..b$ = alice", "exact", "refs/heads/a..b", "RW", 0, 0},
+        {"RW refs/heads/a..b$ = alice", "regex", "refs/heads/a..b$", "RW", 1, 1},
         {"RW refs/heads//x/ = alice", "prefix", "refs/heads//x/", "RW", 0, 0},
-        {"RW refs/tags/v1.0$ = alice", "exact", "refs/tags/v1.0", "RW", 0, 1},
+        {"RW refs/tags/v1.0$ = alice", "regex", "refs/tags/v1.0$", "RW", 1, 1},
         {"RW refs/tags/v1\\.0$ = alice", "exact", "refs/tags/v1.0", "RW", 1, 1},
-        {"- refs/tags/v1.0 = alice", "prefix", "refs/tags/v1.0", "-", 0, 1},
+        {"- refs/tags/v1.0 = alice", "regex", "refs/tags/v1.0", "-", 1, 1},
+        {"RW v[0-9]+ = alice", "regex", "refs/heads/v[0-9]+", "RW", 1, 1},
+        {"RW refs/heads/a|b = alice", "regex", "refs/heads/a|b", "RW", 0, 0},
+        {"RW ^main = alice", "regex", "refs/heads/^main", "RW", 0, 0},
+        {"RW u/USER/.* = alice", "regex", "refs/heads/u/USER/.*", "RW", 0, 0},
         {"- refs/tags/v1\\. = alice", "prefix", "refs/tags/v1.", "-", 1, 1},
+        {"RW refs\\/tags/v1$ = alice", "exact", "refs/tags/v1", "RW", 1, 1},
+        {"RW v1\\-rc$ = alice", "exact", "refs/heads/v1-rc", "RW", 1, 1},
         /* /USER/ once completed is each user's name in Gitolite; a ref of
          * that name is a literal in a snapshot. */
         {"RW+ personal/USER/ = alice", "prefix", "refs/heads/personal/USER/", "RW+", 0, 1},
@@ -510,7 +518,9 @@ static int test_patterns_against_generator(void) {
         char tuple[512];
         (void)snprintf(tuple, sizeof(tuple), "[\"user\",\"alice\",\"app.git\",\"%s\",\"%s\",\"%s\"]",
                        corpus[i].form, corpus[i].pattern, corpus[i].level);
-        char *snapshot_text = snapshot(NULL, NULL, NULL, tuple, NULL, NULL, NULL, NULL);
+        char *snapshot_text = strcmp(corpus[i].form, "regex") == 0
+                                  ? regex_snapshot(tuple)
+                                  : snapshot(NULL, NULL, NULL, tuple, NULL, NULL, NULL, NULL);
         mg_grants_t *grants = NULL;
         int reader = snapshot_text && parse(snapshot_text, &grants, &error) == MAELYS_GIT_OK;
         mg_grants_free(grants);

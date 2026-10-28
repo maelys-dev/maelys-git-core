@@ -2558,6 +2558,13 @@
               "changed": {
                 "type": "boolean"
               },
+              "grantsFormat": {
+                "description": "The format of grants.json: /2 when a refex is migrated as a regex pattern.",
+                "enum": [
+                  "maelys-git-grants/1",
+                  "maelys-git-grants/2"
+                ]
+              },
               "groupCount": {
                 "minimum": 0,
                 "type": "integer"
@@ -2573,6 +2580,13 @@
               },
               "output": {
                 "type": "string"
+              },
+              "remarks": {
+                "description": "What applies otherwise than in Gitolite without refusing an entry: ref denies that win over grants whatever their order, a group with rights and no member.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               },
               "repositoryCount": {
                 "minimum": 0,
@@ -2603,6 +2617,8 @@
               "ruleCount",
               "vrefCount",
               "unsupported",
+              "grantsFormat",
+              "remarks",
               "budget",
               "canApply"
             ],

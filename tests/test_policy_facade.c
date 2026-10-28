@@ -425,25 +425,31 @@ static int test_user_refuses_configuration(void) {
 }
 
 static int test_unsupported_refex(void) {
-    CHECK(unsupported_with("alt", "RW refs/heads/(main|dev) = alice", "unsupported refex syntax"));
-    CHECK(unsupported_with("star", "RW refs/heads/feature/.* = alice", "unsupported refex syntax"));
-    CHECK(unsupported_with("class", "RW refs/heads/[a-z]+ = alice", "unsupported refex syntax"));
-    CHECK(unsupported_with("caret", "- ^refs/heads/main = alice", "unsupported refex syntax"));
-    CHECK(unsupported_with("dots", "RW refs/heads/../main = alice", "'.' is any character"));
+    /* A regex is decided by grants as data: the compiled encoding, which
+     * this test migrates to, has no form for it. */
+    static const char k_needs_grants[] = "migrated as grants as data only";
+    CHECK(unsupported_with("alt", "RW refs/heads/(main|dev) = alice", k_needs_grants));
+    CHECK(unsupported_with("star", "RW refs/heads/feature/.* = alice", k_needs_grants));
+    CHECK(unsupported_with("class", "RW refs/heads/[a-z]+ = alice", k_needs_grants));
+    CHECK(unsupported_with("dots", "RW refs/heads/../main = alice", k_needs_grants));
+    CHECK(unsupported_with("dot-deny", "- refs/tags/v1.0 = alice", k_needs_grants));
+    CHECK(unsupported_with("dot-grant", "RW refs/tags/v1.0$ = alice", k_needs_grants));
+    CHECK(unsupported_with("escape-end", "RW refs/heads/a\\$ = alice", k_needs_grants));
+    /* Refused whatever the encoding: the restrictions and the subset, by the
+     * column of the refex as written; a literal that is not a valid pattern
+     * is never read as a regex. */
+    CHECK(unsupported_with("caret", "- ^refs/heads/main = alice", "refex refused at column 1: a '^' outside a class"));
+    CHECK(unsupported_with("top-alternation", "RW main|dev = alice", "refex refused at column 5: a '|' at the top level"));
+    CHECK(unsupported_with("escape", "RW refs/heads/a\\d = alice", "refex refused at column 14"));
     CHECK(unsupported_with("escaped-dots", "RW refs/heads/\\.\\./main = alice", "unsupported refex syntax"));
-    /* Gitolite reads '.' as any character: a deny would cover less after
-     * migration, a grant less than its author meant. Both are refused. */
-    CHECK(unsupported_with("dot-deny", "- refs/tags/v1.0 = alice", "'.' is any character"));
-    CHECK(unsupported_with("dot-grant", "RW refs/tags/v1.0$ = alice", "'.' is any character"));
-    CHECK(unsupported_with("escape", "RW refs/heads/a\\d = alice", "unsupported refex syntax"));
-    CHECK(unsupported_with("escape-end", "RW refs/heads/a\\$ = alice", "unsupported refex syntax"));
+    CHECK(unsupported_with("anchored-namespace", "RW refs/heads/x/$ = alice", "unsupported refex syntax"));
+    CHECK(unsupported_with("vref", "RW+ VREF/NAME/ = alice", "full-ref"));
     /* Gitolite puts each user's name in place of /USER/, once completed. */
     CHECK(unsupported_with("user-grant", "RW+ personal/USER/ = alice", "'/USER/'"));
     CHECK(unsupported_with("user-deny", "- USER/ = alice", "'/USER/'"));
     CHECK(unsupported_with("user-full", "- refs/heads/USER/x = alice", "'/USER/'"));
     CHECK(unsupported_with("user-vref", "- VREF/NAME/USER/secret = alice", "'/USER/'"));
     CHECK(unsupported_with("user-first", "RW USER/(a|b) = alice", "'/USER/'"));
-    CHECK(unsupported_with("vref", "RW+ VREF/NAME/ = alice", "full-ref"));
     char rule[400], pattern[300];
     memset(pattern, 'x', sizeof(pattern));
     memcpy(pattern, "refs/heads/", 11u);

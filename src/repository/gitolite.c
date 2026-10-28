@@ -2,6 +2,7 @@
 #include "policy/grants.h"
 #include "policy/policy_grants.h"
 #include "policy/program.h"
+#include "policy/refex.h"
 
 #include <maelys/cli/digest.h>
 #include <maelys/json.h>
@@ -164,12 +165,15 @@ void maelys_git_gitolite_migration_result_clear(
     for (size_t i = 0u; i < result->unsupported_count; ++i)
         free(result->unsupported[i]);
     free(result->unsupported);
+    for (size_t i = 0u; i < result->remark_count; ++i)
+        free(result->remarks[i]);
+    free(result->remarks);
     memset(result, 0, sizeof(*result));
 }
 
 /* ---- the snapshot of grants -------------------------------------------- */
 
-/* The sections of maelys-git-grants/1, in key order, and the arity of their
+/* The sections of a grants snapshot, in key order, and the arity of their
  * tuples; the last element of a VREF limit is its integer. */
 enum {
     SECTION_ACCESS, SECTION_MEMBERS, SECTION_CREATORS, SECTION_NESTED, SECTION_OWNERS,
@@ -256,6 +260,15 @@ static int compare_tuples(const void *left, const void *right) {
     return a->number == b->number ? 0 : (a->number < b->number ? -1 : 1);
 }
 
+/* maelys-git-grants/2 when a ref pattern is of form regex, /1 otherwise:
+ * a snapshot without one keeps its bytes (D1). */
+static const char *grants_format(const grants_builder_t *grants) {
+    const grant_section_t *refs = &grants->sections[SECTION_REFS];
+    for (size_t i = 0u; i < refs->count; ++i)
+        if (!strcmp(refs->items[i].text[3], "regex")) return MG_GRANTS_FORMAT_REGEX;
+    return MG_GRANTS_FORMAT;
+}
+
 /* The snapshot of GRANTS in its one byte form: each section sorted, without
  * duplicates, serialized by maelys-json without a flag (Canonical JSON v1)
  * within the bounds its reader applies: three containers deep (the root, a
@@ -272,7 +285,7 @@ static maelys_json_result_t serialize_grants(grants_builder_t *grants, char **ou
 #define WRITE(call) do { if (status == MAELYS_JSON_OK) status = (call); } while (0)
     WRITE(maelys_json_writer_object_begin(writer));
     WRITE(maelys_json_writer_key_cstr(writer, "format"));
-    WRITE(maelys_json_writer_string_cstr(writer, MG_GRANTS_FORMAT));
+    WRITE(maelys_json_writer_string_cstr(writer, grants_format(grants)));
     for (int s = 0; s < SECTION_COUNT; ++s) {
         grant_section_t *items = &grants->sections[s];
         if (items->count) qsort(items->items, items->count, sizeof(*items->items), compare_tuples);
@@ -301,7 +314,7 @@ typedef struct {
     int is_vref, is_ref_rule;
     const char *right;          /* the permission of a plain rule */
     const char *ref_permission; /* RW, RW+ or - */
-    int ref_prefix;
+    const char *ref_form;       /* exact, prefix or regex */
     const char *ref_name;
     const char *vref_predicate, *vref_path;
     unsigned long long vref_limit;
@@ -320,8 +333,8 @@ static int record_grant(grants_builder_t *grants, const grant_rule_t *rule, cons
                          (int64_t)rule->vref_limit);
     }
     if (rule->is_ref_rule)
-        return add_tuple(grants, SECTION_REFS, kind, name, repository->value, rule->ref_prefix ? "prefix" : "exact",
-                         rule->ref_name, rule->ref_permission, 0);
+        return add_tuple(grants, SECTION_REFS, kind, name, repository->value, rule->ref_form, rule->ref_name,
+                         rule->ref_permission, 0);
     if (repository->kind == REPOSITORY_EXACT)
         return add_tuple(grants, SECTION_ACCESS, kind, name, repository->value, rule->right, NULL, NULL, 0);
     if (!strcmp(rule->right, "C"))
@@ -396,7 +409,8 @@ static int append_ref_access(text_buffer_t *policy,
 
 typedef enum {
     REFEX_EXACT = 1,
-    REFEX_PREFIX = 2
+    REFEX_PREFIX = 2,
+    REFEX_REGEX = 3
 } refex_kind_t;
 
 /* The longest filter pattern the policy language accepts. */
@@ -430,48 +444,66 @@ int mg_gitolite_pattern_is_valid(const char *pattern, int prefix, int deny) {
  * by the name of the user it decides for (access() of Conf/Load.pm): a rule
  * naming it is one rule per user, which no migrated pattern holds. */
 static const char k_names_user[] = "'/USER/' is the user's own name in Gitolite; not supported";
+/* A regex is decided by the slice of grants as data; the compiled encoding,
+ * whose prefixes are facts and rules, has no form for it. */
+static const char k_regex_needs_grants[] = "a regex refex is migrated as grants as data only";
 
 static int names_user(const char *implied, const char *text) {
     /* IMPLIED, when not empty, ends with '/'. */
     return strstr(text, "/USER/") != NULL || (*implied && strncmp(text, "USER/", 5u) == 0);
 }
 
-/* Reads one Gitolite refex and returns NULL, or the stable reason it is
- * refused. Gitolite anchors a refex at its start only, completes a name that
- * does not begin with refs/ by refs/heads/, and takes a final $ as equality.
- * Only literal names are converted, into a form whose equivalence holds:
- *   - a literal ending in '/' is a prefix;
- *   - a literal ending in '$' is the exact ref without the '$';
- *   - a bare literal denies as a prefix, which is what Gitolite does, and
- *     grants the exact ref only, which is stricter than Gitolite.
- * A '.' is any character in Gitolite: a literal dot is written '\.', and a
- * bare '.' is refused, since no literal covers what Gitolite reads, for a
- * deny as for a grant. Alternation, classes, repetition and any other
- * regular-expression syntax have no bounded equivalent and are refused.
- *
- * As Gitolite does, the refex is completed as written, before any escape is
- * read, and a completed refex naming /USER/ is refused before anything else
- * is accepted: Gitolite puts the name of each user there. */
+/* Reads one Gitolite refex and returns NULL, or the reason it is refused
+ * (REASON holds it when it names a column). Gitolite completes a refex that
+ * does not begin with refs/ by refs/heads/, as written, then matches it as
+ * a Perl regular expression anchored at its start only (^refex). In this
+ * order (directive GIT-C08, section 4.1), a refusal being final:
+ *   1. completion of the raw text, before any escape is read: refs\/x
+ *      does not begin with refs/ and is completed;
+ *   2. /USER/ in the completed text, which Gitolite fills per user, is
+ *      refused, for a grant as for a deny;
+ *   3. a literal is [A-Za-z0-9_/-], \., \/ and \-, and an optional final $;
+ *      anything else, a bare '.' included, is a regex;
+ *   4. a literal is decoded and converted where its equivalence holds: a
+ *      literal ending in '/' is a prefix, one ending in '$' the exact ref,
+ *      a bare literal denies as a prefix, as Gitolite does, and grants the
+ *      exact ref only, which is stricter; a literal that is not a valid
+ *      pattern (x/$, .., //, an exact ref of more than 63 bytes) is refused
+ *      and never read as a regex;
+ *   5. a regex is the completed text, kept as written: it passes the
+ *      restrictions of policy/refex.h (no top-level '|', no '^' outside a
+ *      class, the subset of maelys/cli/regex.h, 4 096 states), or is refused
+ *      with the column of the refex as written. */
 static const char *classify_refex(const char *text, int deny, refex_kind_t *out_kind,
-                                  char out_value[MG_REF_PATTERN_MAX + 1u]) {
+                                  char out_value[MG_REF_PATTERN_MAX + 1u], char reason[160]) {
     size_t length = strlen(text);
-    int anchored = length > 0u && text[length - 1u] == '$';
-    size_t body = anchored ? length - 1u : length;
-    if (body == 0u) return "unsupported refex syntax";
+    if (length == 0u) return "unsupported refex syntax";
     const char *implied = strncmp(text, "refs/", 5u) == 0 ? "" : "refs/heads/";
+    size_t implied_length = strlen(implied);
     if (names_user(implied, text)) return k_names_user;
-    /* Other syntax first: a '.' is named only in an otherwise literal refex. */
-    int any_character = 0;
-    for (size_t i = 0u; i < body; ++i) {
+    int anchored = text[length - 1u] == '$' && !(length >= 2u && text[length - 2u] == '\\');
+    size_t body = anchored ? length - 1u : length;
+    int literal_syntax = body > 0u;
+    for (size_t i = 0u; literal_syntax && i < body; ++i) {
         unsigned char ch = (unsigned char)text[i];
-        if (ch == '\\' && i + 1u < body && text[i + 1u] == '.')
+        if (ch == '\\' && i + 1u < body && strchr("./-", text[i + 1u]))
             ++i;
-        else if (ch == '.')
-            any_character = 1;
         else if (!(isalnum(ch) || ch == '_' || ch == '/' || ch == '-'))
-            return "unsupported refex syntax";
+            literal_syntax = 0;
     }
-    if (any_character) return "'.' is any character in Gitolite; write '\\.' for a literal dot";
+    if (!literal_syntax) {
+        if (implied_length + length > MG_REF_PATTERN_MAX) return "ref pattern exceeds 256 bytes";
+        (void)snprintf(out_value, MG_REF_PATTERN_MAX + 1u, "%s%s", implied, text);
+        size_t offset = 0u;
+        const char *refused = mg_refex_regex_check(out_value, NULL, &offset);
+        if (refused) {
+            size_t column = offset >= implied_length ? offset - implied_length + 1u : 1u;
+            (void)snprintf(reason, 160u, "refex refused at column %zu: %s", column, refused);
+            return reason;
+        }
+        *out_kind = REFEX_REGEX;
+        return NULL;
+    }
     char literal[MG_REF_PATTERN_MAX + 1u];
     size_t used = 0u;
     for (size_t i = 0u; i < body; ++i) {
@@ -480,7 +512,7 @@ static const char *classify_refex(const char *text, int deny, refex_kind_t *out_
         literal[used++] = text[i];
     }
     literal[used] = '\0';
-    if (strlen(implied) + used > MG_REF_PATTERN_MAX) return "ref pattern exceeds 256 bytes";
+    if (implied_length + used > MG_REF_PATTERN_MAX) return "ref pattern exceeds 256 bytes";
     (void)snprintf(out_value, MG_REF_PATTERN_MAX + 1u, "%s%s", implied, literal);
     int open_namespace = out_value[strlen(out_value) - 1u] == '/';
     if (anchored && open_namespace) return "unsupported refex syntax";
@@ -913,7 +945,7 @@ static maelys_git_result_t parse_gitolite(FILE *input,
         int is_vref = 0, is_ref_rule = 0;
         const char *ref_permission = NULL;
         refex_kind_t ref_kind = REFEX_EXACT;
-        char ref_name[MG_REF_PATTERN_MAX + 1u];
+        char ref_name[MG_REF_PATTERN_MAX + 1u], refex_reason[160];
         vref_rule_t vref = {0};
         if (right[0] == '-') {
             char *descriptor = trim(right + 1u);
@@ -930,7 +962,8 @@ static maelys_git_result_t parse_gitolite(FILE *input,
                     return MAELYS_GIT_ERR_IO;
                 continue;
             } else {
-                const char *refused = classify_refex(descriptor, 1, &ref_kind, ref_name);
+                const char *refused = classify_refex(descriptor, 1, &ref_kind, ref_name, refex_reason);
+                if (!refused && ref_kind == REFEX_REGEX && !grants) refused = k_regex_needs_grants;
                 if (refused) {
                     if (!add_unsupported(migration, line_number, refused, original))
                         return MAELYS_GIT_ERR_IO;
@@ -948,7 +981,8 @@ static maelys_git_result_t parse_gitolite(FILE *input,
                     (strcmp(right, "RW") && strcmp(right, "RW+")) ||
                     strncmp(candidate_ref, "VREF/", 5u) == 0
                         ? "only exact full-ref RW/RW+ rules are supported"
-                        : classify_refex(candidate_ref, 0, &ref_kind, ref_name);
+                        : classify_refex(candidate_ref, 0, &ref_kind, ref_name, refex_reason);
+                if (!refused && ref_kind == REFEX_REGEX && !grants) refused = k_regex_needs_grants;
                 if (refused) {
                     if (!add_unsupported(migration, line_number, refused, original))
                         return MAELYS_GIT_ERR_IO;
@@ -986,7 +1020,9 @@ static maelys_git_result_t parse_gitolite(FILE *input,
         }
         const grant_rule_t rule = {
             .is_vref = is_vref, .is_ref_rule = is_ref_rule, .right = right,
-            .ref_permission = ref_permission, .ref_prefix = ref_kind == REFEX_PREFIX, .ref_name = ref_name,
+            .ref_permission = ref_permission,
+            .ref_form = ref_kind == REFEX_REGEX ? "regex" : ref_kind == REFEX_PREFIX ? "prefix" : "exact",
+            .ref_name = ref_name,
             .vref_predicate = vref.predicate, .vref_path = vref.symbol_value, .vref_limit = vref.integer_value};
         for (char *subject = strtok_r(subjects, " \t,", &save);
              subject; subject = strtok_r(NULL, " \t,", &save)) {
@@ -998,9 +1034,10 @@ static maelys_git_result_t parse_gitolite(FILE *input,
                                      vref.uses_integer ? &vref.integer_value : NULL)) :
                     is_ref_rule ?
                     (repositories[i].kind == REPOSITORY_EXACT &&
-                     append_ref_grant(policy, ref_permission, subject,
-                                      repositories[i].value, ref_kind, ref_name,
-                                      prefix_facts, out_prefix_facts)) :
+                     (ref_kind == REFEX_REGEX ||
+                      append_ref_grant(policy, ref_permission, subject,
+                                       repositories[i].value, ref_kind, ref_name,
+                                       prefix_facts, out_prefix_facts))) :
                     repositories[i].kind == REPOSITORY_EXACT ?
                         append_direct_grant(policy, right, subject, repositories[i].value) :
                         append_creator_namespace_grant(policy, right, subject,
@@ -1350,7 +1387,7 @@ static maelys_git_result_t snapshot_of(grants_builder_t *grants, size_t line_num
     *out_bytes = NULL;
     if (!add_unsupported(migration, line_number, "grants snapshot refused",
                          written == MAELYS_JSON_OK ? refusal.message :
-                         "it exceeds the bounds of maelys-git-grants/1"))
+                         "it exceeds the bounds of a grants snapshot"))
         return MAELYS_GIT_ERR_IO;
     grants_builder_t empty = {0};
     char *bytes = NULL;
@@ -1359,6 +1396,68 @@ static maelys_git_result_t snapshot_of(grants_builder_t *grants, size_t line_num
         ? mg_grants_parse(bytes, size, out_parsed, error) : MAELYS_GIT_ERR_IO;
     free(bytes);
     return result;
+}
+
+static int add_remark(maelys_git_gitolite_migration_result_t *result, const char *text) {
+    for (size_t i = 0u; i < result->remark_count; ++i)
+        if (!strcmp(result->remarks[i], text)) return 1;
+    char **grown = realloc(result->remarks, (result->remark_count + 1u) * sizeof(*grown));
+    if (!grown) return 0;
+    result->remarks = grown;
+    if (!(result->remarks[result->remark_count] = strdup(text))) return 0;
+    ++result->remark_count;
+    return 1;
+}
+
+static int is_write_level(const char *level) {
+    return !strcmp(level, "RW") || !strcmp(level, "RW+");
+}
+
+/* The remarks of a migration (directive GIT-C08, section 4.8): a
+ * repository that holds both write grants (on its refs or on the whole
+ * repository) and ref denies, where any deny that applies wins, whatever
+ * the order Gitolite would read them in; and a group that holds rights but
+ * has no member nor nested group, whose rights apply to no one. @all, every
+ * user's group, is not one. Conservative: a remark does not say the order
+ * changes a decision, only that it could. */
+static int remark_on(const grants_builder_t *grants, maelys_git_gitolite_migration_result_t *result) {
+    const grant_section_t *refs = &grants->sections[SECTION_REFS];
+    const grant_section_t *access = &grants->sections[SECTION_ACCESS];
+    char text[600];
+    for (size_t i = 0u; i < refs->count; ++i) {
+        if (strcmp(refs->items[i].text[5], "-")) continue;
+        const char *repository = refs->items[i].text[2];
+        int granted = 0;
+        for (size_t k = 0u; !granted && k < refs->count; ++k)
+            granted = !strcmp(refs->items[k].text[2], repository) && is_write_level(refs->items[k].text[5]);
+        for (size_t k = 0u; !granted && k < access->count; ++k)
+            granted = !strcmp(access->items[k].text[2], repository) && is_write_level(access->items[k].text[3]);
+        if (!granted) continue;
+        (void)snprintf(text, sizeof(text),
+                       "repository %s: a ref deny that applies wins over every grant, where Gitolite decides "
+                       "by the first rule that applies: stricter, whatever their order", repository);
+        if (!add_remark(result, text)) return 0;
+    }
+    static const int subjects[] = {SECTION_ACCESS, SECTION_REFS, SECTION_CREATORS, SECTION_VREF_LIMITS,
+                                   SECTION_VREF_NAMES};
+    const grant_section_t *members = &grants->sections[SECTION_MEMBERS];
+    const grant_section_t *nested = &grants->sections[SECTION_NESTED];
+    for (size_t s = 0u; s < sizeof(subjects) / sizeof(subjects[0]); ++s) {
+        const grant_section_t *section = &grants->sections[subjects[s]];
+        for (size_t i = 0u; i < section->count; ++i) {
+            if (strcmp(section->items[i].text[0], "group")) continue;
+            const char *group = section->items[i].text[1];
+            if (!strcmp(group, MG_GRANTS_ALL_GROUP)) continue;
+            int held = 0;
+            for (size_t k = 0u; !held && k < members->count; ++k) held = !strcmp(members->items[k].text[1], group);
+            for (size_t k = 0u; !held && k < nested->count; ++k) held = !strcmp(nested->items[k].text[1], group);
+            if (held) continue;
+            (void)snprintf(text, sizeof(text), "group @%s holds rights but has no member: they apply to no one",
+                           group);
+            if (!add_remark(result, text)) return 0;
+        }
+    }
+    return 1;
 }
 
 maelys_git_result_t mg_migrate_gitolite_grants(const char *input_path, const char *output_directory, int apply,
@@ -1387,9 +1486,13 @@ maelys_git_result_t mg_migrate_gitolite_grants(const char *input_path, const cha
     mg_grants_t *parsed = NULL;
     if (result == MAELYS_GIT_OK)
         result = snapshot_of(&grants, lines, &snapshot, &snapshot_size, &parsed, out_result, error);
-    if (result == MAELYS_GIT_OK &&
-        !build_manifest(program, program_length, "Audited Gitolite program " MG_GITOLITE_PROGRAM_FORMAT
-                        "; its grants are a maelys-git-grants/1 snapshot", &manifest))
+    const char *format = grants_format(&grants);
+    char description[160];
+    (void)snprintf(description, sizeof(description),
+                   "Audited Gitolite program " MG_GITOLITE_PROGRAM_FORMAT "; its grants are a %s snapshot", format);
+    (void)mg_copy_string(out_result->grants_format, sizeof(out_result->grants_format), format);
+    if (result == MAELYS_GIT_OK && !remark_on(&grants, out_result)) result = MAELYS_GIT_ERR_IO;
+    if (result == MAELYS_GIT_OK && !build_manifest(program, program_length, description, &manifest))
         result = MAELYS_GIT_ERR_IO;
     if (result == MAELYS_GIT_OK) {
         result = judge_budget(program, program_length, &manifest, parsed, &graph, lines, out_result, error);

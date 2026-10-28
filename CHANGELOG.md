@@ -21,7 +21,28 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   of the snapshot. A search that fails refuses the request (`regex search
   failed`, kind `engine`). A receipt names the format read, `/1` or `/2`,
   and the verifier accepts both; `maelys_git_receipt_grants_t` gains the
-  member `format`. The migration does not write regex patterns yet.
+  member `format`.
+- The Gitolite migration writes a refex that is not a literal name as a
+  ref pattern of form `regex`, completed by `refs/heads/` as Gitolite
+  completes it, kept as written and anchored at its start: `RW
+  refs/heads/feature/.*`, `RW v[0-9]+`, `- refs/tags/v1.0` and `RW
+  refs/tags/v1.0$` are migrated where they were refused. A refex is read in
+  this order: one that names `/USER/` once completed is refused; one made
+  of `[A-Za-z0-9_/-]` and of the escapes `\.`, `\/` and `\-` is a literal,
+  migrated as before (exact or prefix); any other is a regex, checked by
+  the rules of the reader of a snapshot, and refused with the column of the
+  refex as written where reading stopped (`refex refused at column 5: a
+  '|' at the top level`). The snapshot is `maelys-git-grants/2` only when
+  it holds a regex pattern, `/1` otherwise; the plan states it in
+  `grantsFormat`. The plan also gives `remarks`, which never block a
+  migration: a repository with write grants and ref denies, where any deny
+  that applies wins whatever its order in Gitolite (stricter), and a group
+  with rights and no member. A regex is migrated as grants as data only:
+  the compiled policy refuses it. On three configurations of regex refexes
+  (10,164 decisions), the oracle of the tests decides as Gitolite 3.6.15
+  itself on every one, and Git Core as the oracle read deny-wins; the 11
+  decisions where Gitolite's first match differs are all stricter in Git
+  Core.
 - A policy set holding the audited Gitolite program decides only the refs
   Gitolite 3.6.15 admits with its default patterns (`REF_OR_FILENAME_PATT`
   of `Rc.pm`): a ref that is not a valid ref, does not begin with a

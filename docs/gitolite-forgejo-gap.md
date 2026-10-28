@@ -25,7 +25,7 @@ Git Core vise un noyau local de securite pilotable par une forge separee.
 | Transport | Git smart HTTP/HTTPS | **Absent** : l'HTTPS actuel transporte les commandes de l'agent, pas Git | **Partiel** : smart HTTP pris en charge, moins central que SSH | **Complet** | P1 si une forge Web l'exige |
 | Autorisation | Lecture, ecriture et creation par depot | **Complet** : decisions Datalog et creation bare dynamique | **Complet** | **Complet** | Acquis |
 | Autorisation | Groupes d'utilisateurs | **Complet** dans les politiques et groupes imbriques dans la migration ; includes/LDAP externes | **Complet** : groupes, inclusions, macros, LDAP extensible | **Complet** : utilisateurs, organisations et equipes | P1 pour les sources dynamiques |
-| Autorisation | Regles par branche, tag et type de mise a jour | **Complet** dans le noyau ; migration des full refs exactes et des prefixes litteraux ; aucune regex ni precedence regex | **Complet** : refex, creation, suppression, rewind et ordre des regles | **Complet** : protections de branches et tags, glob/regex selon le type | P1 pour les refex selectionnees |
+| Autorisation | Regles par branche, tag et type de mise a jour | **Complet** dans le noyau ; migration des full refs exactes, des prefixes litteraux et des refex regex en droits comme donnees ; refus prioritaire au lieu de la premiere regle | **Complet** : refex, creation, suppression, rewind et ordre des regles | **Complet** : protections de branches et tags, glob/regex selon le type | P2 : ordre des regles |
 | Autorisation | Regles selon les fichiers modifies | **Complet** : tous les changements sont streams, sans plafond historique de 64 chemins | **Complet** : `VREF/NAME` | **Partiel** : protections de refs, sans moteur general de faits par chemin equivalent | Avantage Maelys |
 | Autorisation | Renommages et double chemin ancien/nouveau | **Complet** : `path` et `old_path` | **Partiel** : le VREF expose les noms touches, sans domaine type de renommage equivalent | **Partiel** : pas de domaine de politique general equivalent | Avantage Maelys |
 | Autorisation | Faits sur objets Git | **Complet** : taille, mode, binaire, symlink, submodule et pointeur LFS | **Partiel** : VREF livres pour compte, nom, type et taille de nouveaux binaires ; extensions possibles | **Partiel** : controles integres cibles, sans faits composables equivalents | Avantage Maelys |
@@ -39,7 +39,7 @@ Git Core vise un noyau local de securite pilotable par une forge separee.
 | Depots | Inventaire, inspection, renommage, archive, suppression recuperable et restauration | **Complet** : plan/apply et preconditions CAS | **Partiel** : administration centree configuration ; operations de cycle de vie souvent externes | **Complet** via la forge, avec modele plus riche | Acquis pour le local |
 | Depots | Mirroring | **Partiel avance** : miroir local idempotent, refs atomiques, HEAD et preconditions ; pas de redirection/scheduling distribue | **Complet** : maitres/copies, synchronisation et redirection avec limites documentees | **Complet** : miroirs de depot | P1 : orchestration distante |
 | Administration | Delegation d'administration | **Partiel** : faits `delegate_namespace` bornes au namespace ; pas encore de publication transactionnelle de sous-politiques | **Complet** : `subconf` et `VREF/NAME` | **Complet** : organisations, equipes et permissions | P1 |
-| Migration | Import de configuration Gitolite | **Partiel avance** : groupes imbriques, depots exacts, `C/R/RW/RW+`, wild `CREATOR`, full refs exactes, prefixes litteraux de refs et VREF `NAME/COUNT/MAX_NEWBIN_SIZE`; refus ferme du reste | Sans objet | Sans objet | P1 : includes, subconf et refex choisies |
+| Migration | Import de configuration Gitolite | **Partiel avance** : groupes imbriques, depots exacts, `C/R/RW/RW+`, wild `CREATOR`, full refs exactes, prefixes litteraux et refex regex, VREF `NAME/COUNT/MAX_NEWBIN_SIZE`; refus ferme du reste | Sans objet | Sans objet | P1 : includes et subconf |
 | API | CLI normalise et decouvrable par un agent | **Complet** : enveloppe `agent-cli/v2`, catalogues JSON et plan/apply | **Partiel** : CLI et commandes SSH scriptables, sans contrat homogene equivalent | **Complet** : CLI, API HTTP et interface Web | Avantage Maelys pour l'automatisation locale |
 | API | Agent distant durable | **Complet** dans son perimetre : HTTPS long-poll, journal SQLite, idempotence et outbox | **Absent** comme protocole integre | **Complet** autrement via API, webhooks et services de la forge | P1 : annulation et observabilite |
 | Pull requests | Analyse de conflit et preparation FF/merge/squash | **Complet** dans un meme depot ou entre forks, deterministe et sans mutation du depot cible pendant le plan | **Absent** | **Complet** | Acquis pour le noyau PR |
@@ -64,18 +64,33 @@ architecture Datalog apporte une vraie difference : composition de faits,
 renommages, inspection d'objets, quotas globaux au receive et preconditions de
 politique. Il couvre maintenant le socle des groupes imbriques, refs exactes,
 wild repos avec `CREATOR`, VREF usuels et miroirs locaux. Gitolite reste devant
-pour les regex generales, `subconf`, la delegation publiee, la redirection de
+pour l'ordre des regles, `subconf`, la delegation publiee, la redirection de
 miroirs et l'ecosysteme d'extensions historiques.
 
 ### Refex migrees
 
 Gitolite ancre un refex au debut et non a la fin, complete par `refs/heads/`
 un nom qui ne commence pas par `refs/`, et lit un `$` final comme une egalite.
-La migration ne convertit que des noms litteraux, composes de
-`[A-Za-z0-9_/-]` et du point echappe `\.`, et seulement sous une forme dont
-l'equivalence est exacte. Un `.` nu est un caractere quelconque pour Gitolite :
-aucun litteral ne couvre ce qu'il y lit, il est donc refuse, en refus comme en
-attribution.
+La migration lit un refex dans cet ordre :
+
+1. un refex qui nomme `/USER/` une fois complete est refuse : Gitolite y met
+   le nom de chaque utilisateur ;
+2. un refex fait de `[A-Za-z0-9_/-]` et des echappements `\.`, `\/` et `\-`
+   est un nom litteral, migre en egalite ou en prefixe quand l'equivalence
+   est exacte ;
+3. tout autre refex est une regex : complete, garde tel qu'ecrit et ancre au
+   debut, il devient un motif de forme `regex` de l'instantane
+   `maelys-git-grants/2`, lu avec le sous-ensemble de `maelys/cli/regex.h`
+   (maelys-cli 0.13.0). Les restrictions sont celles du lecteur d'un
+   instantane (`mg_refex_regex_check`) : au plus 256 octets complete
+   compris, pas de `|` au niveau superieur, pas de `^` hors d'une classe,
+   au plus 4 096 etats. Un refus donne la colonne du refex tel qu'ecrit ou
+   la lecture s'est arretee.
+
+L'instantane n'est `/2` que s'il contient un motif regex ; sinon il reste
+`/1`, octet pour octet. Le plan le dit dans `grantsFormat`. Une regex n'est
+migree qu'en droits comme donnees : la politique compilee la refuse
+(`a regex refex is migrated as grants as data only`).
 
 | Forme Gitolite | Resultat | Remarque |
 | --- | --- | --- |
@@ -87,11 +102,25 @@ attribution.
 | `RW refs/tags/v1\.0$ = alice` | fait exact sur `refs/tags/v1.0` | point litteral |
 | `- refs/tags/v1\. = mallory` | regle `starts_with(F, "refs/tags/v1.")` | comme Gitolite |
 | `RW+ personal/USER/ = @all`, `- USER/ = mallory`, `- VREF/NAME/USER/x = mallory` | refuse, `'/USER/' is the user's own name in Gitolite` | Gitolite y met le nom de chaque utilisateur, une fois le refex complete |
-| `- refs/tags/v1.0 = mallory`, `RW refs/tags/v1.0$ = alice` | refuse, `'.' is any character in Gitolite` | Gitolite refuse aussi `v1x0` ; ecrire `\.` |
-| `RW refs/heads/(main|dev) = alice` | refuse, `unsupported refex syntax` | alternance |
-| `RW refs/heads/feature/.* = alice`, `[a-z]+`, `^...` | refuse, `unsupported refex syntax` | repetition, classe, ancre |
+| `RW refs/heads/feature/.* = alice`, `RW v[0-9]+ = alice` | motif `regex` `refs/heads/feature/.*`, `refs/heads/v[0-9]+` | comme Gitolite |
+| `- refs/tags/v1.0 = mallory`, `RW refs/tags/v1.0$ = alice` | motif `regex` | comme Gitolite : `.` est un caractere quelconque, `v1x0` compris |
+| `RW refs/heads/(main\|dev) = alice` | motif `regex` | alternance dans un groupe |
+| `RW main\|dev = alice` | refuse, `refex refused at column 5: a '\|' at the top level` | Gitolite y lit `^main` ou `dev` n'importe ou |
+| `RW ^main = alice`, `RW refs/heads/a\d = alice` | refuse, `refex refused at column N: ...` | ancre deja posee ; echappement hors du sous-ensemble |
 | prefixe de plus de 63 octets ou de plus de 16 `/` | regle `starts_with` | hors des faits `ref_prefix` |
 | motif de plus de 256 octets | refuse, `ref pattern exceeds 256 bytes` | borne du moteur |
+
+Une regex de l'instantane est compilee une fois, a sa lecture, dans les
+budgets de D3 : 4 096 etats par motif, 4 096 pour les motifs distincts d'un
+depot, 1 048 576 pour l'instantane. Elle est cherchee sans allocation, une
+fois par ref et par motif : les requetes d'un push qui portent une meme ref
+ne la cherchent pas de nouveau.
+
+Le plan rend aussi `remarks`, qui ne bloquent jamais la migration : un depot
+qui porte a la fois des droits d'ecriture et des refus de refs, ou tout
+refus qui s'applique l'emporte quel que soit son ordre chez Gitolite (plus
+strict), et un groupe qui porte des droits sans aucun membre. Une remarque
+dit que l'ordre pourrait changer une decision, pas qu'il la change.
 
 Un prefixe de tag de version comme `refs/tags/v` n'est donc pas migre en
 autorisation : ecrit nu, il reste une egalite. Il s'ecrit a la main,

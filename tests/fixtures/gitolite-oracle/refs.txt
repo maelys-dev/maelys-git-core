@@ -49,3 +49,17 @@ refs/heads/xdev
 refs/tags/dev
 refs/heads/é
 refs/notes/x
+refs/heads/wip/x
+refs/heads/tmp/y
+refs/heads/wipx
+refs/heads/feature/xy
+refs/heads/feature/yx
+refs/heads/ab/c
+refs/heads/release-12
+refs/heads/release-12345
+refs/heads/xy
+refs/heads/xay
+refs/heads/x1y
+refs/tags/v1.2.3
+refs/tags/v0.1
+refs/tags/v1.

@@ -5,10 +5,11 @@ all-deny-first	migrates
 all-grant-first	migrates
 all-in-group	refused: '@all' in a group definition
 all-nested	refused: '@all' holds every user
-alternation	refused: unsupported refex syntax
+alternation	refused: a '|' at the top level of a refex
 deny-rules	refused: only exact full-ref RW/RW+ rules are supported
-escapes	refused: unsupported refex syntax
+escapes	migrates
 literal	migrates
 order	migrates
-regex	refused: unsupported refex syntax
+regex	migrates
+regex-order	migrates
 user	refused: '/USER/' is the user's own name in Gitolite
