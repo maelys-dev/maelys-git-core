@@ -6,7 +6,7 @@
 #                       in Git Core and a prefix in Gitolite: Git Core denies
 #                       main-hotfix, main/x... Stricter, by design of the migration.
 # Against Gitolite's own first-match rule, the order of rules adds differences,
-# all stricter too; they are not this list's.
+# all stricter too: they are order.tsv's.
 # case	user	aa	ref	git_core	gitolite	kind
 literal	alice	W	refs/heads/main-hotfi	DENY	ALLOW	bare-literal-grant
 literal	alice	W	refs/heads/main-hotfix	DENY	ALLOW	bare-literal-grant

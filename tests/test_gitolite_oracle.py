@@ -14,11 +14,17 @@ configuration with Git Core (tests/gitolite_oracle_decide.c) and:
   Every other difference must be listed in divergences.tsv with its kind,
   and every listed one must still occur: the list is the frozen account of
   where Git Core and Gitolite differ.
+- the same decision is compared with the oracle's in --mode first-match,
+  Gitolite's own rule. Where they differ only by the order of the rules,
+  Git Core must deny what Gitolite allows, never the reverse, the plan of
+  the migration must remark on the repository, and the query must be
+  listed in order.tsv, every listed one still occurring.
 
     test_gitolite_oracle.py PERL ORACLE DECIDE FIXTURES WORKDIR [--record]
 
---record rewrites divergences.tsv from what is observed, keeping known
-kinds; a commit that changes it explains every changed line.
+--record rewrites divergences.tsv and order.tsv from what is observed,
+keeping known kinds; a commit that changes them explains every changed
+line.
 """
 import os
 import subprocess
@@ -37,8 +43,14 @@ HEADER = (
     "#                       in Git Core and a prefix in Gitolite: Git Core denies\n"
     "#                       main-hotfix, main/x... Stricter, by design of the migration.\n"
     "# Against Gitolite's own first-match rule, the order of rules adds differences,\n"
-    "# all stricter too; they are not this list's.\n"
+    "# all stricter too: they are order.tsv's.\n"
     "# case\tuser\taa\tref\tgit_core\tgitolite\tkind\n")
+ORDER_HEADER = (
+    "# Where Git Core, any deny that applies deciding first, denies what Gitolite 3.6.15\n"
+    "# allows by the first rule that applies (tests/gitolite_oracle.pl --mode first-match),\n"
+    "# and only by the order of the rules: the oracle read deny-wins agrees with Git Core.\n"
+    "# Never the reverse; the plan of each such migration remarks on the repository.\n"
+    "# case\tuser\taa\tref\tgit_core\tgitolite\n")
 
 
 def git_carries(ref):
@@ -91,8 +103,11 @@ def compare(perl, oracle, decide, fixtures, workdir, record):
     cases = load_table(os.path.join(fixtures, "cases.tsv"), 2)
     divergences_path = os.path.join(fixtures, "divergences.tsv")
     expected = load_table(divergences_path, 7)
+    order_path = os.path.join(fixtures, "order.tsv")
+    expected_order = load_table(order_path, 6)
     refs = refs_of(os.path.join(fixtures, "refs.txt"))
     observed, failures, compared, agreed = {}, [], 0, 0
+    order_observed = {}
     for (case,), outcome in sorted(cases.items()):
         conf = os.path.join(fixtures, "cases", case + ".conf")
         queries = [("app", user, aa, ref) for user in USERS for aa in ("W", "+") for ref in refs]
@@ -109,25 +124,43 @@ def compare(perl, oracle, decide, fixtures, workdir, record):
             if lines[0] != "UNSUPPORTED" or not any(reason in line for line in lines[1:]):
                 failures.append(f"{case}: expected refused with {reason!r}, got {lines[:3]}")
             continue
-        if lines[0] != "MIGRATED":
+        head = lines[0].split()
+        if len(head) != 2 or head[0] != "MIGRATED" or not head[1].isdigit():
             failures.append(f"{case}: expected to migrate, got {lines[:3]}")
             continue
-        mine = lines[1:1 + len(queries)]
-        oracle_run = subprocess.run([perl, oracle, "--mode", "deny-wins", conf], input=text,
-                                    capture_output=True, text=True)
-        if oracle_run.returncode != 0:
-            failures.append(f"{case}: oracle failed: {oracle_run.stderr.strip()}")
+        remarks = lines[1:1 + int(head[1])]
+        mine = lines[1 + len(remarks):1 + len(remarks) + len(queries)]
+        answers = {}
+        for mode in ("deny-wins", "first-match"):
+            oracle_run = subprocess.run([perl, oracle, "--mode", mode, conf], input=text,
+                                        capture_output=True, text=True)
+            if oracle_run.returncode != 0:
+                failures.append(f"{case}: oracle {mode} failed: {oracle_run.stderr.strip()}")
+                break
+            answers[mode] = oracle_run.stdout.split()
+        if len(answers) != 2:
             continue
-        theirs = oracle_run.stdout.split()
-        if len(mine) != len(queries) or len(theirs) != len(queries):
-            failures.append(f"{case}: {len(mine)} and {len(theirs)} answers for {len(queries)} queries")
+        theirs, first = answers["deny-wins"], answers["first-match"]
+        if len(mine) != len(queries) or len(theirs) != len(queries) or len(first) != len(queries):
+            failures.append(f"{case}: {len(mine)}, {len(theirs)} and {len(first)} answers "
+                            f"for {len(queries)} queries")
             continue
-        for (_, user, aa, ref), git_core, gitolite in zip(queries, mine, theirs):
+        same = lambda core, gitolite: core == gitolite or (gitolite == "ERROR" and core == "DENY")
+        for (repo, user, aa, ref), git_core, gitolite, gitolite_first in zip(queries, mine, theirs, first):
             compared += 1
-            if git_core == gitolite or (gitolite == "ERROR" and git_core == "DENY"):
-                agreed += 1
+            if not same(git_core, gitolite):
+                observed[(case, user, aa, ref, git_core, gitolite)] = None
                 continue
-            observed[(case, user, aa, ref, git_core, gitolite)] = None
+            agreed += 1
+            if same(git_core, gitolite_first):
+                continue
+            order_observed[(case, user, aa, ref, git_core, gitolite_first)] = None
+            if (git_core, gitolite_first) != ("DENY", "ALLOW"):
+                failures.append(f"{case}: the order of rules makes Git Core {git_core} where Gitolite "
+                                f"says {gitolite_first}: {user} {aa} {ref}")
+            if not any(remark.startswith(f"repository {repo}.git: ") for remark in remarks):
+                failures.append(f"{case}: an order difference without a remark on {repo}.git: "
+                                f"{user} {aa} {ref}")
     if not compared:
         failures.append("no decision compared: no case migrated")
     if record:
@@ -135,7 +168,11 @@ def compare(perl, oracle, decide, fixtures, workdir, record):
             out.write(HEADER)
             for key in sorted(observed):
                 out.write("\t".join(key) + "\t" + expected.get(key, "UNEXPLAINED") + "\n")
-        print(f"recorded {len(observed)} divergences")
+        with open(order_path, "w") as out:
+            out.write(ORDER_HEADER)
+            for key in sorted(order_observed):
+                out.write("\t".join(key) + "\n")
+        print(f"recorded {len(observed)} divergences, {len(order_observed)} order differences")
     else:
         for key in sorted(observed):
             if key not in expected:
@@ -146,11 +183,19 @@ def compare(perl, oracle, decide, fixtures, workdir, record):
         for key, kind in sorted(expected.items()):
             if kind == "UNEXPLAINED":
                 failures.append("divergence without a kind: " + " ".join(key))
+        listed_order = {key + (value,) for key, value in expected_order.items()}
+        for key in sorted(order_observed):
+            if key not in listed_order:
+                failures.append("unlisted order difference: " + " ".join(key))
+        for key in sorted(listed_order):
+            if key not in order_observed:
+                failures.append("listed order difference no longer observed: " + " ".join(key))
     kinds = {}
     for key in observed:
         kind = expected.get(key, "UNEXPLAINED")
         kinds[kind] = kinds.get(kind, 0) + 1
-    print(f"{compared} decisions compared with Gitolite: {agreed} agree, {len(observed)} listed divergences {kinds}")
+    print(f"{compared} decisions compared with Gitolite: {agreed} agree, {len(observed)} listed divergences {kinds}; "
+          f"{len(order_observed)} stricter by the order of rules")
     for failure in failures:
         print("FAIL", failure)
     return 1 if failures else 0

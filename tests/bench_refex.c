@@ -310,27 +310,37 @@ static int push_bench(size_t commits, size_t changes, const char *directory) {
     (void)snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.json", directory);
     if (!write_bytes(manifest_path, manifest)) return 1;
     /* The 50 patterns, and one literal prefix that grants the push; the
-     * same grants with literals only. */
-    char *refs = NULL, piece[200];
-    size_t used = 0u, capacity = 0u;
+     * literal prefix alone; and the prefix beside 50 exact refs that never
+     * match either, the same number of grants without a regex. */
+    char *refs = NULL, *exacts = NULL, piece[200];
+    size_t used = 0u, capacity = 0u, exacts_used = 0u, exacts_capacity = 0u;
     add(&refs, &used, &capacity, "[\"user\",\"alice\",\"app.git\",\"prefix\",\"refs/heads/\",\"RW\"]");
     for (size_t i = 0u; i < 50u; ++i) {
         (void)snprintf(piece, sizeof(piece),
                        ",[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/heads/(.*a){16}x%02zu\",\"RW\"]", i);
         add(&refs, &used, &capacity, piece);
     }
+    for (size_t i = 0u; i < 50u; ++i) {
+        (void)snprintf(piece, sizeof(piece), "%s[\"user\",\"alice\",\"app.git\",\"exact\",\"refs/heads/x%02zu\",\"RW\"]",
+                       i ? "," : "", i);
+        add(&exacts, &exacts_used, &exacts_capacity, piece);
+    }
+    add(&exacts, &exacts_used, &exacts_capacity, ",[\"user\",\"alice\",\"app.git\",\"prefix\",\"refs/heads/\",\"RW\"]");
     char *with_regex = snapshot_of(refs);
     free(refs);
     char *literal = snapshot_of("[\"user\",\"alice\",\"app.git\",\"prefix\",\"refs/heads/\",\"RW\"]");
     memcpy(strstr(literal, "grants/2"), "grants/1", 8u);
+    char *with_exacts = snapshot_of(exacts);
+    free(exacts);
+    memcpy(strstr(with_exacts, "grants/2"), "grants/1", 8u);
     char ref[512];
     (void)snprintf(ref, sizeof(ref), "refs/heads/");
     memset(ref + 11, 'a', 500u);
     ref[511] = '\0';
-    const char *texts[2] = {literal, with_regex}, *labels[2] = {"literal", "regex"};
-    double seconds[2] = {0.0, 0.0};
-    size_t searches[2] = {0u, 0u};
-    for (size_t k = 0u; k < 2u; ++k) {
+    const char *texts[3] = {literal, with_regex, with_exacts}, *labels[3] = {"literal", "regex", "exacts"};
+    double seconds[3] = {0.0, 0.0, 0.0};
+    size_t searches[3] = {0u, 0u, 0u};
+    for (size_t k = 0u; k < 3u; ++k) {
         char snapshot[1024];
         (void)snprintf(snapshot, sizeof(snapshot), "%s/grants-%s.json", directory, labels[k]);
         if (!write_bytes(snapshot, texts[k])) return 1;
@@ -346,11 +356,13 @@ static int push_bench(size_t commits, size_t changes, const char *directory) {
     }
     size_t requests = 2u + commits + changes;
     (void)printf("push      %zu requests of one ref of 511 bytes: literal %.3f s; 50 regex patterns %.3f s, "
-                 "%zu searches; the patterns cost %.3f s (%.1f us per request)\n",
+                 "%zu searches; the patterns cost %.3f s (%.1f us per request); 50 exact refs instead "
+                 "%.3f s, the regex beyond them %.3f s\n",
                  requests, seconds[0], seconds[1], searches[1], seconds[1] - seconds[0],
-                 (seconds[1] - seconds[0]) * 1e6 / (double)requests);
+                 (seconds[1] - seconds[0]) * 1e6 / (double)requests, seconds[2], seconds[1] - seconds[2]);
     free(with_regex);
     free(literal);
+    free(with_exacts);
     return 0;
 }
 

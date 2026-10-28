@@ -3,8 +3,9 @@
  * data, then reads the queries of tests/gitolite_oracle.pl on stdin,
  *     REPO USER AA REF
  * and prints ALLOW, DENY or ERROR per query. The first line says whether
- * the configuration migrates: MIGRATED, or UNSUPPORTED followed by each
- * refused entry on its own line, and then nothing else.
+ * the configuration migrates: MIGRATED and the number of remarks of its
+ * plan, each then on its own line, or UNSUPPORTED followed by each refused
+ * entry on its own line, and then nothing else.
  *
  * A Gitolite repository REPO is the Git Core repository REPO.git. W is a
  * fast-forward, + a forced update; the ref "any" is a write without a ref,
@@ -14,6 +15,7 @@
 #include "policy/policy_grants.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const char *decide(maelys_git_policy_t *policy, const char *repository, const char *user,
@@ -54,6 +56,10 @@ int main(int argc, char **argv) {
         maelys_git_gitolite_migration_result_clear(&migration);
         return 0;
     }
+    size_t remark_count = migration.remark_count;
+    char **remarks = migration.remarks;
+    migration.remarks = NULL;
+    migration.remark_count = 0u;
     maelys_git_gitolite_migration_result_clear(&migration);
     if (mg_migrate_gitolite_grants(argv[1], argv[2], 1, &migration, &error) != MAELYS_GIT_OK) {
         (void)fprintf(stderr, "apply: %s\n", error.message);
@@ -69,7 +75,12 @@ int main(int argc, char **argv) {
         (void)fprintf(stderr, "open: %s\n", error.message);
         return 1;
     }
-    (void)printf("MIGRATED\n");
+    (void)printf("MIGRATED %zu\n", remark_count);
+    for (size_t i = 0u; i < remark_count; ++i) {
+        (void)printf("%s\n", remarks[i]);
+        free(remarks[i]);
+    }
+    free(remarks);
     char line[1024];
     while (fgets(line, sizeof(line), stdin)) {
         char repository[256], user[256], aa[8], ref[600];
