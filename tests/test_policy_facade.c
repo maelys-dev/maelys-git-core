@@ -452,6 +452,23 @@ static int test_unsupported_refex(void) {
     CHECK(unsupported_with("top-alternation", "RW main|dev = alice", "refex refused at column 5: a '|' at the top level"));
     CHECK(unsupported_with("escape", "RW refs/heads/a\\d = alice", "refex refused at column 14"));
     CHECK(unsupported_with("escape-short", "RW a\\d = alice", "refex refused at column 3"));
+    /* What Gitolite reads in Perl and the subset does not (section 4.8):
+     * refused by its family, at its column, never approached. */
+    static const struct {
+        const char *name, *rule, *reason;
+    } outside[] = {
+        {"open-bound", "RW a{ = alice", "column 2: a bound that is not {m}"},
+        {"word-bound", "RW a{x} = alice", "column 4: a bound that is not {m}"},
+        {"bracket-first", "RW []a] = alice", "column 2: a bracket expression outside the subset"},
+        {"bracket-range", "RW [a-z-9] = alice", "column 5: a bracket expression outside the subset"},
+        {"bound-256", "RW a{1,256} = alice", "column 8: a bound above 255"},
+        {"lazy", "RW a*? = alice", "column 3: a quantifier outside the subset"},
+        {"possessive", "RW a++ = alice", "column 3: a quantifier outside the subset"},
+        {"word-escape", "RW a\\w = alice", "column 3: an escape that is not of a metacharacter"},
+        {"non-capturing", "RW (?:a) = alice", "column 2: a group, a ')', a ']' or a '}' outside the subset"},
+    };
+    for (size_t i = 0u; i < sizeof(outside) / sizeof(outside[0]); ++i)
+        CHECK(unsupported_with(outside[i].name, outside[i].rule, outside[i].reason));
     /* A limit only the end reveals is the last column of the refex. */
     CHECK(unsupported_with("limit-short", "RW (a{255}){17} = alice", "refex refused at column 12: "));
     CHECK(unsupported_with("limit-full", "RW refs/heads/(a{255}){17} = alice", "refex refused at column 23: "));

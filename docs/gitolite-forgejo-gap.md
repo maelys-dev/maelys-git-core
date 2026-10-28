@@ -114,6 +114,27 @@ migree qu'en droits comme donnees : la politique compilee la refuse
 | prefixe de plus de 63 octets ou de plus de 16 `/` | regle `starts_with` | hors des faits `ref_prefix` |
 | motif de plus de 256 octets | refuse, `ref pattern exceeds 256 bytes`, avec la colonne pour une regex | borne du moteur |
 
+Une regex garde la lecture de Gitolite, ancree au debut seulement : en
+attribution, `RW refs/heads/release[0-9] = alice` autorise aussi
+`release1-x`, la ou le litteral nu `RW refs/heads/release = alice` reste une
+egalite (plus strict) ; en refus, `- refs/tags/v[0-9] = mallory` refuse aussi
+`v1x`, comme le refus litteral nu.
+
+Gitolite lit ces formes en Perl ; elles sont hors du sous-ensemble de
+`maelys/cli/regex.h` et refusees, jamais approchees. La colonne est celle du
+refex ecrit apres `RW ` :
+
+| Refex | Refus |
+| --- | --- |
+| `a{` | colonne 2 : `a bound that is not {m}, {m,} or {m,n} in decimal` |
+| `a{x}` | colonne 4 : idem |
+| `[]a]` | colonne 2 : `a bracket expression outside the subset` |
+| `[a-z-9]` | colonne 5 : idem |
+| `a{1,256}` | colonne 8 : `a bound above 255, more than 32 nested groups or more than 65536 states` |
+| `a*?`, `a++` | colonne 3 : `a quantifier outside the subset` |
+| `a\d`, `a\w` | colonne 3 : `an escape that is not of a metacharacter` |
+| `(?:a)` | colonne 2 : `a group, a ')', a ']' or a '}' outside the subset` |
+
 Une regex de l'instantane est compilee une fois, a sa lecture, dans les
 budgets de D3 : 4 096 etats par motif, 4 096 pour les motifs distincts d'un
 depot, 1 048 576 pour l'instantane. Elle est cherchee sans allocation, une
