@@ -740,7 +740,11 @@
                         ]
                       },
                       "program": {
-                        "const": "maelys-git-gitolite-program/1"
+                        "description": "The version of the audited Gitolite program the set holds: /2 also reads a repository by a ref grant.",
+                        "enum": [
+                          "maelys-git-gitolite-program/1",
+                          "maelys-git-gitolite-program/2"
+                        ]
                       },
                       "sha256": {
                         "description": "SHA-256 of the bytes of the snapshot of grants the decision used.",

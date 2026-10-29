@@ -624,7 +624,9 @@ static int append_ref_grant(text_buffer_t *policy,
  * what a derived predicate holds then depends on the request, never on the
  * size of the configuration (see judge_budget). The level of the owner of a
  * CREATOR namespace is an access level like any grant's, read by the same
- * allow rules. */
+ * allow rules. A ref grant also lets its holder read the repository, as
+ * Gitolite answers R any whatever the refex: the rules of
+ * maelys-git-gitolite-program/2. */
 static int append_authorization_rules(text_buffer_t *policy) {
     if (!append_text(policy,
         "\neffective_group_member(U, \"" MG_GRANTS_ALL_GROUP "\") :- user(U).\n"
@@ -664,6 +666,7 @@ static int append_authorization_rules(text_buffer_t *policy) {
         "\nallow(R) :- request(R), user(U), repository(P), operation(\"read\"), effective_access(U, P, \"R\").\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"read\"), effective_access(U, P, \"RW\").\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"read\"), effective_access(U, P, \"RW+\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"read\"), has_ref_write(U, P).\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"write\"), effective_access(U, P, \"RW\").\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"write\"), effective_access(U, P, \"RW+\").\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"write\"), has_ref_write(U, P).\n"

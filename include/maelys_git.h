@@ -308,14 +308,17 @@ typedef struct {
 /* The snapshot of grants a decision used: present when a policy of the set
  * read it, which only the audited Gitolite program may (receipt version 2).
  * Its format is the one read, maelys-git-grants/1, or /2 when it holds
- * regex ref patterns; the format of the slice and that of the program are
- * fixed by that version: maelys-git-slice/1 and
- * maelys-git-gitolite-program/1. */
+ * regex ref patterns. The program is the version of the audited Gitolite
+ * program the set holds, known when the set is opened, whichever policy
+ * decides: maelys-git-gitolite-program/1, or /2, which also reads a
+ * repository by a ref grant. The format of the slice is fixed by the
+ * receipt's version: maelys-git-slice/1. */
 typedef struct {
     int present;
     char sha256[65]; /* of the snapshot's bytes */
     size_t facts;    /* distinct tuples of the slice given to the engine */
     char format[32]; /* maelys-git-grants/1 or maelys-git-grants/2 */
+    char program[40]; /* maelys-git-gitolite-program/1 or maelys-git-gitolite-program/2 */
 } maelys_git_receipt_grants_t;
 
 /* The record of one decision, built by the code path that authorizes. It
@@ -815,9 +818,11 @@ void maelys_git_gitolite_migration_result_clear(
     maelys_git_gitolite_migration_result_t *result);
 /* Migrates the safe subset of a Gitolite configuration into OUTPUT_DIRECTORY,
  * which must not exist: the audited Gitolite program,
- * maelys-git-gitolite-program/1, as gitolite-migrated.dl, its manifest, and
- * the configuration's grants as grants.json, maelys-git-grants/1, which the
- * program reads with --grants (maelys_git_policy_open_grants). The program
+ * maelys-git-gitolite-program/2, as gitolite-migrated.dl, its manifest, and
+ * the configuration's grants as grants.json, maelys-git-grants/1 (or /2 when
+ * it holds regex ref patterns), which the program reads with --grants
+ * (maelys_git_policy_open_grants). A set written as /1 by an earlier Git
+ * Core is still opened and decided as it was. The program
  * does not depend on the configuration: its budget is fixed; the plan judges
  * the groups of a user and the bounds of the snapshot. Apply publishes the
  * directory by one rename, after the engine loaded it with its snapshot. */

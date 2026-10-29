@@ -10,7 +10,14 @@
  *     snapshot, GIT-C06) gives the recorded outcome too, never failing for
  *     capacity.
  * MG_RECORD_DIFFERENTIAL=FILE writes the old policy's outcomes instead; it is
- * run on the LARGE profile, in a commit that explains every changed line. */
+ * run on the LARGE profile, in a commit that explains every changed line.
+ *
+ * One change is deliberate: a ref grant lets its holder read the repository,
+ * as Gitolite does (maelys-git-gitolite-program/2), where the old policy
+ * denied the read by default. read-by-ref-grant.tsv lists every such read;
+ * both new encodings allow it, and each listed one must still occur.
+ * MG_RECORD_READ_BY_REF_GRANT=FILE writes the reads that differ so instead
+ * of failing on them. */
 #include "maelys_git.h"
 #include "internal.h"
 #include "policy/policy_grants.h"
@@ -26,6 +33,14 @@ static char *g_expected[MAX_ROWS];
 static size_t g_expected_count, g_row;
 static size_t g_old_capacity_failures, g_compared;
 static maelys_git_policy_t *g_grants_policy;
+static char *g_reads[MAX_ROWS];
+static size_t g_read_count, g_reads_seen;
+static unsigned char g_read_seen[MAX_ROWS];
+static FILE *g_record_reads;
+
+static const char k_denied[] = "allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default";
+static const char k_read_allowed[] =
+    "allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization";
 
 typedef struct {
     const char *name;
@@ -119,6 +134,34 @@ static int compare(const char *name, maelys_git_policy_t *old_policy, maelys_git
         return 0;
     }
     expected += prefix;
+    if (!strcmp(request->operation, "read") && !strcmp(expected, k_denied)) {
+        /* The read of a ref grant: listed, allowed by both new encodings. */
+        size_t key = prefix - 1u, listed = 0u; /* the row without its last tab */
+        while (listed < g_read_count &&
+               (strlen(g_reads[listed]) != key || strncmp(g_reads[listed], row, key)))
+            ++listed;
+        outcome_of(new_policy, request, new_outcome, sizeof(new_outcome), &new_capacity);
+        char grants_outcome[512];
+        int grants_capacity = 0;
+        outcome_of(g_grants_policy, request, grants_outcome, sizeof(grants_outcome), &grants_capacity);
+        int read = !strcmp(new_outcome, k_read_allowed) && !strcmp(grants_outcome, k_read_allowed);
+        if (read && g_record_reads) {
+            (void)fprintf(g_record_reads, "%.*s\n", (int)key, row);
+            ++g_compared;
+            return 1;
+        }
+        if (read != (listed < g_read_count)) {
+            (void)fprintf(stderr, "%s: new %s, grants %s, old %s, %s in read-by-ref-grant.tsv\n", row,
+                          new_outcome, grants_outcome, expected, listed < g_read_count ? "listed" : "not listed");
+            return 0;
+        }
+        if (read) {
+            if (!g_read_seen[listed]) ++g_reads_seen;
+            g_read_seen[listed] = 1u;
+            ++g_compared;
+            return 1;
+        }
+    }
     outcome_of(new_policy, request, new_outcome, sizeof(new_outcome), &new_capacity);
     if (new_capacity || strcmp(new_outcome, expected) != 0) {
         (void)fprintf(stderr, "%s%s: new %s, expected %s\n", row, "", new_outcome, expected);
@@ -249,6 +292,24 @@ static int load_expected(void) {
     return g_expected_count > 0u;
 }
 
+/* read-by-ref-grant.tsv: one "CASE\tLABEL" per line, as compare() builds it. */
+static int load_reads(void) {
+    FILE *file = fopen(DIFFERENTIAL_DIR "/read-by-ref-grant.tsv", "r");
+    CHECK(file != NULL);
+    char line[2048];
+    while (fgets(line, sizeof(line), file)) {
+        size_t length = strlen(line);
+        if (length && line[length - 1u] == '\n') line[--length] = '\0';
+        if (line[0] == '#' || !length) continue;
+        CHECK(g_read_count < MAX_ROWS);
+        g_reads[g_read_count] = strdup(line);
+        CHECK(g_reads[g_read_count] != NULL);
+        ++g_read_count;
+    }
+    (void)fclose(file);
+    return 1;
+}
+
 int main(void) {
     char template[] = "/tmp/maelys_git_differential_XXXXXX";
     char *root = mkdtemp(template);
@@ -262,6 +323,15 @@ int main(void) {
              fprintf(g_record, "# outcomes of the Gitolite policies migrated by 62778f0, LARGE profile\n") > 0;
     } else {
         ok = load_expected();
+        const char *reads = getenv("MG_RECORD_READ_BY_REF_GRANT");
+        if (ok && reads && *reads) {
+            g_record_reads = fopen(reads, "w");
+            ok = g_record_reads != NULL &&
+                 fprintf(g_record_reads, "# reads a ref grant gives (maelys-git-gitolite-program/2), denied by "
+                                         "the policies of 62778f0\n") > 0;
+        } else if (ok) {
+            ok = load_reads();
+        }
     }
     for (size_t i = 0u; ok && i < sizeof(k_grids) / sizeof(k_grids[0]); ++i)
         ok = run_case(&k_grids[i]);
@@ -269,12 +339,19 @@ int main(void) {
         (void)fprintf(stderr, "%zu recorded rows, %zu compared\n", g_expected_count, g_row);
         ok = 0;
     }
+    if (ok && !g_record && !g_record_reads && g_reads_seen != g_read_count) {
+        for (size_t i = 0u; i < g_read_count; ++i)
+            if (!g_read_seen[i]) (void)fprintf(stderr, "listed read no longer observed: %s\n", g_reads[i]);
+        ok = 0;
+    }
     if (g_record && fclose(g_record) != 0) ok = 0;
+    if (g_record_reads && fclose(g_record_reads) != 0) ok = 0;
     for (size_t i = 0u; i < g_expected_count; ++i) free(g_expected[i]);
+    for (size_t i = 0u; i < g_read_count; ++i) free(g_reads[i]);
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok && !g_record)
-        (void)printf("Gitolite encodings, compiled and as grants: %zu requests identical; %zu where the old "
-                     "policy failed for capacity on this profile: ok\n",
-                     g_compared, g_old_capacity_failures);
+        (void)printf("Gitolite encodings, compiled and as grants: %zu requests compared, %zu reads a ref grant "
+                     "gives; %zu where the old policy failed for capacity on this profile: ok\n",
+                     g_compared, g_reads_seen, g_old_capacity_failures);
     return ok ? 0 : 1;
 }

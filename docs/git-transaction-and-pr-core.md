@@ -154,8 +154,10 @@ violations. Every incompatible source line is reported rather than silently
 weakened.
 
 The output holds three files: `gitolite-migrated.dl`, the audited Gitolite
-program `maelys-git-gitolite-program/1`, whose text is the same for every
-configuration; `manifest.json`; and `grants.json`, the configuration's grants
+program `maelys-git-gitolite-program/2`, whose text is the same for every
+configuration and which, as Gitolite, lets a ref grant read the repository
+(a set migrated earlier as `/1` is still opened and decided as it was, and a
+manifest never holds both); `manifest.json`; and `grants.json`, the configuration's grants
 as data, `maelys-git-grants/1` (or `/2` when it holds regex ref patterns).
 Every command that opens the manifest takes
 the snapshot with `--grants FILE`: `authorize`, `validate`, `pr merge`, the

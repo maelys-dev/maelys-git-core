@@ -5,6 +5,26 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- **Access widened, on a new migration only.** The Gitolite migration
+  writes the audited program `maelys-git-gitolite-program/2`, which lets a
+  ref grant read its repository, as Gitolite 3.6.15 does: for `R any`, the
+  read gitolite-shell asks for upload-pack, Gitolite applies every rule
+  whose permission holds `R`, whatever its refex. With only `RW+
+  refs/heads/feature/ = alice`, alice now reads the whole repository:
+  `clone` and `fetch` through `maelys-git shell`, and `repository_info`,
+  `diff` and `pr_check` through the executor. The grant may be the user's,
+  a group's or `@all`'s, literal or regex; a deny alone, or `C` alone,
+  reads nothing. Every other decision is unchanged. A set migrated earlier
+  holds `maelys-git-gitolite-program/1`: it is still opened and decided as
+  it was, byte for byte, its read stricter than Gitolite's, until it is
+  migrated again. A manifest that holds both versions is refused when it
+  is opened (`policy X is maelys-git-gitolite-program/2 but policy Y is
+  maelys-git-gitolite-program/1: a set holds one version of the audited
+  Gitolite program`). A receipt names the version its set holds,
+  whichever policy decides; the verifier accepts both;
+  `maelys_git_receipt_grants_t` gains the member `program`. A set migrated
+  again has a new policy-set fingerprint: a `pr merge` plan made before is
+  refused at `--apply`.
 - A child process is reaped as soon as it exits. Once its output closed,
   the wait polled `waitpid` and slept 10 ms whenever the child had not
   exited yet, which cost almost every Git command 10 ms: about 100 s on a

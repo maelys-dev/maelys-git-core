@@ -208,21 +208,30 @@ publiee.
 ### Perimetre de la fidelite mesuree
 
 La fidelite a Gitolite 3.6.15 est mesuree sur l'ecriture : mise a jour
-(`W`), mise a jour forcee (`+`) et ecriture sans ref (`any`), comparees a
-Gitolite lui-meme et a un oracle calibre sur lui. La lecture n'est pas
-comparee, et elle differe :
+(`W`), mise a jour forcee (`+`) et ecriture sans ref (`any`), et sur la
+lecture (`R any`, que `gitolite-shell` demande pour `upload-pack`),
+comparees a Gitolite lui-meme et a un oracle calibre sur lui.
 
-- **Lecture accordee par un droit de ref seul.** Avec seulement
-  `RW+ refs/heads/feature/ = alice`, Gitolite laisse alice lire le depot
-  (`R any`) ; Git Core lui refuse la lecture et ne lui laisse que
-  l'ecriture. Plus strict, en litteral comme en regex. Un droit `R`, `RW`
-  ou `RW+` sans refex sur le depot donne la lecture dans les deux.
+- **Lecture accordee par un droit de ref seul.** Pour `R any`, Gitolite
+  applique toute regle dont la permission contient `R`, quel que soit son
+  refex : avec seulement `RW+ refs/heads/feature/ = alice`, alice lit le
+  depot entier. Le programme audite `maelys-git-gitolite-program/2`, que la
+  migration ecrit, fait de meme, pour un droit de l'utilisateur, d'un de
+  ses groupes ou de `@all`, en litteral comme en regex. Un refus seul, ou
+  `C` seul, ne donne pas la lecture, dans les deux. La lecture ouvre
+  `clone` et `fetch` par `maelys-git shell` (`upload-pack`), et, par
+  l'executeur, `repository_info`, `diff` et `pr_check`.
+- **Ensembles restes en `maelys-git-gitolite-program/1`.** Un repertoire
+  migre avant `/2` est ouvert et decide comme il l'etait, octet pour
+  octet : sa lecture reste plus stricte que Gitolite (un droit de ref seul
+  ne la donne pas). La lecture de Gitolite arrive par une nouvelle
+  migration, jamais par la seule mise a jour de Git Core. Un manifeste qui
+  tient `/1` et `/2` a la fois est refuse a l'ouverture ; le recu nomme la
+  version de l'ensemble (`grants.program`).
 - **`authorize push` en ligne de commande.** La commande ne transmet pas le
   type de mise a jour, dont une attribution de ref a besoin : un `push` n'y
   est decide que par ses refus. Le hook, le shell et l'executeur, qui le
-  connaissent, decident les attributions.
-
-Les deux sont des ecarts connus, a corriger a part.
+  connaissent, decident les attributions. Ecart connu, a corriger a part.
 
 L'objectif raisonnable n'est pas la compatibilite syntaxique complete. Il faut
 fournir une bibliotheque de politiques typees couvrant les VREF utiles, puis

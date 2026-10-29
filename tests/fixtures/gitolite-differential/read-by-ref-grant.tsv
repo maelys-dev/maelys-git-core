@@ -1,0 +1,12 @@
+# reads a ref grant gives (maelys-git-gitolite-program/2), denied by the policies of 62778f0
+mixed	alice refs.git read
+mixed	bob refs.git read
+mixed	carol refs.git read
+mixed	dave refs.git read
+mixed	erin refs.git read
+mixed	mallory refs.git read
+refs-65	u1 app.git read
+refs-65	u33 app.git read
+refs-65	u65 app.git read
+fallback	w1 app.git read
+fallback	w10 app.git read

@@ -63,6 +63,7 @@ struct maelys_git_policy {
     int verified_unused;      /* a reading of those bytes no command has used yet */
     int verified_current;     /* that reading serves the command in progress */
     int has_audited;
+    unsigned program_version; /* of the audited Gitolite program the set holds, 0 for none */
     mg_slice_t slice;
     mg_policy_slice_filter_t slice_filter;
     void *slice_filter_context;
@@ -419,25 +420,37 @@ static int reads_slice(mg_policy_reads_t reads, const maelys_datalog_policy_t *l
 /* The audited consumer. A policy that reads a slice_* predicate must be the
  * audited Gitolite program: its session fingerprint, the SHA-256 of the
  * source the engine checked against its manifest, must be that of the
- * canonical text. Only that program receives the slice. A set that has it
- * needs a snapshot of grants, and a snapshot needs a set that has it. */
+ * canonical text of one of its versions. Only that program receives the
+ * slice. A set holds one version: the receipt names it, whichever policy
+ * decides. A set that has the program needs a snapshot of grants, and a
+ * snapshot needs a set that has it. */
 static maelys_git_result_t audit_consumers(maelys_git_policy_t *policy, const maelys_datalog_policy_t *loaded,
                                            mg_policy_reads_t reads, maelys_git_error_t *error) {
-    const char *program = mg_gitolite_program_sha256();
     const char *reader = NULL;
     for (size_t i = 0u; i < policy->count; ++i) {
         policy_entry_t *entry = &policy->entries[i];
         if (!reads_slice(reads, loaded, i)) continue;
-        if (strcmp(entry->fingerprint, program) != 0) {
+        unsigned version = mg_gitolite_program_version(entry->fingerprint);
+        if (!version) {
             mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
-                         "policy %s reads slice facts but is not the audited Gitolite program (%s)",
-                         entry->policy_id, MG_GITOLITE_PROGRAM_FORMAT);
+                         "policy %s reads slice facts but is not the audited Gitolite program (%s or %s)",
+                         entry->policy_id, MG_GITOLITE_PROGRAM_FORMAT_1, MG_GITOLITE_PROGRAM_FORMAT_2);
+            const maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_SEMANTICS};
+            mg_error_set_detail(error, &detail);
+            return MAELYS_GIT_ERR_POLICY;
+        }
+        if (reader && version != policy->program_version) {
+            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                         "policy %s is %s but policy %s is %s: a set holds one version of the audited "
+                         "Gitolite program", entry->policy_id, mg_gitolite_program_format_of(version), reader,
+                         mg_gitolite_program_format_of(policy->program_version));
             const maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_SEMANTICS};
             mg_error_set_detail(error, &detail);
             return MAELYS_GIT_ERR_POLICY;
         }
         entry->audited = 1;
         policy->has_audited = 1;
+        policy->program_version = version;
         if (!reader) reader = entry->policy_id;
     }
     if (reader && !policy->grants) {
@@ -1467,6 +1480,8 @@ maelys_git_result_t maelys_git_policy_authorize_receipt(
         mg_grants_view_t read;
         mg_grants_view(policy->grants, &read);
         (void)mg_copy_string(receipt->grants.format, sizeof(receipt->grants.format), read.format);
+        (void)mg_copy_string(receipt->grants.program, sizeof(receipt->grants.program),
+                             mg_gitolite_program_format_of(policy->program_version));
     }
     receipt->evaluated_policies = evaluated;
     if (result != MAELYS_GIT_OK) {

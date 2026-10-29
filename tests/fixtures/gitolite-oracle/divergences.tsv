@@ -5,16 +5,9 @@
 #   bare-literal-grant  a bare literal grant (RW refs/heads/main) is the exact ref
 #                       in Git Core and a prefix in Gitolite: Git Core denies
 #                       main-hotfix, main/x... Stricter, by design of the migration.
-#   read-by-ref-grant   a ref grant alone (RW+ refs/heads/feature/) lets Gitolite
-#                       read the repository (R any); Git Core does not. Stricter.
 # Against Gitolite's own first-match rule, the order of rules adds differences,
 # all stricter too: they are order.tsv's.
 # case	user	aa	ref	git_core	gitolite	kind
-all-deny-first	bob	R	any	DENY	ALLOW	read-by-ref-grant
-escapes	alice	R	any	DENY	ALLOW	read-by-ref-grant
-escapes	bob	R	any	DENY	ALLOW	read-by-ref-grant
-escapes	carol	R	any	DENY	ALLOW	read-by-ref-grant
-literal	alice	R	any	DENY	ALLOW	read-by-ref-grant
 literal	alice	W	refs/heads/main-hotfi	DENY	ALLOW	bare-literal-grant
 literal	alice	W	refs/heads/main-hotfix	DENY	ALLOW	bare-literal-grant
 literal	alice	W	refs/heads/main-hotfix/x	DENY	ALLOW	bare-literal-grant
@@ -25,7 +18,6 @@ literal	alice	W	refs/heads/maindev	DENY	ALLOW	bare-literal-grant
 literal	alice	W	refs/heads/maindev/x	DENY	ALLOW	bare-literal-grant
 literal	alice	W	refs/heads/maindevx	DENY	ALLOW	bare-literal-grant
 literal	alice	W	refs/heads/mainx	DENY	ALLOW	bare-literal-grant
-literal	bob	R	any	DENY	ALLOW	read-by-ref-grant
 literal	bob	W	refs/heads/main-hotfi	DENY	ALLOW	bare-literal-grant
 literal	bob	W	refs/heads/main-hotfix	DENY	ALLOW	bare-literal-grant
 literal	bob	W	refs/heads/main-hotfix/x	DENY	ALLOW	bare-literal-grant
@@ -36,26 +28,3 @@ literal	bob	W	refs/heads/maindev	DENY	ALLOW	bare-literal-grant
 literal	bob	W	refs/heads/maindev/x	DENY	ALLOW	bare-literal-grant
 literal	bob	W	refs/heads/maindevx	DENY	ALLOW	bare-literal-grant
 literal	bob	W	refs/heads/mainx	DENY	ALLOW	bare-literal-grant
-literal	carol	R	any	DENY	ALLOW	read-by-ref-grant
-literal	dave	R	any	DENY	ALLOW	read-by-ref-grant
-literal	mallory	R	any	DENY	ALLOW	read-by-ref-grant
-order	carol	R	any	DENY	ALLOW	read-by-ref-grant
-order	dave	R	any	DENY	ALLOW	read-by-ref-grant
-order	eve	R	any	DENY	ALLOW	read-by-ref-grant
-order	mallory	R	any	DENY	ALLOW	read-by-ref-grant
-order	zed	R	any	DENY	ALLOW	read-by-ref-grant
-read-ref-grants	alice	R	any	DENY	ALLOW	read-by-ref-grant
-read-ref-grants	bob	R	any	DENY	ALLOW	read-by-ref-grant
-read-ref-grants	carol	R	any	DENY	ALLOW	read-by-ref-grant
-read-ref-grants	dave	R	any	DENY	ALLOW	read-by-ref-grant
-regex	alice	R	any	DENY	ALLOW	read-by-ref-grant
-regex	bob	R	any	DENY	ALLOW	read-by-ref-grant
-regex	carol	R	any	DENY	ALLOW	read-by-ref-grant
-regex	dave	R	any	DENY	ALLOW	read-by-ref-grant
-regex	mallory	R	any	DENY	ALLOW	read-by-ref-grant
-regex-order	alice	R	any	DENY	ALLOW	read-by-ref-grant
-regex-order	bob	R	any	DENY	ALLOW	read-by-ref-grant
-regex-order	carol	R	any	DENY	ALLOW	read-by-ref-grant
-regex-order	dave	R	any	DENY	ALLOW	read-by-ref-grant
-regex-order	eve	R	any	DENY	ALLOW	read-by-ref-grant
-regex-order	mallory	R	any	DENY	ALLOW	read-by-ref-grant
