@@ -751,6 +751,11 @@ static int command_migrate_gitolite(maelys_cli_context_t *context) {
     for (size_t i = 0u; i < migration.unsupported_count; ++i)
         mg_json_string(&data, NULL, migration.unsupported[i]);
     mg_json_end_array(&data);
+    mg_json_string(&data, "grantsFormat", migration.grants_format);
+    mg_json_array(&data, "remarks");
+    for (size_t i = 0u; i < migration.remark_count; ++i)
+        mg_json_string(&data, NULL, migration.remarks[i]);
+    mg_json_end_array(&data);
     budget_json(&data, &migration.budget);
     mg_json_boolean(&data, "canApply", migration.unsupported_count == 0u);
     mg_json_end_object(&data);

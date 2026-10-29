@@ -156,7 +156,8 @@ weakened.
 The output holds three files: `gitolite-migrated.dl`, the audited Gitolite
 program `maelys-git-gitolite-program/1`, whose text is the same for every
 configuration; `manifest.json`; and `grants.json`, the configuration's grants
-as data, `maelys-git-grants/1`. Every command that opens the manifest takes
+as data, `maelys-git-grants/1` (or `/2` when it holds regex ref patterns).
+Every command that opens the manifest takes
 the snapshot with `--grants FILE`: `authorize`, `validate`, `pr merge`, the
 hook, the shell, `executor serve` and `agent stdio`, and the agent's
 configuration names it as `grants_path`. A snapshot is published by renaming

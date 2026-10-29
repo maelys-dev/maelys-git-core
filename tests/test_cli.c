@@ -725,7 +725,7 @@ static int test_receipt_versions_schema(void) {
     (void)snprintf(other_format, sizeof(other_format), "%s\"version\":2}", grants);
     char *at = strstr(other_format, "grants/1");
     CHECK(at != NULL);
-    at[7] = '2';
+    at[7] = '3'; /* /1 and /2 are the formats a snapshot may be read in */
     CHECK(conforms_replaced(result.out, "\"version\":1}", "\"version\":1}", schema) == 1);
     CHECK(conforms_replaced(result.out, "\"version\":1}", v2, schema) == 1);
     CHECK(conforms_replaced(result.out, "\"version\":1}", "\"version\":2}", schema) == 0);

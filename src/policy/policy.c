@@ -672,6 +672,14 @@ const char *mg_policy_grants_sha256(const maelys_git_policy_t *policy) {
     return policy && policy->grants ? mg_grants_sha256(policy->grants) : NULL;
 }
 
+size_t mg_policy_regex_searches(const maelys_git_policy_t *policy) {
+    return policy && policy->grants ? mg_grants_regex_searches(policy->grants) : 0u;
+}
+
+void *mg_policy_grants_scratch(const maelys_git_policy_t *policy, size_t *out_size) {
+    return mg_grants_scratch(policy ? policy->grants : NULL, out_size);
+}
+
 maelys_git_result_t maelys_git_policy_open_grants(const char *manifest_path, const char *grants_path,
                                                   maelys_git_policy_t **out_policy, maelys_git_error_t *error) {
     return mg_policy_open_grants(manifest_path, grants_path, out_policy, error);
@@ -1456,6 +1464,9 @@ maelys_git_result_t maelys_git_policy_authorize_receipt(
         receipt->grants.present = 1;
         (void)mg_copy_string(receipt->grants.sha256, sizeof(receipt->grants.sha256), mg_grants_sha256(policy->grants));
         receipt->grants.facts = policy->fact_count - policy->context_count;
+        mg_grants_view_t read;
+        mg_grants_view(policy->grants, &read);
+        (void)mg_copy_string(receipt->grants.format, sizeof(receipt->grants.format), read.format);
     }
     receipt->evaluated_policies = evaluated;
     if (result != MAELYS_GIT_OK) {

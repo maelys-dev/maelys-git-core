@@ -424,26 +424,63 @@ static int test_user_refuses_configuration(void) {
     return 1;
 }
 
+/* RULE (400 bytes) grants alice the refex PREFIX, COUNT x and SUFFIX. */
+static void regex_rule(char *rule, const char *prefix, size_t count, const char *suffix) {
+    char text[300];
+    size_t used = strlen(prefix);
+    memcpy(text, prefix, used);
+    memset(text + used, 'x', count);
+    (void)snprintf(text + used + count, sizeof(text) - used - count, "%s", suffix);
+    (void)snprintf(rule, 400u, "RW %s = alice", text);
+}
+
 static int test_unsupported_refex(void) {
-    CHECK(unsupported_with("alt", "RW refs/heads/(main|dev) = alice", "unsupported refex syntax"));
-    CHECK(unsupported_with("star", "RW refs/heads/feature/.* = alice", "unsupported refex syntax"));
-    CHECK(unsupported_with("class", "RW refs/heads/[a-z]+ = alice", "unsupported refex syntax"));
-    CHECK(unsupported_with("caret", "- ^refs/heads/main = alice", "unsupported refex syntax"));
-    CHECK(unsupported_with("dots", "RW refs/heads/../main = alice", "'.' is any character"));
+    /* A regex is decided by grants as data: the compiled encoding, which
+     * this test migrates to, has no form for it. */
+    static const char k_needs_grants[] = "migrated as grants as data only";
+    CHECK(unsupported_with("alt", "RW refs/heads/(main|dev) = alice", k_needs_grants));
+    CHECK(unsupported_with("star", "RW refs/heads/feature/.* = alice", k_needs_grants));
+    CHECK(unsupported_with("class", "RW refs/heads/[a-z]+ = alice", k_needs_grants));
+    CHECK(unsupported_with("dots", "RW refs/heads/../main = alice", k_needs_grants));
+    CHECK(unsupported_with("dot-deny", "- refs/tags/v1.0 = alice", k_needs_grants));
+    CHECK(unsupported_with("dot-grant", "RW refs/tags/v1.0$ = alice", k_needs_grants));
+    CHECK(unsupported_with("escape-end", "RW refs/heads/a\\$ = alice", k_needs_grants));
+    /* Refused whatever the encoding: the restrictions and the subset, by the
+     * column of the refex as written; a literal that is not a valid pattern
+     * is never read as a regex. */
+    CHECK(unsupported_with("caret", "- ^refs/heads/main = alice", "refex refused at column 1: a '^' outside a class"));
+    CHECK(unsupported_with("top-alternation", "RW main|dev = alice", "refex refused at column 5: a '|' at the top level"));
+    CHECK(unsupported_with("escape", "RW refs/heads/a\\d = alice", "refex refused at column 14"));
+    CHECK(unsupported_with("escape-short", "RW a\\d = alice", "refex refused at column 3"));
+    /* What Gitolite reads in Perl and the subset does not (section 4.8):
+     * refused by its family, at its column, never approached. */
+    static const struct {
+        const char *name, *rule, *reason;
+    } outside[] = {
+        {"open-bound", "RW a{ = alice", "column 2: a bound that is not {m}"},
+        {"word-bound", "RW a{x} = alice", "column 4: a bound that is not {m}"},
+        {"bracket-first", "RW []a] = alice", "column 2: a bracket expression outside the subset"},
+        {"bracket-range", "RW [a-z-9] = alice", "column 5: a bracket expression outside the subset"},
+        {"bound-256", "RW a{1,256} = alice", "column 8: a bound above 255"},
+        {"lazy", "RW a*? = alice", "column 3: a quantifier outside the subset"},
+        {"possessive", "RW a++ = alice", "column 3: a quantifier outside the subset"},
+        {"word-escape", "RW a\\w = alice", "column 3: an escape that is not of a metacharacter"},
+        {"non-capturing", "RW (?:a) = alice", "column 2: a group, a ')', a ']' or a '}' outside the subset"},
+    };
+    for (size_t i = 0u; i < sizeof(outside) / sizeof(outside[0]); ++i)
+        CHECK(unsupported_with(outside[i].name, outside[i].rule, outside[i].reason));
+    /* A limit only the end reveals is the last column of the refex. */
+    CHECK(unsupported_with("limit-short", "RW (a{255}){17} = alice", "refex refused at column 12: "));
+    CHECK(unsupported_with("limit-full", "RW refs/heads/(a{255}){17} = alice", "refex refused at column 23: "));
     CHECK(unsupported_with("escaped-dots", "RW refs/heads/\\.\\./main = alice", "unsupported refex syntax"));
-    /* Gitolite reads '.' as any character: a deny would cover less after
-     * migration, a grant less than its author meant. Both are refused. */
-    CHECK(unsupported_with("dot-deny", "- refs/tags/v1.0 = alice", "'.' is any character"));
-    CHECK(unsupported_with("dot-grant", "RW refs/tags/v1.0$ = alice", "'.' is any character"));
-    CHECK(unsupported_with("escape", "RW refs/heads/a\\d = alice", "unsupported refex syntax"));
-    CHECK(unsupported_with("escape-end", "RW refs/heads/a\\$ = alice", "unsupported refex syntax"));
+    CHECK(unsupported_with("anchored-namespace", "RW refs/heads/x/$ = alice", "unsupported refex syntax"));
+    CHECK(unsupported_with("vref", "RW+ VREF/NAME/ = alice", "full-ref"));
     /* Gitolite puts each user's name in place of /USER/, once completed. */
     CHECK(unsupported_with("user-grant", "RW+ personal/USER/ = alice", "'/USER/'"));
     CHECK(unsupported_with("user-deny", "- USER/ = alice", "'/USER/'"));
     CHECK(unsupported_with("user-full", "- refs/heads/USER/x = alice", "'/USER/'"));
     CHECK(unsupported_with("user-vref", "- VREF/NAME/USER/secret = alice", "'/USER/'"));
     CHECK(unsupported_with("user-first", "RW USER/(a|b) = alice", "'/USER/'"));
-    CHECK(unsupported_with("vref", "RW+ VREF/NAME/ = alice", "full-ref"));
     char rule[400], pattern[300];
     memset(pattern, 'x', sizeof(pattern));
     memcpy(pattern, "refs/heads/", 11u);
@@ -451,6 +488,17 @@ static int test_unsupported_refex(void) {
     pattern[281] = '\0';
     (void)snprintf(rule, sizeof(rule), "RW %s = alice", pattern);
     CHECK(unsupported_with("long", rule, "ref pattern exceeds 256 bytes"));
+    /* At the bound, a completed regex of 256 bytes: admitted, refused at
+     * its last column by a limit, and one byte more refused at the first
+     * byte beyond the bound, written in full or completed. */
+    regex_rule(rule, "refs/heads/", 256u - 11u - 2u, ".*");
+    CHECK(unsupported_with("bound", rule, k_needs_grants));
+    regex_rule(rule, "refs/heads/", 256u - 11u - 12u, "(a{255}){17}");
+    CHECK(unsupported_with("bound-limit", rule, "refex refused at column 256: "));
+    regex_rule(rule, "refs/heads/", 257u - 11u - 2u, ".*");
+    CHECK(unsupported_with("bound-past", rule, "refex refused at column 257: ref pattern exceeds 256 bytes"));
+    regex_rule(rule, "", 257u - 11u - 2u, ".*");
+    CHECK(unsupported_with("bound-past-short", rule, "refex refused at column 246: ref pattern exceeds 256 bytes"));
     return 1;
 }
 

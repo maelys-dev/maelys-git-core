@@ -17,6 +17,48 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   process group and the messages are unchanged, except that a timeout
   reached while waiting for the exit names the configured limit, as the
   others do, rather than what remained of it.
+- A snapshot of grants may be `maelys-git-grants/2`: the format of a
+  snapshot that holds ref patterns of form `regex`, a Gitolite refex
+  completed by `refs/heads/` and anchored at its start, as Gitolite matches
+  it. A snapshot without one stays `/1`, byte for byte, and `/1` refuses the
+  form. A pattern begins with `refs/`, holds at most 256 bytes, has no
+  top-level `|` and no `^` outside a class, does not name `/USER/`, and
+  compiles in the subset of `maelys/cli/regex.h` (maelys-cli 0.13.0) within
+  4,096 states; each distinct pattern is compiled once, when the snapshot
+  is read, the patterns of one repository within 4,096 states and those of
+  the snapshot within 1,048,576. A pattern is searched without allocating,
+  in a scratch the snapshot holds, and each one once per ref: the requests
+  of a push that carry one ref (the update, each commit, each change, the
+  summary) do not search it again, until another ref or a new generation
+  of the snapshot. A search that fails refuses the request (`regex search
+  failed`, kind `engine`). A receipt names the format read, `/1` or `/2`,
+  and the verifier accepts both; `maelys_git_receipt_grants_t` gains the
+  member `format`.
+- The Gitolite migration writes a refex that is not a literal name as a
+  ref pattern of form `regex`, completed by `refs/heads/` as Gitolite
+  completes it, kept as written and anchored at its start: `RW
+  refs/heads/feature/.*`, `RW v[0-9]+`, `- refs/tags/v1.0` and `RW
+  refs/tags/v1.0$` are migrated where they were refused. A refex is read in
+  this order: one that names `/USER/` once completed is refused; one made
+  of `[A-Za-z0-9_/-]` and of the escapes `\.`, `\/` and `\-` is a literal,
+  migrated as before (exact or prefix); any other is a regex, checked by
+  the rules of the reader of a snapshot, and refused with the column of the
+  refex as written where reading stopped (`refex refused at column 5: a
+  '|' at the top level`): its last column for a limit only its end
+  reveals, the first byte past the bound for one that exceeds 256 bytes
+  once completed. The snapshot is `maelys-git-grants/2` only when
+  it holds a regex pattern, `/1` otherwise; the plan states it in
+  `grantsFormat`. The plan also gives `remarks`, which never block a
+  migration: a repository with write grants and ref denies, where any deny
+  that applies wins whatever its order in Gitolite (stricter), and a group
+  with rights and no member. A regex is migrated as grants as data only:
+  the compiled policy refuses it. On three configurations of regex refexes
+  (10,164 write decisions: updates, forced updates and writes without a
+  ref), the oracle of the tests decides as Gitolite 3.6.15 itself on every
+  one, and Git Core as the oracle read deny-wins; the 11 decisions where
+  Gitolite's first match differs are all stricter in Git Core. Reads are
+  not compared: a ref grant alone gives read access in Gitolite and not in
+  Git Core, a known difference, stricter, to be corrected apart.
 - maelys-http is pinned to 0.1.18 (was 0.1.16), which includes 0.1.17. The
   Cloud agent no longer loses an outbox POST to a TLS 1.3 session ticket.
   With Mbed TLS 4, a ticket the server sent just before the read between a

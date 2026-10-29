@@ -5,6 +5,7 @@
 #include "test_support.h"
 
 #include <maelys/cli/digest.h>
+#include <maelys/cli/regex.h>
 
 #include <errno.h>
 #include <stdarg.h>
@@ -78,7 +79,7 @@ static int test_accepted(void) {
           view.ref_count == 3u && view.creator_count == 1u && view.owner_count == 1u &&
           view.vref_name_count == 1u && view.vref_limit_count == 2u);
     CHECK(view.group_count == 3u);  /* all, devs, eng */
-    CHECK(view.refs[0].prefix == 1 && !strcmp(view.refs[0].pattern, "refs/heads/rel/"));
+    CHECK(view.refs[0].form == MG_REF_PREFIX && !strcmp(view.refs[0].pattern, "refs/heads/rel/"));
     CHECK(view.access[1].kind == MG_SUBJECT_USER && !strcmp(view.access[1].level, "RW+"));
     CHECK(view.vref_limits[0].value == 100 && view.index_bytes > 0u);
     mg_grants_free(grants);
@@ -115,7 +116,7 @@ static int test_refused_shapes(void) {
     CHECK(refused(renamed, MAELYS_GIT_ERR_INVALID_ARGUMENT, "an unknown member"));
     free(renamed);
     char *format = strdup(text);
-    memcpy(strstr(format, "grants/1"), "grants/2", 8u);
+    memcpy(strstr(format, "grants/1"), "grants/3", 8u);
     CHECK(refused(format, MAELYS_GIT_ERR_INVALID_ARGUMENT, "format is not maelys-git-grants/1"));
     free(format);
     free(text);
@@ -261,6 +262,142 @@ static int test_all_reserved(void) {
     return 1;
 }
 
+/* ---- regex patterns (GIT-C08) -------------------------------------------- */
+
+/* The snapshot of REFS (tuples already in order) as maelys-git-grants/2. */
+static char *regex_snapshot(const char *refs) {
+    char *text = snapshot(NULL, NULL, NULL, refs, NULL, NULL, NULL, NULL);
+    char *at = text ? strstr(text, "maelys-git-grants/1") : NULL;
+    if (at) at[strlen("maelys-git-grants/")] = '2';
+    return text;
+}
+
+/* One grant of alice on app.git of form regex, PATTERN as JSON text. */
+static char *one_regex(const char *json_pattern) {
+    static char refs[512];
+    (void)snprintf(refs, sizeof(refs), "[\"user\",\"alice\",\"app.git\",\"regex\",\"%s\",\"RW\"]", json_pattern);
+    return regex_snapshot(refs);
+}
+
+static int regex_refused(const char *json_pattern, maelys_git_result_t code, const char *reason) {
+    char *text = one_regex(json_pattern);
+    int ok = text && refused(text, code, reason);
+    if (!ok) (void)fprintf(stderr, "pattern %s\n", json_pattern);
+    free(text);
+    return ok;
+}
+
+/* Grants of alice on REPOSITORIES repositories, PER of form regex on each,
+ * of 4 095 states each and all distinct: (a{255}){16} and two letters. */
+static char *many_regex(size_t repositories, size_t per, size_t extra) {
+    text_t refs = {0};
+    size_t made = 0u;
+    for (size_t r = 0u; r < repositories; ++r)
+        for (size_t p = 0u; p < per; ++p, ++made)
+            if (!append(&refs, "%s[\"user\",\"alice\",\"r%03zu.git\",\"regex\",\"refs/heads/(a{255}){16}%c%c\",\"RW\"]",
+                        made ? "," : "", r, (char)('a' + made / 26u), (char)('a' + made % 26u)))
+                return NULL;
+    for (size_t e = 0u; e < extra; ++e, ++made)
+        if (!append(&refs, "%s[\"user\",\"alice\",\"r%03zu.git\",\"regex\",\"refs/heads/(a{255}){16}%c%c\",\"RW\"]",
+                    made ? "," : "", repositories, (char)('a' + made / 26u), (char)('a' + made % 26u)))
+            return NULL;
+    char *text = regex_snapshot(refs.data);
+    free(refs.data);
+    return text;
+}
+
+static int test_regex_patterns(void) {
+    static const char k_refs[] =
+        "[\"group\",\"devs\",\"app.git\",\"regex\",\"refs/heads/feature/.*\",\"-\"],"
+        "[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/heads/(main|dev)$\",\"RW\"],"
+        "[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/heads/feature/.*\",\"RW+\"],"
+        "[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/tags/v[0-9]+$\",\"RW\"]";
+    char *text = regex_snapshot(k_refs);
+    CHECK(text);
+    int ok = 0;
+    do {
+        /* Each distinct pattern compiled once, anchored; the scratch fits all. */
+        mg_grants_t *grants = NULL;
+        maelys_git_error_t error = {0};
+        if (parse(text, &grants, &error) != MAELYS_GIT_OK) {
+            (void)fprintf(stderr, "regex snapshot refused: %s\n", error.message);
+            break;
+        }
+        mg_grants_view_t view;
+        mg_grants_view(grants, &view);
+        size_t scratch_size = 0u;
+        void *scratch = mg_grants_scratch(grants, &scratch_size);
+        size_t states = 0u, largest = 0u;
+        for (size_t i = 0u; i < view.regex_count; ++i) {
+            const maelys_cli_regex_t *regex = mg_grants_regex(grants, i);
+            states += maelys_cli_regex_states(regex);
+            if (maelys_cli_regex_scratch_size(regex) > largest) largest = maelys_cli_regex_scratch_size(regex);
+        }
+        int checked = !strcmp(view.format, MG_GRANTS_FORMAT_REGEX) && view.regex_count == 3u &&
+                      view.refs[0].form == MG_REF_REGEX && view.refs[0].regex == view.refs[2].regex &&
+                      view.refs[1].regex != view.refs[0].regex && view.regex_states == states &&
+                      view.regex_repository_states == states && scratch && scratch_size == largest &&
+                      view.scratch_bytes == largest && !mg_grants_regex(grants, 3u);
+        /* Anchored at the start: refs/heads/feature/x, not refs/heads/xfeature/. */
+        const maelys_cli_regex_t *feature = mg_grants_regex(grants, view.refs[0].regex);
+        checked = checked &&
+                  maelys_cli_regex_search_scratch(feature, scratch, scratch_size, "refs/heads/feature/x", 20u) == 1 &&
+                  maelys_cli_regex_search_scratch(feature, scratch, scratch_size, "refs/heads/xfeature/", 20u) == 0;
+        mg_grants_free(grants);
+        if (!checked) {
+            (void)fprintf(stderr, "regex snapshot: compiled patterns differ\n");
+            break;
+        }
+        free(text);
+        text = NULL;
+        /* The form belongs to /2, and /2 to the form. */
+        char *one = snapshot(NULL, NULL, NULL,
+                             "[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/heads/feature/.*\",\"RW\"]",
+                             NULL, NULL, NULL, NULL);
+        int forms = one && refused(one, MAELYS_GIT_ERR_INVALID_ARGUMENT, "form is \"exact\" or \"prefix\"");
+        free(one);
+        one = regex_snapshot("[\"user\",\"alice\",\"app.git\",\"exact\",\"refs/heads/main\",\"RW\"]");
+        forms = forms && one && refused(one, MAELYS_GIT_ERR_INVALID_ARGUMENT, "holds no regex pattern");
+        free(one);
+        if (!forms) break;
+        /* Each restriction alone; their admitted neighbours. */
+        if (!regex_refused("refs/heads/main|dev", MAELYS_GIT_ERR_INVALID_ARGUMENT, "at the top level") ||
+            !regex_refused("refs/heads/^x", MAELYS_GIT_ERR_INVALID_ARGUMENT, "outside a class") ||
+            !regex_refused("refs/heads/personal/USER/x", MAELYS_GIT_ERR_INVALID_ARGUMENT, "'/USER/'") ||
+            !regex_refused("heads/x.*", MAELYS_GIT_ERR_INVALID_ARGUMENT, "begins with refs/") ||
+            !regex_refused("refs/heads/a\\\\d", MAELYS_GIT_ERR_INVALID_ARGUMENT, "refused at byte 13") ||
+            !regex_refused("refs/heads/(a{255}){17}", MAELYS_GIT_ERR_INVALID_ARGUMENT, "more than 4096 states"))
+            break;
+        static const char *const admitted[] = {"refs/heads/(main|dev)$", "refs/heads/a\\\\|b", "refs/heads/a[|]b",
+                                               "refs/heads/x[^a-c]y", "refs/heads/(a{255}){16}xy"};
+        int all = 1;
+        for (size_t i = 0u; all && i < sizeof(admitted) / sizeof(admitted[0]); ++i) {
+            char *candidate = one_regex(admitted[i]);
+            all = candidate && accepted(candidate);
+            if (!all) (void)fprintf(stderr, "pattern %s not admitted\n", admitted[i]);
+            free(candidate);
+        }
+        if (!all) break;
+        /* D3: one pattern of 4 095 states on a repository, then two; 256 in
+         * the snapshot, one per repository, then 257. */
+        char *budget = many_regex(1u, 1u, 0u);
+        int budgets = budget && accepted(budget);
+        free(budget);
+        budget = many_regex(1u, 2u, 0u);
+        budgets = budgets && budget && refused(budget, MAELYS_GIT_ERR_LIMIT, "one repository hold more than 4096");
+        free(budget);
+        budget = many_regex(256u, 1u, 0u);
+        budgets = budgets && budget && accepted(budget);
+        free(budget);
+        budget = many_regex(256u, 1u, 1u);
+        budgets = budgets && budget && refused(budget, MAELYS_GIT_ERR_LIMIT, "snapshot hold more than 1048576");
+        free(budget);
+        ok = budgets;
+    } while (0);
+    free(text);
+    return ok;
+}
+
 static int test_bounds(void) {
     /* 65 536 grants, then one more. */
     char *text = many_access(MG_GRANTS_MAX_TUPLES, 0);
@@ -326,11 +463,15 @@ static int test_bounds(void) {
 }
 
 /* The generator and the reader judge a ref pattern by one rule: each refex
- * of the corpus is migrated, and its normalized tuple read. Two differences
+ * of the corpus is migrated, the tuple it writes is the one of the corpus,
+ * and that tuple is read. Two differences
  * are by design: an exact ref of more than 63 bytes was refused as a policy
- * atom, and is a string of a slice; a '.' is any character in a refex, and
- * a literal dot in a pattern of the snapshot. */
+ * atom, and is a string of a slice; /USER/ is each user's name in a refex,
+ * and a literal in an exact or a prefix pattern of the snapshot. A refex
+ * that is not literal is a pattern of form regex, judged by
+ * mg_refex_regex_check on both sides. */
 static int write_file(const char *path, const char *text, mode_t mode);
+static int file_holds(const char *path, const char *needle);
 
 static int test_patterns_against_generator(void) {
     static const struct {
@@ -338,17 +479,23 @@ static int test_patterns_against_generator(void) {
         int generator, reader;
     } corpus[] = {
         {"RW refs/ = alice", "prefix", "refs/", "RW", 1, 1},
-        {"RW refs/heads/a+b$ = alice", "exact", "refs/heads/a+b", "RW", 0, 0},
+        {"RW refs/heads/a+b$ = alice", "regex", "refs/heads/a+b$", "RW", 1, 1},
         {"RW main = alice", "exact", "refs/heads/main", "RW", 1, 1},
         {"RW feature/x$ = alice", "exact", "refs/heads/feature/x", "RW", 1, 1},
         {"RW rel/ = alice", "prefix", "refs/heads/rel/", "RW", 1, 1},
         {"- main = alice", "prefix", "refs/heads/main", "-", 1, 1},
-        {"RW refs/heads/a..b$ = alice", "exact", "refs/heads/a..b", "RW", 0, 0},
+        {"RW refs/heads/a..b$ = alice", "regex", "refs/heads/a..b$", "RW", 1, 1},
         {"RW refs/heads//x/ = alice", "prefix", "refs/heads//x/", "RW", 0, 0},
-        {"RW refs/tags/v1.0$ = alice", "exact", "refs/tags/v1.0", "RW", 0, 1},
+        {"RW refs/tags/v1.0$ = alice", "regex", "refs/tags/v1.0$", "RW", 1, 1},
         {"RW refs/tags/v1\\.0$ = alice", "exact", "refs/tags/v1.0", "RW", 1, 1},
-        {"- refs/tags/v1.0 = alice", "prefix", "refs/tags/v1.0", "-", 0, 1},
+        {"- refs/tags/v1.0 = alice", "regex", "refs/tags/v1.0", "-", 1, 1},
+        {"RW v[0-9]+ = alice", "regex", "refs/heads/v[0-9]+", "RW", 1, 1},
+        {"RW refs/heads/a|b = alice", "regex", "refs/heads/a|b", "RW", 0, 0},
+        {"RW ^main = alice", "regex", "refs/heads/^main", "RW", 0, 0},
+        {"RW u/USER/.* = alice", "regex", "refs/heads/u/USER/.*", "RW", 0, 0},
         {"- refs/tags/v1\\. = alice", "prefix", "refs/tags/v1.", "-", 1, 1},
+        {"RW refs\\/tags/v1$ = alice", "exact", "refs/heads/refs/tags/v1", "RW", 1, 1},
+        {"RW v1\\-rc$ = alice", "exact", "refs/heads/v1-rc", "RW", 1, 1},
         /* /USER/ once completed is each user's name in Gitolite; a ref of
          * that name is a literal in a snapshot. */
         {"RW+ personal/USER/ = alice", "prefix", "refs/heads/personal/USER/", "RW+", 0, 1},
@@ -373,7 +520,17 @@ static int test_patterns_against_generator(void) {
         char tuple[512];
         (void)snprintf(tuple, sizeof(tuple), "[\"user\",\"alice\",\"app.git\",\"%s\",\"%s\",\"%s\"]",
                        corpus[i].form, corpus[i].pattern, corpus[i].level);
-        char *snapshot_text = snapshot(NULL, NULL, NULL, tuple, NULL, NULL, NULL, NULL);
+        if (generator) {
+            char grants_path[600];
+            CHECK(maelys_git_migrate_gitolite(conf, output, 1, &migration, &error) == MAELYS_GIT_OK);
+            maelys_git_gitolite_migration_result_clear(&migration);
+            (void)snprintf(grants_path, sizeof(grants_path), "%s/grants.json", output);
+            if (!file_holds(grants_path, tuple)) (void)fprintf(stderr, "%s: not written as %s\n", corpus[i].line, tuple);
+            CHECK(file_holds(grants_path, tuple));
+        }
+        char *snapshot_text = strcmp(corpus[i].form, "regex") == 0
+                                  ? regex_snapshot(tuple)
+                                  : snapshot(NULL, NULL, NULL, tuple, NULL, NULL, NULL, NULL);
         mg_grants_t *grants = NULL;
         int reader = snapshot_text && parse(snapshot_text, &grants, &error) == MAELYS_GIT_OK;
         mg_grants_free(grants);
@@ -383,6 +540,17 @@ static int test_patterns_against_generator(void) {
         CHECK(generator == corpus[i].generator && reader == corpus[i].reader);
     }
     return 1;
+}
+
+/* Whether the file at PATH, at most 64 KiB, holds NEEDLE. */
+static int file_holds(const char *path, const char *needle) {
+    static char text[65536];
+    FILE *file = fopen(path, "r");
+    if (!file) return 0;
+    size_t size = fread(text, 1u, sizeof(text) - 1u, file);
+    (void)fclose(file);
+    text[size] = '\0';
+    return strstr(text, needle) != NULL;
 }
 
 static int write_file(const char *path, const char *text, mode_t mode) {
@@ -449,7 +617,7 @@ int main(void) {
     char *root = mkdtemp(template);
     if (!root) return 1;
     (void)snprintf(g_root, sizeof(g_root), "%s", root);
-    int ok = test_accepted() && test_refused_shapes() && test_all_reserved() && test_bounds() && test_trusted_read() &&
+    int ok = test_accepted() && test_refused_shapes() && test_all_reserved() && test_regex_patterns() && test_bounds() && test_trusted_read() &&
              test_patterns_against_generator();
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok) puts("grants snapshot: closed form, order, bounds, trusted read: ok");

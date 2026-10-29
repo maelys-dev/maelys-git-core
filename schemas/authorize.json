@@ -313,7 +313,11 @@
               "description": "Distinct tuples of the slice of grants given to the engine for this request."
             },
             "format": {
-              "const": "maelys-git-grants/1"
+              "enum": [
+                "maelys-git-grants/1",
+                "maelys-git-grants/2"
+              ],
+              "description": "The format of the snapshot read: /2 when it holds regex ref patterns."
             },
             "program": {
               "const": "maelys-git-gitolite-program/1"

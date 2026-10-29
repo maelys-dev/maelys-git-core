@@ -213,20 +213,65 @@ if printf '%s %s %s\n' "$zero_oid" "$new_oid" refs/heads/release/1.0 | \
   exit 1
 fi
 
-# A regular expression has no bounded equivalent: reported, never applied.
+# A refex read as a regular expression: grants.json of format /2 and the
+# pattern kept as written, then a real push through the hook; a refex that
+# Gitolite would read as "or anywhere" is reported, never applied. Remarks
+# do not block: a deny with grants, a group with rights and no member.
 printf '%s\n' \
   'repo refs' \
-  '    RW refs/heads/(main|dev) = alice' > "$test_root/regex.conf"
+  '    RW refs/heads/(main|dev)$ = alice' \
+  '    - refs/heads/main = bob' \
+  '    RW refs/heads/ = bob' \
+  '    R = @ghost' > "$test_root/regex.conf"
 regex=$("$maelys_git_bin" migrate gitolite "$test_root/regex.conf" \
   "$test_root/regex" --format json --compact)
-printf '%s\n' "$regex" | grep -q '"canApply":false'
-printf '%s\n' "$regex" | grep -q 'unsupported refex syntax'
-if "$maelys_git_bin" migrate gitolite "$test_root/regex.conf" \
-     "$test_root/regex" --apply --format json --compact >/dev/null 2>&1; then
-  printf 'a regular-expression refex was applied\n' >&2
+printf '%s\n' "$regex" | grep -q '"canApply":true'
+printf '%s\n' "$regex" | grep -q '"grantsFormat":"maelys-git-grants/2"'
+printf '%s\n' "$regex" | grep -q 'repository refs.git: a ref deny that applies wins'
+printf '%s\n' "$regex" | grep -q 'group @ghost holds rights but has no member'
+"$maelys_git_bin" migrate gitolite "$test_root/regex.conf" \
+  "$test_root/regex" --apply --format json --compact >/dev/null
+regex_grants="$test_root/regex/grants.json"
+grep -qF '"format":"maelys-git-grants/2"' "$regex_grants"
+grep -qF '["user","alice","refs.git","regex","refs/heads/(main|dev)$","RW"]' "$regex_grants"
+for allowed in refs/heads/main refs/heads/dev; do
+  printf '%s %s %s\n' "$zero_oid" "$new_oid" "$allowed" | \
+    "$maelys_hook_bin" pre-receive --repository refs.git \
+      --manifest "$test_root/regex/manifest.json" --grants "$regex_grants" --user alice \
+      --git-dir "$test_root/refrepo.git" >/dev/null
+done
+for refused in refs/heads/mainline refs/heads/devel refs/tags/main; do
+  if printf '%s %s %s\n' "$zero_oid" "$new_oid" "$refused" | \
+       "$maelys_hook_bin" pre-receive --repository refs.git \
+         --manifest "$test_root/regex/manifest.json" --grants "$regex_grants" --user alice \
+         --git-dir "$test_root/refrepo.git" >/dev/null 2>/dev/null; then
+    printf 'regex migration allowed %s\n' "$refused" >&2
+    exit 1
+  fi
+done
+printf '%s\n' \
+  'repo refs' \
+  '    RW main|dev = alice' > "$test_root/alternation.conf"
+alternation=$("$maelys_git_bin" migrate gitolite "$test_root/alternation.conf" \
+  "$test_root/alternation" --format json --compact)
+printf '%s\n' "$alternation" | grep -q '"canApply":false'
+printf '%s\n' "$alternation" | grep -q "refex refused at column 5: a '|' at the top level"
+if "$maelys_git_bin" migrate gitolite "$test_root/alternation.conf" \
+     "$test_root/alternation" --apply --format json --compact >/dev/null 2>&1; then
+  printf 'a top-level alternation was applied\n' >&2
   exit 1
 fi
-test ! -e "$test_root/regex"
+test ! -e "$test_root/alternation"
+# A regex on a wild repository is refused as any ref rule there is.
+printf '%s\n' \
+  'repo team/CREATOR/..*' \
+  '    C = alice' \
+  '    RW refs/heads/feature/.* = CREATOR' > "$test_root/wild-regex.conf"
+wild_regex=$("$maelys_git_bin" migrate gitolite "$test_root/wild-regex.conf" \
+  "$test_root/wild-regex" --format json --compact)
+printf '%s\n' "$wild_regex" | grep -q '"canApply":false'
+printf '%s\n' "$wild_regex" | grep -q 'line 3: ref/VREF rules on wild repositories are not yet supported'
+printf '%s\n' "$wild_regex" | grep -q '"grantsFormat":"maelys-git-grants/1"'
 
 # The plan's budget: the engine's counts and bounds, the generator's worst
 # cases of execution, and the failure in the shape of a validate diagnostic.

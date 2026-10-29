@@ -11,6 +11,8 @@
     "ruleCount",
     "vrefCount",
     "unsupported",
+    "grantsFormat",
+    "remarks",
     "budget",
     "canApply"
   ],
@@ -51,6 +53,20 @@
       "items": {
         "type": "string"
       }
+    },
+    "grantsFormat": {
+      "enum": [
+        "maelys-git-grants/1",
+        "maelys-git-grants/2"
+      ],
+      "description": "The format of grants.json: /2 when a refex is migrated as a regex pattern."
+    },
+    "remarks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "What applies otherwise than in Gitolite without refusing an entry: ref denies that win over grants whatever their order, a group with rights and no member."
     },
     "budget": {
       "type": "object",

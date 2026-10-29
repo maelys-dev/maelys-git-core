@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "policy/grants.h"
+#include "policy/refex.h"
 
 #include <maelys/cli/digest.h>
 #include <maelys/cli/files.h>
@@ -24,7 +25,16 @@ struct mg_grants {
     mg_grants_view_t view;
     char *strings;                      /* the arena every string of the view points into */
     char sha256[MAELYS_CLI_SHA256_HEX_SIZE];
+    maelys_cli_regex_t **regexes;       /* the distinct "regex" patterns, compiled */
+    unsigned char *scratch;             /* view.scratch_bytes, for one search at a time */
+    /* The memo of the matches for one ref: memo_ref, copied, and per
+     * pattern 1, 0, or -1 when not searched yet for it. */
+    char memo_ref[MAELYS_GIT_MAX_REF];
+    signed char *memo;
+    size_t searches;
 };
+
+size_t mg_grants_test_scratch_shortfall;
 
 /* One field of a tuple while it is read: a string, or the integer of a
  * VREF limit. Tuples compare field by field, strings by their bytes. */
@@ -39,6 +49,7 @@ typedef struct {
     const char *section;
     size_t index;
     size_t tuples;
+    int regex_format;                   /* maelys-git-grants/2 */
 } reader_t;
 
 static int refuse(reader_t *reader, maelys_git_result_t code, const char *reason) {
@@ -215,15 +226,21 @@ static int read_ref(reader_t *reader, maelys_json_value_t tuple, field_t *fields
         !(ref->repository = fields[2].text = string_at(reader, tuple, 2u)) ||
         !repository(reader, ref->repository) || !(fields[3].text = string_at(reader, tuple, 3u)))
         return 0;
-    if (!strcmp(fields[3].text, "prefix")) ref->prefix = 1;
-    else if (strcmp(fields[3].text, "exact"))
-        return refuse(reader, MAELYS_GIT_ERR_INVALID_ARGUMENT, "form is \"exact\" or \"prefix\"");
+    if (!strcmp(fields[3].text, "prefix")) ref->form = MG_REF_PREFIX;
+    else if (!strcmp(fields[3].text, "exact")) ref->form = MG_REF_EXACT;
+    else if (!strcmp(fields[3].text, "regex") && reader->regex_format) ref->form = MG_REF_REGEX;
+    else
+        return refuse(reader, MAELYS_GIT_ERR_INVALID_ARGUMENT,
+                      reader->regex_format ? "form is \"exact\", \"prefix\" or \"regex\""
+                                           : "form is \"exact\" or \"prefix\"");
     if (!(ref->pattern = fields[4].text = string_at(reader, tuple, 4u)) ||
         !(ref->level = fields[5].text = string_at(reader, tuple, 5u)))
         return 0;
     if (!one_of(ref->level, levels))
         return refuse(reader, MAELYS_GIT_ERR_INVALID_ARGUMENT, "level is \"RW\", \"RW+\" or \"-\"");
-    return pattern(reader, ref->prefix, !strcmp(ref->level, "-"), ref->pattern);
+    /* A regex is checked once per distinct pattern, when it is compiled. */
+    if (ref->form == MG_REF_REGEX) return 1;
+    return pattern(reader, ref->form == MG_REF_PREFIX, !strcmp(ref->level, "-"), ref->pattern);
 }
 
 static int read_creator(reader_t *reader, maelys_json_value_t tuple, field_t *fields, void *out, size_t index) {
@@ -344,8 +361,10 @@ static int read_root(reader_t *reader, maelys_json_value_t root) {
     maelys_json_value_t format;
     maelys_json_view_t view;
     if (maelys_json_object_get(reader->document, root, "format", &format) != MAELYS_JSON_OK ||
-        maelys_json_value_string(reader->document, format, &view) != MAELYS_JSON_OK ||
-        strcmp(view.data, MG_GRANTS_FORMAT))
+        maelys_json_value_string(reader->document, format, &view) != MAELYS_JSON_OK)
+        return refuse(reader, MAELYS_GIT_ERR_INVALID_ARGUMENT, "format is not " MG_GRANTS_FORMAT);
+    if (!strcmp(view.data, MG_GRANTS_FORMAT_REGEX)) reader->regex_format = 1;
+    else if (strcmp(view.data, MG_GRANTS_FORMAT))
         return refuse(reader, MAELYS_GIT_ERR_INVALID_ARGUMENT, "format is not " MG_GRANTS_FORMAT);
     return 1;
 }
@@ -424,8 +443,116 @@ static int keep_strings(mg_grants_t *grants) {
     return 1;
 }
 
+/* A "regex" grant and its pattern, for the compilation of each distinct
+ * pattern once; then a repository and a pattern, for the budget of each
+ * repository. */
+typedef struct {
+    const char *pattern, *repository;
+    size_t ref, id;
+} regex_use_t;
+
+static int compare_uses_by_pattern(const void *a, const void *b) {
+    const regex_use_t *x = a, *y = b;
+    int order = strcmp(x->pattern, y->pattern);
+    return order ? order : (x->ref > y->ref) - (x->ref < y->ref);
+}
+
+static int compare_uses_by_repository(const void *a, const void *b) {
+    const regex_use_t *x = a, *y = b;
+    int order = strcmp(x->repository, y->repository);
+    return order ? order : (x->id > y->id) - (x->id < y->id);
+}
+
+/* Compiles each distinct "regex" pattern once, by the restrictions of
+ * policy/refex.h, and holds the budgets of D3: the states of the patterns
+ * of one repository, which bound a request, and of the snapshot, which
+ * bound its memory. A snapshot of format /2 holds at least one pattern of
+ * the form: a set of grants has one byte form. */
+static int compile_patterns(reader_t *reader, mg_grants_t *grants) {
+    mg_grants_view_t *view = &grants->view;
+    mg_grant_ref_t *refs = (mg_grant_ref_t *)view->refs;
+    reader->section = "refs";
+    size_t count = 0u;
+    for (size_t i = 0u; i < view->ref_count; ++i) count += refs[i].form == MG_REF_REGEX;
+    if (!count) {
+        reader->index = 0u;
+        return !reader->regex_format ||
+               refuse(reader, MAELYS_GIT_ERR_INVALID_ARGUMENT,
+                      "format " MG_GRANTS_FORMAT_REGEX " holds no regex pattern");
+    }
+    regex_use_t *uses = calloc(count, sizeof(*uses));
+    grants->regexes = calloc(count, sizeof(*grants->regexes));
+    if (!uses || !grants->regexes) {
+        free(uses);
+        return refuse(reader, MAELYS_GIT_ERR_IO, "out of memory");
+    }
+    size_t used = 0u;
+    for (size_t i = 0u; i < view->ref_count; ++i)
+        if (refs[i].form == MG_REF_REGEX)
+            uses[used++] = (regex_use_t){refs[i].pattern, refs[i].repository, i, 0u};
+    qsort(uses, count, sizeof(*uses), compare_uses_by_pattern);
+    int ok = 1;
+    size_t distinct = 0u, total = 0u, scratch = 0u;
+    for (size_t u = 0u; ok && u < count; ++u) {
+        if (u && !strcmp(uses[u].pattern, uses[u - 1u].pattern)) {
+            uses[u].id = uses[u - 1u].id;
+        } else {
+            size_t offset = 0u;
+            reader->index = uses[u].ref;
+            const char *refused = mg_refex_regex_check(uses[u].pattern, &grants->regexes[distinct], &offset);
+            if (refused) {
+                char reason[200];
+                (void)snprintf(reason, sizeof(reason), "a regex pattern is refused at byte %zu: %s", offset,
+                               refused);
+                ok = refuse(reader, MAELYS_GIT_ERR_INVALID_ARGUMENT, reason);
+                break;
+            }
+            const maelys_cli_regex_t *regex = grants->regexes[distinct];
+            total += maelys_cli_regex_states(regex);
+            size_t bytes = maelys_cli_regex_scratch_size(regex);
+            if (bytes > scratch) scratch = bytes;
+            uses[u].id = distinct++;
+            if (total > MG_REFEX_TOTAL_STATES)
+                ok = refuse(reader, MAELYS_GIT_ERR_LIMIT,
+                            "the regex patterns of the snapshot hold more than 1048576 states");
+        }
+        refs[uses[u].ref].regex = uses[u].id;
+    }
+    view->regex_count = distinct;
+    view->regex_states = total;
+    if (ok) {
+        qsort(uses, count, sizeof(*uses), compare_uses_by_repository);
+        size_t sum = 0u;
+        for (size_t u = 0u; ok && u < count; ++u) {
+            int same_repository = u && !strcmp(uses[u].repository, uses[u - 1u].repository);
+            if (!same_repository) sum = 0u;
+            else if (uses[u].id == uses[u - 1u].id) continue;
+            sum += maelys_cli_regex_states(grants->regexes[uses[u].id]);
+            if (sum > view->regex_repository_states) view->regex_repository_states = sum;
+            reader->index = uses[u].ref;
+            if (sum > MG_REFEX_REPOSITORY_STATES)
+                ok = refuse(reader, MAELYS_GIT_ERR_LIMIT,
+                            "the regex patterns of one repository hold more than 4096 states");
+        }
+    }
+    free(uses);
+    if (ok) {
+        grants->scratch = malloc(scratch);
+        grants->memo = malloc(distinct);
+        if (!grants->scratch || !grants->memo) return refuse(reader, MAELYS_GIT_ERR_IO, "out of memory");
+        memset(grants->memo, -1, distinct);
+        view->scratch_bytes = scratch;
+    }
+    return ok;
+}
+
 void mg_grants_free(mg_grants_t *grants) {
     if (!grants) return;
+    for (size_t i = 0u; grants->regexes && i < grants->view.regex_count; ++i)
+        maelys_cli_regex_free(grants->regexes[i]);
+    free(grants->regexes);
+    free(grants->scratch);
+    free(grants->memo);
     free((void *)grants->view.members);
     free((void *)grants->view.nested);
     free((void *)grants->view.access);
@@ -498,6 +625,8 @@ maelys_git_result_t mg_grants_parse(const void *bytes, size_t size, mg_grants_t 
                      (void **)&view->vref_limits, &view->vref_limit_count, &view->index_bytes) &&
         count_groups(&reader, view);
     if (ok && !keep_strings(grants)) ok = refuse(&reader, MAELYS_GIT_ERR_IO, "out of memory");
+    if (ok) ok = compile_patterns(&reader, grants);
+    view->format = reader.regex_format ? MG_GRANTS_FORMAT_REGEX : MG_GRANTS_FORMAT;
     maelys_json_document_release(document);
     if (!ok) {
         mg_grants_free(grants);
@@ -606,4 +735,37 @@ const char *mg_grants_sha256(const mg_grants_t *grants) {
 
 void mg_grants_view(const mg_grants_t *grants, mg_grants_view_t *out) {
     if (grants && out) *out = grants->view;
+}
+
+const struct maelys_cli_regex *mg_grants_regex(const mg_grants_t *grants, size_t index) {
+    return grants && index < grants->view.regex_count ? grants->regexes[index] : NULL;
+}
+
+void *mg_grants_scratch(const mg_grants_t *grants, size_t *out_size) {
+    if (out_size) *out_size = grants ? grants->view.scratch_bytes : 0u;
+    return grants ? grants->scratch : NULL;
+}
+
+int mg_grants_regex_matches(const mg_grants_t *grants, size_t index, const char *ref) {
+    if (!grants || !ref || index >= grants->view.regex_count) return -1;
+    /* The memo and the scratch are the handle's working state, not the
+     * snapshot's content. */
+    mg_grants_t *state = (mg_grants_t *)grants;
+    size_t length = strlen(ref);
+    int memorable = length < sizeof(state->memo_ref);
+    if (memorable && strcmp(state->memo_ref, ref) != 0) {
+        memcpy(state->memo_ref, ref, length + 1u);
+        memset(state->memo, -1, grants->view.regex_count);
+    }
+    if (memorable && state->memo[index] >= 0) return state->memo[index];
+    size_t size = grants->view.scratch_bytes;
+    size = size > mg_grants_test_scratch_shortfall ? size - mg_grants_test_scratch_shortfall : 0u;
+    ++state->searches;
+    int found = maelys_cli_regex_search_scratch(grants->regexes[index], state->scratch, size, ref, length);
+    if (memorable && found >= 0) state->memo[index] = (signed char)found;
+    return found;
+}
+
+size_t mg_grants_regex_searches(const mg_grants_t *grants) {
+    return grants ? grants->searches : 0u;
 }

@@ -15,7 +15,10 @@
  *   "refs"               [[kind, subject, repository, form, pattern, level], ...]
  *                        form: "exact" or "prefix"; level: "RW", "RW+" or "-";
  *                        a prefix ends with '/', except a deny's bare
- *                        literal, which Gitolite denies as a prefix
+ *                        literal, which Gitolite denies as a prefix; in
+ *                        maelys-git-grants/2 only, form "regex": a Gitolite
+ *                        refex, completed and anchored at its start
+ *                        (policy/refex.h)
  *   "namespace_creators" [[kind, subject, namespace], ...]
  *   "owner_access"       [[namespace, level], ...]       level: "R", "RW" or "RW+"
  *   "vref_names"         [[kind, subject, repository, path], ...]
@@ -41,6 +44,8 @@
 #include <stdint.h>
 
 #define MG_GRANTS_FORMAT "maelys-git-grants/1"
+/* The format of a snapshot with at least one "regex" pattern (D1). */
+#define MG_GRANTS_FORMAT_REGEX "maelys-git-grants/2"
 
 /* The bounds of D7. */
 #define MG_GRANTS_MAX_BYTES (4u * 1024u * 1024u)
@@ -72,11 +77,14 @@ typedef struct {
     const char *subject, *repository, *level;
 } mg_grant_access_t;
 
+typedef enum { MG_REF_EXACT = 0, MG_REF_PREFIX = 1, MG_REF_REGEX = 2 } mg_ref_form_t;
+
 typedef struct {
     mg_subject_kind_t kind;
     const char *subject, *repository;
-    int prefix;               /* 1 for a prefix, 0 for an exact ref */
+    mg_ref_form_t form;
     const char *pattern, *level;
+    size_t regex;             /* MG_REF_REGEX: its distinct compiled pattern */
 } mg_grant_ref_t;
 
 typedef struct {
@@ -121,6 +129,11 @@ typedef struct {
     size_t vref_limit_count;
     size_t group_count;       /* distinct groups named anywhere */
     size_t index_bytes;       /* memory held: the tuples and the arena of strings */
+    const char *format;       /* the format read: MG_GRANTS_FORMAT or _REGEX */
+    size_t regex_count;       /* distinct "regex" patterns, each compiled once */
+    size_t regex_states;      /* their states in all */
+    size_t regex_repository_states; /* the most any repository's distinct patterns hold */
+    size_t scratch_bytes;     /* the scratch a search of any of them works in */
 } mg_grants_view_t;
 
 typedef struct mg_grants mg_grants_t;
@@ -151,6 +164,28 @@ void mg_grants_free(mg_grants_t *grants);
 /* Tests only: called between the read of a snapshot and the second
  * observation of its descriptor, to change the file there. */
 extern void (*mg_grants_test_between_reads)(const char *path);
+/* The compiled pattern of a "regex" grant, and the scratch a search of any
+ * pattern of GRANTS works in: one scratch per snapshot, and one snapshot
+ * per handle, which is confined to a thread (maelys_git.h). */
+struct maelys_cli_regex; /* maelys_cli_regex_t of maelys/cli/regex.h */
+const struct maelys_cli_regex *mg_grants_regex(const mg_grants_t *grants, size_t index);
+void *mg_grants_scratch(const mg_grants_t *grants, size_t *out_size);
+
+/* Whether the distinct pattern INDEX of GRANTS matches REF: 1 or 0, or -1
+ * when the search fails, which no admitted ref and snapshot do. The result
+ * is kept for REF, copied: every request of one ref (the update, each
+ * commit, each change and the summary of a push) searches a pattern once,
+ * until another ref is asked. The snapshot holds it, so that a new
+ * generation searches again and a reading that finds the same bytes keeps
+ * it. Only the match is kept: the facts and the decision are made again
+ * for every request. The search uses the snapshot's scratch: GRANTS, owned
+ * by one handle, is used by one thread at a time. */
+int mg_grants_regex_matches(const mg_grants_t *grants, size_t index, const char *ref);
+/* The searches GRANTS has made, for tests and measurements. */
+size_t mg_grants_regex_searches(const mg_grants_t *grants);
+/* Tests only: bytes taken from the scratch a search is given, so that it
+ * fails (-1) as a violated precondition would. */
+extern size_t mg_grants_test_scratch_shortfall;
 
 /* The SHA-256 of the bytes the snapshot was parsed from, in hex. */
 const char *mg_grants_sha256(const mg_grants_t *grants);
