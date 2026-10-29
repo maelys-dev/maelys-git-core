@@ -159,7 +159,8 @@ int main(int argc, char **argv) {
     result = mg_process_run_with_timeout(executable, closed_argv, 150u, NULL, &error);
     if (result != MAELYS_GIT_ERR_PROCESS || mg_monotonic_ms() - started > 1500)
         return fail("closed output bypassed the subprocess deadline");
-    /* The exit is reported after the output closed, not found by a poll. */
+    /* A child that exits some time after its output closed keeps its status:
+     * the wait does not end with the output. */
     char *late_argv[] = {executable, "--late-exit", NULL};
     child_status = 0;
     result = mg_process_run_status(executable, late_argv, &child_status, &error);

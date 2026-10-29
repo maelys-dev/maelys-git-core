@@ -213,7 +213,11 @@ static maelys_git_result_t timeout_failure(maelys_git_error_t *error, uint64_t t
  * watcher; the wait then backs off. Either descriptor is close-on-exec: a
  * kqueue is never inherited, pidfd_open sets O_CLOEXEC. */
 static int exit_watcher_open(pid_t pid) {
-#if defined(__APPLE__)
+#if defined(MG_PROCESS_NO_EXIT_WATCHER)
+    /* A test build that runs the backoff, as a host without a watcher would. */
+    (void)pid;
+    return -1;
+#elif defined(__APPLE__)
     int queue = kqueue();
     if (queue < 0) return -1;
     struct kevent change;
