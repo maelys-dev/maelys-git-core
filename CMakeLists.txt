@@ -565,6 +565,14 @@ if(MAELYS_GIT_BUILD_TESTS)
     target_include_directories(test-maelys-git-process PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(test-maelys-git-process PRIVATE maelys_git_core maelys_git_build_flags)
     add_test(NAME maelys-git-process-isolation COMMAND test-maelys-git-process)
+    # The same checks on the wait without an exit watcher, as on a kernel
+    # without pidfd_open: this process.c replaces the library's.
+    add_executable(test-maelys-git-process-backoff
+        tests/test_process.c src/common/process.c)
+    target_include_directories(test-maelys-git-process-backoff PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_definitions(test-maelys-git-process-backoff PRIVATE MG_PROCESS_NO_EXIT_WATCHER)
+    target_link_libraries(test-maelys-git-process-backoff PRIVATE maelys_git_core maelys_git_build_flags)
+    add_test(NAME maelys-git-process-backoff COMMAND test-maelys-git-process-backoff)
 
     if(MAELYS_GIT_ENABLE_CLOUD_AGENT)
         find_program(MAELYS_OPENSSL_PROGRAM openssl REQUIRED)

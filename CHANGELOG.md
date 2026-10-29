@@ -5,6 +5,18 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- A child process is reaped as soon as it exits. Once its output closed,
+  the wait polled `waitpid` and slept 10 ms whenever the child had not
+  exited yet, which cost almost every Git command 10 ms: about 100 s on a
+  push of a new ref with 10,000 commits, which spawns one `git show` per
+  commit. The wait now blocks on the exit itself, kqueue `EVFILT_PROC` on
+  macOS and a pidfd on Linux, bounded by the remaining budget, and falls
+  back to a short backoff where neither is available; no signal handler
+  is installed. That push drops from 320 s to 216 s on an M2 Max, the cost
+  of its Git commands run alone. The budget, the termination of the
+  process group and the messages are unchanged, except that a timeout
+  reached while waiting for the exit names the configured limit, as the
+  others do, rather than what remained of it.
 - A snapshot of grants may be `maelys-git-grants/2`: the format of a
   snapshot that holds ref patterns of form `regex`, a Gitolite refex
   completed by `refs/heads/` and anchored at its start, as Gitolite matches

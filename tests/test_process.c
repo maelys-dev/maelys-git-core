@@ -1,6 +1,7 @@
 #include "internal.h"
 
 #include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,6 +41,53 @@ static int descendant_mode(const char *marker) {
     return 0;
 }
 
+/* A child that closes its output, so the parent is past pump_output and
+ * waiting for the exit, then outlives any budget and ignores SIGTERM. */
+static int linger_mode(const char *marker) {
+    FILE *stream = fopen(marker, "wb");
+    if (!stream) return 2;
+    (void)fprintf(stream, "%ld\n", (long)getpid());
+    if (fclose(stream) != 0) return 2;
+    (void)signal(SIGTERM, SIG_IGN);
+    (void)close(STDOUT_FILENO);
+    (void)close(STDERR_FILENO);
+    pause_ms(30000);
+    return 0;
+}
+
+static int lingering_child_is_killed(const char *executable) {
+    char directory[] = "/tmp/maelys-process-linger-XXXXXX";
+    if (!mkdtemp(directory)) return fail("cannot create temporary directory");
+    char marker[4096];
+    int written = snprintf(marker, sizeof(marker), "%s/pid", directory);
+    if (written < 0 || (size_t)written >= sizeof(marker))
+        return fail("temporary marker path is too long");
+    char *linger_argv[] = {(char *)executable, "--linger", marker, NULL};
+    maelys_git_error_t error = {0};
+    int64_t started = mg_monotonic_ms();
+    maelys_git_result_t result = mg_process_run_with_timeout(
+        executable, linger_argv, 200u, NULL, &error);
+    int64_t elapsed = mg_monotonic_ms() - started;
+    if (result != MAELYS_GIT_ERR_PROCESS ||
+        !strstr(error.message, "exceeded the 200 ms execution limit"))
+        return fail("a child that does not exit was not reported as timed out");
+    if (elapsed < 200 || elapsed > 5000)
+        return fail("a child that does not exit was not stopped at its deadline");
+    FILE *stream = fopen(marker, "rb");
+    long pid = 0;
+    if (!stream || fscanf(stream, "%ld", &pid) != 1 || pid <= 0) {
+        if (stream) (void)fclose(stream);
+        return fail("lingering child did not record its pid");
+    }
+    (void)fclose(stream);
+    /* Reaped: the pid no longer names a child, not even a zombie. */
+    if (waitpid((pid_t)pid, NULL, WNOHANG) != -1 || errno != ECHILD)
+        return fail("timed-out child was not reaped");
+    if (unlink(marker) != 0 || rmdir(directory) != 0)
+        return fail("cannot remove temporary directory");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--diagnostics") == 0) {
         (void)fputs("diagnostic prefix: ", stderr);
@@ -59,6 +107,14 @@ int main(int argc, char **argv) {
     }
     if (argc == 3 && strcmp(argv[1], "--descendant") == 0)
         return descendant_mode(argv[2]);
+    if (argc == 3 && strcmp(argv[1], "--linger") == 0)
+        return linger_mode(argv[2]);
+    if (argc == 2 && strcmp(argv[1], "--late-exit") == 0) {
+        (void)close(STDOUT_FILENO);
+        (void)close(STDERR_FILENO);
+        pause_ms(50);
+        return 3;
+    }
 
     if (setenv("MAELYS_TEST_SECRET", "must-not-cross-exec", 1) != 0)
         return fail("cannot set test environment variable");
@@ -103,6 +159,14 @@ int main(int argc, char **argv) {
     result = mg_process_run_with_timeout(executable, closed_argv, 150u, NULL, &error);
     if (result != MAELYS_GIT_ERR_PROCESS || mg_monotonic_ms() - started > 1500)
         return fail("closed output bypassed the subprocess deadline");
+    /* A child that exits some time after its output closed keeps its status:
+     * the wait does not end with the output. */
+    char *late_argv[] = {executable, "--late-exit", NULL};
+    child_status = 0;
+    result = mg_process_run_status(executable, late_argv, &child_status, &error);
+    if (result != MAELYS_GIT_OK || child_status != 3)
+        return fail("an exit after the output closed lost its status");
+    if (lingering_child_is_killed(executable) != 0) return 1;
     char directory[] = "/tmp/maelys-process-test-XXXXXX";
     if (!mkdtemp(directory)) return fail("cannot create temporary directory");
     char marker[4096];
