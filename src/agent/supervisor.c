@@ -9,7 +9,6 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
-#include <time.h>
 #include <unistd.h>
 
 static void close_fd(int *fd) {
@@ -201,20 +200,14 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
     if (!wrote || !response || timed_out || read_failed || oversized)
         mg_terminate_process_group(child);
     int status = 0;
-    pid_t waited = 0;
-    while (waited == 0) {
-        waited = waitpid(child, &status, WNOHANG);
-        if (waited < 0 && errno == EINTR) { waited = 0; continue; }
-        if (waited != 0) break;
-        int timeout = 0;
-        if (!remaining_timeout(deadline, &timeout) || timeout == 0) {
-            timed_out = 1;
-            mg_terminate_process_group(child);
-            do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
-            break;
-        }
-        struct timespec pause = {0, 1000000L * (timeout < 10 ? timeout : 10)};
-        (void)nanosleep(&pause, NULL);
+    pid_t waited = -1;
+    mg_wait_result_t outcome = mg_wait_child_until(child, deadline, &status);
+    if (outcome == MG_WAIT_EXITED) {
+        waited = child;
+    } else if (outcome == MG_WAIT_TIMED_OUT) {
+        timed_out = 1;
+        mg_terminate_process_group(child);
+        do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
     }
     /* No descendant may keep mutating repositories after a terminal result,
      * even if the executor returned successfully or closed stdout early. */

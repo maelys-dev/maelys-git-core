@@ -88,6 +88,47 @@ static int lingering_child_is_killed(const char *executable) {
     return 0;
 }
 
+/* mg_wait_child_until on forked children: the deadline is kept, an exit is
+ * seen, a reaped child is a failure. */
+static int wait_until_deadline(void) {
+    pid_t child = fork();
+    if (child < 0) return fail("cannot fork");
+    if (child == 0) { pause_ms(5000); _exit(0); }
+    int64_t started = mg_monotonic_ms();
+    int status = 0;
+    mg_wait_result_t waited = mg_wait_child_until(child, started + 150, &status);
+    int64_t elapsed = mg_monotonic_ms() - started;
+    int running = kill(child, 0) == 0;
+    (void)kill(child, SIGKILL);
+    (void)waitpid(child, NULL, 0);
+    if (waited != MG_WAIT_TIMED_OUT || !running)
+        return fail("a child that outlives its deadline was not left running and timed out");
+    if (elapsed < 150 || elapsed > 1500)
+        return fail("the wait did not end at its deadline");
+
+    child = fork();
+    if (child < 0) return fail("cannot fork");
+    if (child == 0) { pause_ms(5000); _exit(0); }
+    waited = mg_wait_child_until(child, -1, &status);
+    (void)kill(child, SIGKILL);
+    (void)waitpid(child, NULL, 0);
+    if (waited != MG_WAIT_TIMED_OUT) return fail("a negative deadline was not reached");
+
+    child = fork();
+    if (child < 0) return fail("cannot fork");
+    if (child == 0) { pause_ms(50); _exit(5); }
+    started = mg_monotonic_ms();
+    waited = mg_wait_child_until(child, started + 5000, &status);
+    elapsed = mg_monotonic_ms() - started;
+    if (waited != MG_WAIT_EXITED || !WIFEXITED(status) || WEXITSTATUS(status) != 5)
+        return fail("an exit before the deadline lost its status");
+    if (elapsed > 1500) return fail("an exit was not seen before the deadline");
+    errno = 0;
+    if (mg_wait_child_until(child, started + 5000, &status) != MG_WAIT_FAILED || errno != ECHILD)
+        return fail("a reaped child was not reported as a wait failure");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--diagnostics") == 0) {
         (void)fputs("diagnostic prefix: ", stderr);
@@ -185,6 +226,8 @@ int main(int argc, char **argv) {
         return fail("timed-out descendant survived its process group");
     if (errno != ENOENT) return fail("cannot inspect descendant marker");
     if (rmdir(directory) != 0) return fail("cannot remove temporary directory");
+
+    if (wait_until_deadline() != 0) return 1;
 
     char *relative_argv[] = {"env", NULL};
     result = mg_process_run_with_timeout("env", relative_argv, 100u, NULL, &error);

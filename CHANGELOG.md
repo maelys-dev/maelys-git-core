@@ -5,6 +5,18 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- The agent waits for each executor's exit as Git children are waited
+  for: on the exit itself, kqueue `EVFILT_PROC` on macOS and a pidfd on
+  Linux, bounded by the command's deadline, instead of polling `waitpid`
+  every 10 ms; both waits share one helper. The deadline, the termination
+  of the process group after the wait, the result categories and the
+  messages are unchanged. An executor that closes its output and keeps
+  running is now reaped when it exits rather than on the next 10 ms tick.
+  A supervised `health` command costs the same before and after (about
+  2.5 ms under Linux, 25 to 33 ms on a macOS host with an Endpoint
+  Security client): the executor's output closes when it exits, so the
+  former poll rarely slept. `bench-maelys-git-supervisor`, built on
+  demand, measures it.
 - A child process is reaped as soon as it exits. Once its output closed,
   the wait polled `waitpid` and slept 10 ms whenever the child had not
   exited yet, which cost almost every Git command 10 ms: about 100 s on a

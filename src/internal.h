@@ -116,6 +116,16 @@ maelys_git_result_t mg_spawn_executor(
     const posix_spawn_file_actions_t *actions, char *const argv[],
     maelys_git_error_t *error);
 void mg_terminate_process_group(pid_t pid);
+typedef enum {
+    MG_WAIT_EXITED,    /* *out_status holds its wait status; it is reaped */
+    MG_WAIT_TIMED_OUT, /* it still runs, neither signalled nor reaped */
+    MG_WAIT_FAILED     /* waitpid failed; errno says why */
+} mg_wait_result_t;
+/* Waits for the child PID until DEADLINE, an mg_monotonic_ms() instant, on
+ * an exit watcher where the platform has one and never by a signal handler.
+ * A negative deadline or an unreadable clock counts as reached, after one
+ * look at the child. OUT_STATUS may be NULL. */
+mg_wait_result_t mg_wait_child_until(pid_t pid, int64_t deadline, int *out_status);
 maelys_git_result_t mg_process_run_with_timeout(
     const char *executable,
     char *const argv[],
