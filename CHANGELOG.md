@@ -5,6 +5,15 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- `authorize` takes `--update-kind create|fast_forward|force|delete`, the
+  kind of ref update the hook, the shell and the executor already pass.
+  Without it a rule that names a kind never allows: a migrated Gitolite
+  ref grant (`RW`, `RW+` on a refex) allowed no push from the command
+  line, where only its denies decided. The option is a choice of the
+  catalog, refused outside the four names before any policy is opened;
+  it is accepted with any OPERATION, as the library carries the kind of a
+  merge too. A policy that names no kind decides as before. The decision
+  receipt does not record the kind.
 - A child process is reaped as soon as it exits. Once its output closed,
   the wait polled `waitpid` and slept 10 ms whenever the child had not
   exited yet, which cost almost every Git command 10 ms: about 100 s on a

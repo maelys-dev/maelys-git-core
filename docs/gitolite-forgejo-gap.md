@@ -217,12 +217,14 @@ comparee, et elle differe :
   (`R any`) ; Git Core lui refuse la lecture et ne lui laisse que
   l'ecriture. Plus strict, en litteral comme en regex. Un droit `R`, `RW`
   ou `RW+` sans refex sur le depot donne la lecture dans les deux.
-- **`authorize push` en ligne de commande.** La commande ne transmet pas le
-  type de mise a jour, dont une attribution de ref a besoin : un `push` n'y
-  est decide que par ses refus. Le hook, le shell et l'executeur, qui le
-  connaissent, decident les attributions.
 
-Les deux sont des ecarts connus, a corriger a part.
+C'est un ecart connu, a corriger a part.
+
+`authorize push` en ligne de commande decide les attributions de ref quand
+il recoit le type de mise a jour, `--update-kind
+create|fast_forward|force|delete`, celui que le hook, le shell et
+l'executeur transmettent. Sans lui, une attribution de ref n'accorde rien
+et un `push` n'est decide que par ses refus.
 
 L'objectif raisonnable n'est pas la compatibilite syntaxique complete. Il faut
 fournir une bibliotheque de politiques typees couvrant les VREF utiles, puis
