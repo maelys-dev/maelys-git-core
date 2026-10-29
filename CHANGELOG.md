@@ -17,7 +17,18 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   process group and the messages are unchanged, except that a timeout
   reached while waiting for the exit names the configured limit, as the
   others do, rather than what remained of it.
-
+- maelys-http is pinned to 0.1.18 (was 0.1.16), which includes 0.1.17. The
+  Cloud agent no longer loses an outbox POST to a TLS 1.3 session ticket.
+  With Mbed TLS 4, a ticket the server sent just before the read between a
+  request's head and its body made the body write fail: the agent reported
+  `HTTPS request failed: I/O failure` and closed the connection with the
+  head sent and the body missing. The result was kept and posted again on
+  a later cycle under the same `Idempotency-Key`, so nothing was lost, but
+  the cycle failed. This is the intermittent failure of the Cloud
+  transport test on macOS. Neither the codec, the client nor ABI 1
+  changes. maelys-http 0.1.17 and 0.1.18 pin maelys-system 0.14; this
+  repository keeps 0.13.0, and maelys-http calls nothing those versions
+  change.
 - A policy set holding the audited Gitolite program decides only the refs
   Gitolite 3.6.15 admits with its default patterns (`REF_OR_FILENAME_PATT`
   of `Rc.pm`): a ref that is not a valid ref, does not begin with a
