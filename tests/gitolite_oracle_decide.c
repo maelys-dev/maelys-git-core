@@ -8,8 +8,9 @@
  * entry on its own line, and then nothing else.
  *
  * A Gitolite repository REPO is the Git Core repository REPO.git. W is a
- * fast-forward, + a forced update; the ref "any" is a write without a ref,
- * which Gitolite answers without its deny rules, as Git Core does. */
+ * fast-forward, + a forced update; with the ref "any", W is a write and R
+ * a read, without a ref, which Gitolite answers without its deny rules, as
+ * Git Core does: gitolite-shell asks R any for upload-pack. */
 #include "maelys_git.h"
 #include "internal.h"
 #include "policy/policy_grants.h"
@@ -24,12 +25,13 @@ static const char *decide(maelys_git_policy_t *policy, const char *repository, c
     int written = snprintf(repo, sizeof(repo), "%s.git", repository);
     if (written < 0 || (size_t)written >= sizeof(repo)) return "ERROR";
     int any = strcmp(ref, "any") == 0;
-    if (any && strcmp(aa, "W") != 0) return "ERROR";
+    int read = strcmp(aa, "R") == 0;
+    if (any ? !read && strcmp(aa, "W") != 0 : read) return "ERROR";
     maelys_git_policy_request_t request = {
         .request_id = "oracle",
         .principal = user,
         .repository = repo,
-        .operation = any ? "write" : "push",
+        .operation = any ? (read ? "read" : "write") : "push",
         .ref_name = any ? NULL : ref,
         .update_kind = any ? NULL : (strcmp(aa, "+") == 0 ? "force" : "fast_forward"),
     };

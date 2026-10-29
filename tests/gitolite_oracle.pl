@@ -3,12 +3,14 @@
 # the refex migration: parse_refs of Conf/Store.pm and access() of
 # Conf/Load.pm, rewritten on the subset of gitolite.conf the migration
 # reads. Calibrated against Gitolite itself on 16,044 queries before it
-# served here: no difference.
+# served here, and on the read (R any) of every case of the oracle test:
+# no difference.
 #
 # It reads a configuration, then one query per line on stdin,
 #     REPO USER AA REF
-# with AA one of W, + (and REF a full ref, or "any"), and prints one of
-# ALLOW, DENY or ERROR per query.
+# with AA one of W, + (and REF a full ref, or "any"), or R with "any", as
+# gitolite-shell asks it for upload-pack, and prints one of ALLOW, DENY or
+# ERROR per query.
 #
 #     --mode first-match   Gitolite: the first rule that applies decides
 #     --mode deny-wins     Git Core: any deny that applies decides first

@@ -10,6 +10,7 @@ deny-rules	refused: only exact full-ref RW/RW+ rules are supported
 escapes	migrates
 literal	migrates
 order	migrates
+read-ref-grants	migrates
 regex	migrates
 regex-order	migrates
 user	refused: '/USER/' is the user's own name in Gitolite

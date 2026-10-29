@@ -643,6 +643,10 @@ if(MAELYS_GIT_BUILD_TESTS)
             $<TARGET_FILE:maelys-git> $<TARGET_FILE:maelys-git-hook> $<TARGET_FILE:maelys-git-executor>
             $<TARGET_FILE:maelys-git-shell>)
 
+    add_test(NAME maelys-git-gitolite-program-versions
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gitolite_program_versions.py
+            $<TARGET_FILE:maelys-git> ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures)
+
     add_test(NAME maelys-git-audit-regressions
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_audit_regressions.py
             $<TARGET_FILE:maelys-git> $<TARGET_FILE:maelys-git-hook>

@@ -7,8 +7,8 @@ configuration with Git Core (tests/gitolite_oracle_decide.c) and:
 
 - a case listed as refused in cases.tsv must be refused, with that reason;
 - a case that migrates is asked every query (7 users, one unknown to it, W and +, the refs of
-  refs.txt and their variants that Git can carry, and "any"), and its
-  decision is compared with
+  refs.txt and their variants that Git can carry, and "any"; and R any, the
+  read gitolite-shell asks for upload-pack), and its decision is compared with
   the oracle's in --mode deny-wins, Git Core's rule for the order of rules.
   A refusal of Gitolite at admission (ERROR) and a denial of Git Core agree.
   Every other difference must be listed in divergences.tsv with its kind,
@@ -42,6 +42,8 @@ HEADER = (
     "#   bare-literal-grant  a bare literal grant (RW refs/heads/main) is the exact ref\n"
     "#                       in Git Core and a prefix in Gitolite: Git Core denies\n"
     "#                       main-hotfix, main/x... Stricter, by design of the migration.\n"
+    "#   read-by-ref-grant   a ref grant alone (RW+ refs/heads/feature/) lets Gitolite\n"
+    "#                       read the repository (R any); Git Core does not. Stricter.\n"
     "# Against Gitolite's own first-match rule, the order of rules adds differences,\n"
     "# all stricter too: they are order.tsv's.\n"
     "# case\tuser\taa\tref\tgit_core\tgitolite\tkind\n")
@@ -111,7 +113,7 @@ def compare(perl, oracle, decide, fixtures, workdir, record):
     for (case,), outcome in sorted(cases.items()):
         conf = os.path.join(fixtures, "cases", case + ".conf")
         queries = [("app", user, aa, ref) for user in USERS for aa in ("W", "+") for ref in refs]
-        queries += [("app", user, "W", "any") for user in USERS]
+        queries += [("app", user, aa, "any") for user in USERS for aa in ("W", "R")]
         text = "".join(" ".join(query) + "\n" for query in queries)
         result = subprocess.run([decide, conf, os.path.join(workdir, case)], input=text,
                                 capture_output=True, text=True)
