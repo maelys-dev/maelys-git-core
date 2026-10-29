@@ -1120,6 +1120,115 @@ static int test_ref_domain(void) {
     return 1;
 }
 
+/* GIT-C08, commit 3: a snapshot of regex patterns decides as Gitolite reads
+ * the refexes, and every request of one ref (the update, the commits, the
+ * changes, the summary of a push) searches each pattern once; a reading
+ * that finds the same bytes keeps the memo, a new generation does not. A
+ * search that fails refuses, with a receipt of the failure. */
+static int regex_decides(maelys_git_policy_t *policy, const char *ref, const char *kind, int allowed,
+                         int explicit_deny) {
+    maelys_git_policy_request_t push = {.request_id = "r", .principal = "alice", .repository = "app.git",
+                                        .operation = "push", .ref_name = ref, .update_kind = kind};
+    maelys_git_policy_decision_t decision;
+    maelys_git_error_t error;
+    if (maelys_git_policy_authorize(policy, &push, &decision, &error) != MAELYS_GIT_OK) {
+        (void)fprintf(stderr, "%s: %s\n", ref, error.message);
+        return 0;
+    }
+    if (decision.allowed != allowed || decision.explicit_deny != explicit_deny)
+        (void)fprintf(stderr, "%s %s: allowed %d explicit %d\n", ref, kind, decision.allowed, decision.explicit_deny);
+    return decision.allowed == allowed && decision.explicit_deny == explicit_deny;
+}
+
+#define REGEX_GRANTS(extra)                                                                                  \
+    "{\"access\":[],\"format\":\"maelys-git-grants/2\",\"members\":[[\"alice\",\"devs\"]],"                   \
+    "\"namespace_creators\":[],\"nested\":[],\"owner_access\":[],\"refs\":["                                   \
+    "[\"group\",\"devs\",\"app.git\",\"regex\",\"refs/tags/v[0-9]+\\\\.0\",\"-\"],"                           \
+    "[\"user\",\"alice\",\"app.git\",\"prefix\",\"refs/tags/\",\"RW+\"],"                                      \
+    "[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/heads/(main|dev)$\",\"RW\"],"                           \
+    "[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/heads/feature/.*\",\"RW+\"]" extra                      \
+    "],\"vref_limits\":[],\"vref_names\":[]}"
+
+static int test_regex_decisions(void) {
+    const char *grants_path = write_grants("regex-grants", REGEX_GRANTS(""));
+    const char *const program[] = {mg_gitolite_program_text(NULL)};
+    const char *manifest = write_set("regex-set", 1u, program);
+    CHECK(grants_path && manifest);
+    char snapshot[512], manifest_path[512];
+    (void)snprintf(snapshot, sizeof(snapshot), "%s", grants_path);
+    (void)snprintf(manifest_path, sizeof(manifest_path), "%s", manifest);
+    maelys_git_policy_t *policy = NULL;
+    maelys_git_error_t error;
+    CHECK(mg_policy_open_grants(manifest_path, snapshot, &policy, &error) == MAELYS_GIT_OK);
+    CHECK(regex_decides(policy, "refs/heads/main", "fast_forward", 1, 0));
+    CHECK(regex_decides(policy, "refs/heads/dev", "fast_forward", 1, 0));
+    CHECK(regex_decides(policy, "refs/heads/mainline", "fast_forward", 0, 0));
+    CHECK(regex_decides(policy, "refs/heads/main", "force", 0, 0));
+    CHECK(regex_decides(policy, "refs/heads/feature/x", "force", 1, 0));
+    CHECK(regex_decides(policy, "refs/heads/xfeature/x", "fast_forward", 0, 0));
+    CHECK(regex_decides(policy, "refs/tags/v1.0", "create", 0, 1));
+    CHECK(regex_decides(policy, "refs/tags/v12.0", "create", 0, 1));
+    CHECK(regex_decides(policy, "refs/tags/v1x0", "create", 1, 0));
+    CHECK(regex_decides(policy, "refs/tags/va.0", "create", 1, 0));
+
+    /* The requests of one push of one ref: three distinct patterns, each
+     * searched once whatever the number of requests. */
+    size_t before = mg_policy_regex_searches(policy);
+    for (int i = 0; i < 50; ++i) CHECK(regex_decides(policy, "refs/heads/feature/y", "fast_forward", 1, 0));
+    CHECK(mg_policy_regex_searches(policy) == before + 3u);
+    /* The same bytes read again: the same generation, the memo kept. */
+    CHECK(mg_policy_refresh_grants(policy, &error) == MAELYS_GIT_OK);
+    CHECK(regex_decides(policy, "refs/heads/feature/y", "fast_forward", 1, 0));
+    CHECK(mg_policy_regex_searches(policy) == before + 3u);
+    /* New bytes: a new generation, searched again from nothing. */
+    CHECK(write_text(snapshot,
+                     REGEX_GRANTS(",[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/heads/wip/\",\"RW\"]")));
+    CHECK(mg_policy_refresh_grants(policy, &error) == MAELYS_GIT_OK);
+    CHECK(mg_policy_regex_searches(policy) == 0u);
+    CHECK(regex_decides(policy, "refs/heads/feature/y", "fast_forward", 1, 0));
+    CHECK(mg_policy_regex_searches(policy) == 4u);
+    CHECK(regex_decides(policy, "refs/heads/wip/a", "fast_forward", 1, 0));
+    /* A new generation whose largest pattern needs a larger scratch: the
+     * scratch is the new snapshot's. */
+    size_t small = 0u, large = 0u;
+    (void)mg_policy_grants_scratch(policy, &small);
+    CHECK(write_text(snapshot,
+                     "{\"access\":[],\"format\":\"maelys-git-grants/2\",\"members\":[[\"alice\",\"devs\"]],"
+                     "\"namespace_creators\":[],\"nested\":[],\"owner_access\":[],\"refs\":["
+                     "[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/heads/(.*a){16}x\",\"RW\"]"
+                     "],\"vref_limits\":[],\"vref_names\":[]}"));
+    CHECK(mg_policy_refresh_grants(policy, &error) == MAELYS_GIT_OK);
+    (void)mg_policy_grants_scratch(policy, &large);
+    CHECK(large > small);
+    CHECK(regex_decides(policy, "refs/heads/aaaaaaaaaaaaaaaaax", "fast_forward", 1, 0));
+
+    /* A request without a ref searches nothing: the summary of a push
+     * reads the write levels of the ref grants, whatever their form. */
+    size_t searched = mg_policy_regex_searches(policy);
+    maelys_git_policy_request_t summary = {.request_id = "s", .principal = "alice", .repository = "app.git",
+                                           .operation = "push", .has_summary = 1, .commit_count = 1u};
+    maelys_git_policy_decision_t allowed;
+    CHECK(maelys_git_policy_authorize(policy, &summary, &allowed, &error) == MAELYS_GIT_OK && allowed.allowed);
+    CHECK(mg_policy_regex_searches(policy) == searched);
+
+    /* A search that fails: refused, the receipt says what failed. */
+    mg_grants_test_scratch_shortfall = 1u;
+    maelys_git_policy_request_t push = {.request_id = "r", .principal = "alice", .repository = "app.git",
+                                        .operation = "push", .ref_name = "refs/heads/other",
+                                        .update_kind = "fast_forward"};
+    maelys_git_policy_decision_t decision;
+    maelys_git_receipt_t receipt;
+    char text[4096];
+    maelys_git_result_t result = maelys_git_policy_authorize_receipt(
+        policy, &push, MAELYS_GIT_EXPLAIN_NEVER, text, sizeof(text), &decision, &receipt, &error);
+    mg_grants_test_scratch_shortfall = 0u;
+    CHECK(result == MAELYS_GIT_ERR_POLICY && !decision.allowed);
+    CHECK(strstr(error.message, "regex search failed") != NULL);
+    CHECK(receipt.decision == MAELYS_GIT_RECEIPT_DENY_ERROR && !strcmp(receipt.error_kind, "engine"));
+    maelys_git_policy_close(policy);
+    return 1;
+}
+
 static int test_vref_filtering(void) {
     char text[4096] = "@juniors = alice\nrepo app\n    RW = alice\n";
     for (int i = 1; i <= 65; ++i)
@@ -1192,7 +1301,8 @@ int main(void) {
     (void)snprintf(g_root, sizeof(g_root), "%s", root);
     int ok = test_identity() && test_audited_consumer() && test_mixed_routing() && test_fixed_program() &&
              test_written_snapshot() && test_counterexamples() && test_quotas() && test_engine_bounds() &&
-             test_escaped_dot() && test_all() && test_ref_domain() && test_vref_filtering() && test_admission() && test_total_bound() && test_parity();
+             test_escaped_dot() && test_all() && test_ref_domain() && test_regex_decisions() &&
+             test_vref_filtering() && test_admission() && test_total_bound() && test_parity();
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok) puts("audited Gitolite program: identity, consumer, routing, parity: ok");
     return ok ? 0 : 1;

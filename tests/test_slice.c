@@ -168,28 +168,28 @@ static int test_matches(void) {
     char deep_ref[320];
     (void)snprintf(deep_ref, sizeof(deep_ref), "%sleaf", deep);
     static const struct {
-        int prefix;
+        mg_ref_form_t form;
         const char *pattern, *ref;
         int expected;
     } corpus[] = {
-        {1, "refs/heads/rel/", "refs/heads/rel/1", 1},
-        {1, "refs/heads/rel/", "refs/heads/release", 0},   /* the '/' is a boundary */
-        {1, "refs/heads/rel/", "refs/heads/rel", 0},
-        {1, "refs/heads/main", "refs/heads/main", 1},      /* a deny's bare literal */
-        {1, "refs/heads/main", "refs/heads/mainline", 1},  /* Gitolite denies it as a prefix */
-        {0, "refs/heads/main", "refs/heads/main", 1},
-        {0, "refs/heads/main", "refs/heads/mainline", 0},
-        {0, "refs/heads/main", "refs/heads/mai", 0},
-        {1, "refs/", "refs/tags/v1", 1},
-        {1, "refs/tags/", "refs/heads/tags/x", 0},
+        {MG_REF_PREFIX, "refs/heads/rel/", "refs/heads/rel/1", 1},
+        {MG_REF_PREFIX, "refs/heads/rel/", "refs/heads/release", 0},   /* the '/' is a boundary */
+        {MG_REF_PREFIX, "refs/heads/rel/", "refs/heads/rel", 0},
+        {MG_REF_PREFIX, "refs/heads/main", "refs/heads/main", 1},      /* a deny's bare literal */
+        {MG_REF_PREFIX, "refs/heads/main", "refs/heads/mainline", 1},  /* Gitolite denies it as a prefix */
+        {MG_REF_EXACT, "refs/heads/main", "refs/heads/main", 1},
+        {MG_REF_EXACT, "refs/heads/main", "refs/heads/mainline", 0},
+        {MG_REF_EXACT, "refs/heads/main", "refs/heads/mai", 0},
+        {MG_REF_PREFIX, "refs/", "refs/tags/v1", 1},
+        {MG_REF_PREFIX, "refs/tags/", "refs/heads/tags/x", 0},
     };
     for (size_t i = 0u; i < sizeof(corpus) / sizeof(corpus[0]); ++i)
-        CHECK(mg_slice_pattern_matches(corpus[i].prefix, corpus[i].pattern, corpus[i].ref) == corpus[i].expected);
+        CHECK(mg_slice_pattern_matches(corpus[i].form, corpus[i].pattern, corpus[i].ref) == corpus[i].expected);
     /* Deeper than 16 '/' and longer than 63 bytes: matches like the others. */
-    CHECK(mg_slice_pattern_matches(1, deep, deep_ref));
-    CHECK(mg_slice_pattern_matches(1, long_pattern, long_ref));
-    CHECK(!mg_slice_pattern_matches(1, long_pattern, "refs/heads/x"));
-    CHECK(!mg_slice_pattern_matches(1, "refs/heads/", NULL));
+    CHECK(mg_slice_pattern_matches(MG_REF_PREFIX, deep, deep_ref));
+    CHECK(mg_slice_pattern_matches(MG_REF_PREFIX, long_pattern, long_ref));
+    CHECK(!mg_slice_pattern_matches(MG_REF_PREFIX, long_pattern, "refs/heads/x"));
+    CHECK(!mg_slice_pattern_matches(MG_REF_PREFIX, "refs/heads/", NULL));
 
     char out[64];
     CHECK(mg_slice_owner_namespace("team/alice/x.git", "alice", out, sizeof(out)) &&
@@ -409,8 +409,81 @@ static int test_many_groups(void) {
     return 1;
 }
 
+/* A regex pattern is searched once per ref: a user reaches it through 63
+ * groups at three levels, and a series of extractions of one ref (the
+ * requests of a push) searches it once; another ref searches again. The
+ * facts are the full scan's, whose search is independent. A failed search
+ * is a refusal, never "does not apply". */
+static int test_regex_search(void) {
+    text_t members = {0}, refs = {0};
+    int ok = 1;
+    static const char *const levels[] = {"-", "RW", "RW+"};
+    for (unsigned g = 0u; ok && g < 63u; ++g) {
+        ok = append(&members, "%s[\"alice\",\"g%02u\"]", g ? "," : "", g);
+        for (unsigned l = 0u; ok && l < 3u; ++l)
+            ok = append(&refs, "%s[\"group\",\"g%02u\",\"app.git\",\"regex\",\"refs/heads/(main|dev)$\",\"%s\"]",
+                        g || l ? "," : "", g, levels[l]);
+    }
+    ok = ok && append(&refs, ",[\"user\",\"alice\",\"app.git\",\"regex\",\"refs/heads/feature/.*\",\"RW\"]");
+    CHECK(ok);
+    char *text = snapshot(NULL, members.data, NULL, NULL, NULL, refs.data, NULL, NULL);
+    free(members.data);
+    free(refs.data);
+    CHECK(text);
+    char *at = strstr(text, "maelys-git-grants/1");
+    CHECK(at);
+    at[strlen("maelys-git-grants/")] = '2';
+    mg_grants_t *grants = load(text);
+    free(text);
+    CHECK(grants);
+    static const struct {
+        const char *ref;
+        size_t searches; /* in all, after the extraction */
+        int main_match, feature_match;
+    } steps[] = {
+        {"refs/heads/main", 2u, 1, 0},        /* both patterns, once each */
+        {"refs/heads/main", 2u, 1, 0},        /* the next request of the push */
+        {"refs/heads/main", 2u, 1, 0},
+        {"refs/heads/dev", 4u, 1, 0},         /* another ref: searched again */
+        {"refs/heads/feature/x", 6u, 0, 1},
+        {"refs/heads/mainline", 8u, 0, 0},    /* anchored at the end: no */
+        {"refs/heads/xfeature/", 10u, 0, 0},  /* anchored at the start: no */
+        {NULL, 10u, 0, 0},                    /* no ref: no search */
+    };
+    for (size_t i = 0u; i < sizeof(steps) / sizeof(steps[0]); ++i) {
+        mg_slice_request_t request = {"alice", "app.git", steps[i].ref, NULL, 0u};
+        mg_slice_t indexed, reference;
+        maelys_git_error_t error = {0};
+        CHECK(mg_slice_extract(grants, &request, &indexed, &error) == MAELYS_GIT_OK);
+        CHECK(reference_slice(grants, &request, &reference));
+        if (mg_grants_regex_searches(grants) != steps[i].searches)
+            (void)fprintf(stderr, "%s: %zu searches\n", steps[i].ref ? steps[i].ref : "(none)",
+                          mg_grants_regex_searches(grants));
+        CHECK(mg_grants_regex_searches(grants) == steps[i].searches);
+        CHECK(same_slice(&indexed, &reference));
+        CHECK(has_fact(&indexed, MG_SLICE_GROUP_REF_MATCH, "g62", "app.git", "-", 0) == steps[i].main_match);
+        CHECK(has_fact(&indexed, MG_SLICE_GROUP_REF_MATCH, "g00", "app.git", "RW+", 0) == steps[i].main_match);
+        CHECK(has_fact(&indexed, MG_SLICE_REF_MATCH, "alice", "app.git", "RW", 0) == steps[i].feature_match);
+        CHECK(has_fact(&indexed, MG_SLICE_GROUP_REF_LEVEL, "g31", "app.git", "RW+", 0));
+        mg_slice_clear(&indexed);
+        mg_slice_clear(&reference);
+    }
+    /* A search that fails refuses the request. */
+    mg_grants_test_scratch_shortfall = 1u;
+    mg_slice_request_t push = {"alice", "app.git", "refs/heads/other", NULL, 0u};
+    mg_slice_t slice;
+    maelys_git_error_t error = {0};
+    maelys_git_result_t result = mg_slice_extract(grants, &push, &slice, &error);
+    mg_grants_test_scratch_shortfall = 0u;
+    CHECK(result == MAELYS_GIT_ERR_POLICY && slice.count == 0u);
+    CHECK(!strcmp(error.message, "regex search failed") && error.detail.kind == MAELYS_GIT_FAILURE_ENGINE);
+    mg_grants_free(grants);
+    return 1;
+}
+
 int main(void) {
-    int ok = test_written_slice() && test_matches() && test_oracle() && test_many_groups();
+    int ok = test_written_slice() && test_matches() && test_oracle() && test_many_groups() &&
+             test_regex_search();
     if (ok) puts("grants slice: written slice, matches, oracle against the full scan, many groups: ok");
     return ok ? 0 : 1;
 }

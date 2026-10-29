@@ -37,9 +37,10 @@ size_t mg_slice_predicate_arity(mg_slice_predicate_t predicate) {
     return predicate < MG_SLICE_PREDICATE_COUNT ? k_predicates[predicate].arity : 0u;
 }
 
-int mg_slice_pattern_matches(int prefix, const char *pattern, const char *ref) {
+int mg_slice_pattern_matches(mg_ref_form_t form, const char *pattern, const char *ref) {
+    if (form == MG_REF_REGEX) return -1;
     if (!pattern || !ref) return 0;
-    return prefix ? strncmp(ref, pattern, strlen(pattern)) == 0 : strcmp(ref, pattern) == 0;
+    return form == MG_REF_PREFIX ? strncmp(ref, pattern, strlen(pattern)) == 0 : strcmp(ref, pattern) == 0;
 }
 
 const char *mg_slice_owner_namespace(const char *repository, const char *user, char *out, size_t size) {
@@ -283,9 +284,10 @@ static mg_slice_predicate_t vref_limit_predicate(const char *limit, int group) {
 
 /* The grants of one subject (U, or one of its groups) on the repository
  * and on the owned namespace. Every string of a fact belongs to the
- * snapshot or to the request, never to this frame. */
-static int subject_facts(const mg_grants_view_t *view, const mg_slice_request_t *request, int group,
-                         const char *subject, const char *owned, mg_slice_t *out) {
+ * snapshot or to the request, never to this frame. 1, 0 when out of memory,
+ * -1 when the search of a regex pattern fails. */
+static int subject_facts(const mg_grants_t *grants, const mg_grants_view_t *view, const mg_slice_request_t *request,
+                         int group, const char *subject, const char *owned, mg_slice_t *out) {
     const char *kind = group ? "group" : "user";
     size_t first, last;
     equal_range(view, view->access_count, access_key, kind, subject, request->repository, &first, &last);
@@ -296,7 +298,11 @@ static int subject_facts(const mg_grants_view_t *view, const mg_slice_request_t 
     equal_range(view, view->ref_count, ref_key, kind, subject, request->repository, &first, &last);
     for (size_t i = first; i < last; ++i) {
         const mg_grant_ref_t *ref = &view->refs[i];
-        if (request->ref && mg_slice_pattern_matches(ref->prefix, ref->pattern, request->ref) &&
+        int matches = !request->ref ? 0
+                      : ref->form == MG_REF_REGEX ? mg_grants_regex_matches(grants, ref->regex, request->ref)
+                                                  : mg_slice_pattern_matches(ref->form, ref->pattern, request->ref);
+        if (matches < 0) return -1;
+        if (matches &&
             !mg_slice_add(out, group ? MG_SLICE_GROUP_REF_MATCH : MG_SLICE_REF_MATCH, subject,
                           request->repository, ref->level, 0))
             return 0;
@@ -356,9 +362,11 @@ maelys_git_result_t mg_slice_extract(const mg_grants_t *grants, const mg_slice_r
     char owned_buffer[512];
     const char *owned = mg_slice_owner_namespace(request->repository, request->user, owned_buffer,
                                                  sizeof(owned_buffer));
-    if (ok) ok = subject_facts(&view, request, 0, request->user, owned, out);
-    for (size_t g = 0u; ok && g < groups.count; ++g)
-        ok = subject_facts(&view, request, 1, groups.names[g], owned, out);
+    if (ok) ok = subject_facts(grants, &view, request, 0, request->user, owned, out);
+    for (size_t g = 0u; ok > 0 && g < groups.count; ++g)
+        ok = subject_facts(grants, &view, request, 1, groups.names[g], owned, out);
+    int failed_search = ok < 0;
+    if (failed_search) ok = 0;
     if (ok && owned) {
         /* owner_access is sorted by namespace. */
         for (size_t i = 0u; ok && i < view.owner_count; ++i)
@@ -368,6 +376,14 @@ maelys_git_result_t mg_slice_extract(const mg_grants_t *grants, const mg_slice_r
     }
     free(groups.names);
     free(groups.slots);
+    if (failed_search) {
+        /* Never read as "does not apply": the request is refused. */
+        mg_slice_clear(out);
+        mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0, "regex search failed");
+        const maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_ENGINE};
+        mg_error_set_detail(error, &detail);
+        return MAELYS_GIT_ERR_POLICY;
+    }
     if (!ok) {
         mg_slice_clear(out);
         mg_error_set(error, MAELYS_GIT_ERR_IO, 0, "out of memory while extracting a slice");

@@ -15,7 +15,7 @@
  * manifest. */
 #define MAELYS_GIT_CLI_GRANTS_OPTION \
     {MAELYS_CLI_PATH("grants", "FILE", \
-     "Snapshot of Gitolite grants (maelys-git-grants/1) the audited Gitolite program reads.")}
+     "Snapshot of Gitolite grants (maelys-git-grants/1 or /2) the audited Gitolite program reads.")}
 
 /* Summary shared by every --git option. */
 #define MAELYS_GIT_CLI_GIT_OPTION \
