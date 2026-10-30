@@ -25,6 +25,15 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   `maelys_git_receipt_grants_t` gains the member `program`. A set migrated
   again has a new policy-set fingerprint: a `pr merge` plan made before is
   refused at `--apply`.
+- A Git process starts with no signal blocked and every signal at its
+  default action, whatever the launcher of Git Core blocks or ignores. It
+  inherited both: a SIGPIPE an sshd ignores reached Git, and a SIGTERM a
+  service blocks would have kept the SIGTERM that stops a process group
+  from reaching it, so that only the SIGKILL that follows did. The
+  isolated spawn now sets `POSIX_SPAWN_SETSIGMASK` with an empty mask and
+  `POSIX_SPAWN_SETSIGDEF` on every signal, as maelys-system 0.13.1 does.
+  The process test blocks SIGTERM and ignores SIGPIPE before starting a
+  child that reports both.
 - maelys-system is pinned to 0.14.4 (was 0.13.0), the version maelys-http
   0.1.18 was tested with: the two pins describe a pair that was tested
   together again. Nothing this repository calls changes: it reads the
