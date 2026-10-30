@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
+#include <signal.h>
 #include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
@@ -100,6 +101,21 @@ static int write_all_until(int fd, const void *bytes, size_t length,
     return ok;
 }
 
+/* Observes the executor's end without reaping it: 0 with *ended naming it
+ * once it ended, 0 with si_pid 0 while it runs, -1 with errno otherwise. */
+static int observe_executor(pid_t child, siginfo_t *ended) {
+#if defined(MG_SUPERVISOR_WAIT_FAULT)
+    /* A test build whose first observation fails as a host may refuse it. */
+    static int faulted;
+    if (!faulted) {
+        faulted = 1;
+        errno = EPERM;
+        return -1;
+    }
+#endif
+    return waitid(P_PID, (id_t)child, ended, WEXITED | WNOWAIT | WNOHANG);
+}
+
 /* One executor for COMMAND, on the kept snapshot GRANTS names (none when its
  * digest is empty). */
 static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
@@ -109,6 +125,18 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
                                         char **out_response_json,
                                         int *out_succeeded,
                                         maelys_git_error_t *error) {
+    /* The supervisor alone reaps its executor, and only after the last
+     * signal to its group: that is what keeps the group's number the
+     * executor's own. A SIGCHLD disposition the kernel reaps by, ignored or
+     * SA_NOCLDWAIT, inherited from whatever started the agent, would reap it
+     * first; no executor starts under it. */
+    struct sigaction on_child;
+    if (sigaction(SIGCHLD, NULL, &on_child) != 0 || on_child.sa_handler == SIG_IGN ||
+        (on_child.sa_flags & SA_NOCLDWAIT)) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
+                     "the supervisor cannot keep its executor: SIGCHLD is ignored");
+        return MAELYS_GIT_ERR_PROCESS;
+    }
     int input_pipe[2] = {-1, -1};
     int output_pipe[2] = {-1, -1};
     if (!open_request_channel(input_pipe) || !mg_pipe_cloexec(output_pipe)) {
@@ -198,36 +226,62 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
     }
     close_fd(&output_pipe[0]);
     int oversized = used > MAELYS_GIT_MAX_PROTOCOL_LINE + 2u;
-    if (!wrote || !response || timed_out || read_failed || oversized)
-        mg_terminate_process_group(child);
-    int status = 0;
-    pid_t waited = 0;
-    while (waited == 0) {
-        waited = waitpid(child, &status, WNOHANG);
-        if (waited < 0 && errno == EINTR) { waited = 0; continue; }
-        if (waited != 0) break;
+    /* One escalation, SIGTERM, a grace, SIGKILL, for the whole group: now
+     * when the exchange failed, else once the executor has ended. */
+    int escalated = !wrote || !response || timed_out || read_failed || oversized;
+    if (escalated) mg_terminate_process_group(child);
+    /* The executor's end is observed without reaping it: its number, the
+     * group's, stays its own until the last signal below has been sent. A
+     * wait that fails with ECHILD says something else reaped it: the number
+     * is nobody's to signal, and the request fails. Any other failure of
+     * the wait, as a seccomp filter may answer, leaves the executor where it
+     * is: the group is stopped once, the executor reaped last, and the
+     * request fails with that error even when the reap succeeds. */
+    int lost = 0, wait_failed = 0;
+    for (;;) {
+        siginfo_t ended;
+        memset(&ended, 0, sizeof(ended));
+        int observed = observe_executor(child, &ended);
+        if (observed < 0 && errno == EINTR) continue;
+        if (observed < 0) {
+            wait_failed = errno;
+            lost = errno == ECHILD;
+            break;
+        }
+        if (ended.si_pid == child) break;
         int timeout = 0;
         if (!remaining_timeout(deadline, &timeout) || timeout == 0) {
             timed_out = 1;
-            mg_terminate_process_group(child);
-            do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
             break;
         }
         struct timespec pause = {0, 1000000L * (timeout < 10 ? timeout : 10)};
         (void)nanosleep(&pause, NULL);
     }
     /* No descendant may keep mutating repositories after a terminal result,
-     * even if the executor returned successfully or closed stdout early. */
-    mg_terminate_process_group(child);
-    if (!wrote || !response || timed_out || read_failed || used == 0u ||
+     * even if the executor returned successfully or closed stdout early. The
+     * leader is not reaped yet, so the group's number can name no stranger,
+     * and a descendant that ignores SIGTERM still takes the SIGKILL. */
+    if (!lost && !escalated) mg_terminate_process_group(child);
+    int status = 0;
+    pid_t waited = 0;
+    if (!lost) {
+        do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+    }
+    if (!wrote || !response || timed_out || read_failed || wait_failed || used == 0u ||
         oversized || waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         free(response);
         maelys_git_result_t result = timed_out || oversized ?
             MAELYS_GIT_ERR_LIMIT : MAELYS_GIT_ERR_PROCESS;
+        if (wait_failed && !lost) {
+            mg_error_set(error, result, wait_failed, "executor wait failed: %s",
+                         strerror(wait_failed));
+            return result;
+        }
         mg_error_set(error, result, errno,
                      timed_out ? "executor process group timed out" :
                      oversized ? "executor response exceeded 64 KiB" :
-                     read_failed ? "executor response read failed" : "executor failed");
+                     read_failed ? "executor response read failed" :
+                     lost ? "executor was reaped outside the supervisor" : "executor failed");
         return result;
     }
     /* Exactly one JSONL response: no missing delimiter or second frame. */
