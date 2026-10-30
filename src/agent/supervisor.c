@@ -110,6 +110,18 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
                                         char **out_response_json,
                                         int *out_succeeded,
                                         maelys_git_error_t *error) {
+    /* The supervisor alone reaps its executor, and only after the last
+     * signal to its group: that is what keeps the group's number the
+     * executor's own. A SIGCHLD disposition the kernel reaps by, ignored or
+     * SA_NOCLDWAIT, inherited from whatever started the agent, would reap it
+     * first; no executor starts under it. */
+    struct sigaction on_child;
+    if (sigaction(SIGCHLD, NULL, &on_child) != 0 || on_child.sa_handler == SIG_IGN ||
+        (on_child.sa_flags & SA_NOCLDWAIT)) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0,
+                     "the supervisor cannot keep its executor: SIGCHLD is ignored");
+        return MAELYS_GIT_ERR_PROCESS;
+    }
     int input_pipe[2] = {-1, -1};
     int output_pipe[2] = {-1, -1};
     if (!open_request_channel(input_pipe) || !mg_pipe_cloexec(output_pipe)) {
@@ -199,16 +211,22 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
     }
     close_fd(&output_pipe[0]);
     int oversized = used > MAELYS_GIT_MAX_PROTOCOL_LINE + 2u;
-    if (!wrote || !response || timed_out || read_failed || oversized)
-        mg_terminate_process_group(child);
+    /* One escalation, SIGTERM, a grace, SIGKILL, for the whole group: now
+     * when the exchange failed, else once the executor has ended. */
+    int escalated = !wrote || !response || timed_out || read_failed || oversized;
+    if (escalated) mg_terminate_process_group(child);
     /* The executor's end is observed without reaping it: its number, the
-     * group's, stays its own until the last signal below has been sent. */
+     * group's, stays its own until the last signal below has been sent. A
+     * wait that fails, ECHILD, says something else reaped it: the number is
+     * nobody's to signal, and the request fails. */
+    int lost = 0;
     for (;;) {
         siginfo_t ended;
         memset(&ended, 0, sizeof(ended));
         int observed = waitid(P_PID, (id_t)child, &ended, WEXITED | WNOWAIT | WNOHANG);
         if (observed < 0 && errno == EINTR) continue;
-        if (observed < 0 || ended.si_pid == child) break;
+        if (observed < 0) { lost = 1; break; }
+        if (ended.si_pid == child) break;
         int timeout = 0;
         if (!remaining_timeout(deadline, &timeout) || timeout == 0) {
             timed_out = 1;
@@ -221,10 +239,12 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
      * even if the executor returned successfully or closed stdout early. The
      * leader is not reaped yet, so the group's number can name no stranger,
      * and a descendant that ignores SIGTERM still takes the SIGKILL. */
-    mg_terminate_process_group(child);
+    if (!lost && !escalated) mg_terminate_process_group(child);
     int status = 0;
     pid_t waited = 0;
-    do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+    if (!lost) {
+        do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+    }
     if (!wrote || !response || timed_out || read_failed || used == 0u ||
         oversized || waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         free(response);
@@ -233,7 +253,8 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
         mg_error_set(error, result, errno,
                      timed_out ? "executor process group timed out" :
                      oversized ? "executor response exceeded 64 KiB" :
-                     read_failed ? "executor response read failed" : "executor failed");
+                     read_failed ? "executor response read failed" :
+                     lost ? "executor was reaped outside the supervisor" : "executor failed");
         return result;
     }
     /* Exactly one JSONL response: no missing delimiter or second frame. */

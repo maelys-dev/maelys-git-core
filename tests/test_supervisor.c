@@ -37,8 +37,8 @@ static int ends_with(const char *value, const char *suffix) {
 }
 
 /* The descendant of the term-order executor: on the group's SIGTERM, says
- * whether the leader still exists, reaped or not. kill(2) and write(2) are
- * async-signal-safe; the file is opened before the handler can run. */
+ * whether the leader still exists, reaped or not. Everything here is
+ * async-signal-safe: kill(2), open(2), write(2), close(2). */
 static pid_t term_order_leader;
 static char term_order_marker[4096];
 static void record_term_order(int signo) {
@@ -91,12 +91,14 @@ static int executor_mode(const char *executable, const char *marker) {
         if (ends_with(marker, "/term-order")) {
             /* Handles the group's SIGTERM instead of ignoring it, to record
              * whether the leader, its parent, was already reaped by then;
-             * then lives on, for the SIGKILL that must follow. */
-            (void)close(STDOUT_FILENO);
+             * then lives on, for the SIGKILL that must follow. Its stdout
+             * closes only once the handler is in place: the supervisor
+             * takes that EOF as the executor's end and signals the group. */
             (void)snprintf(term_order_marker, sizeof(term_order_marker), "%s", marker);
             struct sigaction record = {.sa_handler = record_term_order};
             (void)sigemptyset(&record.sa_mask);
             if (sigaction(SIGTERM, &record, NULL) != 0) _exit(2);
+            (void)close(STDOUT_FILENO);
             pause_ms(700);
             FILE *stream = fopen(marker, "ab");
             if (stream) {
@@ -354,6 +356,20 @@ int main(int argc, char **argv) {
     maelys_cli_sha256_hex(second, strlen(second), second_sha);
     if (!publish(source, first)) return fail("cannot publish the grants");
     mg_grants_archive_t grants;
+
+    /* Under a SIGCHLD disposition the kernel reaps by, the supervisor could
+     * not keep its executor, nor its number: no executor starts. */
+    struct sigaction ignore_children = {.sa_handler = SIG_IGN}, former;
+    (void)sigemptyset(&ignore_children.sa_mask);
+    if (sigaction(SIGCHLD, &ignore_children, &former) != 0) return fail("cannot ignore SIGCHLD");
+    response = NULL;
+    memset(&error, 0, sizeof(error));
+    result = mg_supervisor_execute(&config, &command, "{}", &grants, &response, &succeeded, &error);
+    free(response);
+    if (sigaction(SIGCHLD, &former, NULL) != 0) return fail("cannot restore SIGCHLD");
+    if (result != MAELYS_GIT_ERR_PROCESS || !strstr(error.message, "SIGCHLD is ignored") ||
+        access(recorded, F_OK) == 0)
+        return fail("an executor started under an ignored SIGCHLD");
     for (int with_grants = 0; with_grants < 2; ++with_grants) {
         (void)snprintf(config.grants_path, sizeof(config.grants_path), "%s", with_grants ? source : "");
         response = NULL;

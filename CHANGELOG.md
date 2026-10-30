@@ -12,11 +12,18 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   the group's number is the executor's own and can name no stranger. The
   final SIGTERM and SIGKILL were sent after the reap, to a number nothing
   reserved any more. What is signaled and when the executor is stopped are
-  unchanged; a successful request that leaves no descendant now waits the
-  100 ms grace, which the empty group did not. The supervisor test adds an
-  executor that exits on its own with a descendant that handles SIGTERM:
-  it records that the leader was not reaped when the group's SIGTERM
-  reached it, and the SIGKILL still ends it.
+  unchanged, and the group is escalated once per request: an exchange that
+  failed before the executor ended paid the grace twice. A successful
+  request that leaves no descendant now waits the 100 ms grace, which the
+  empty group did not. The supervisor alone reaps its executor: under a
+  SIGCHLD disposition the kernel reaps by, ignored or `SA_NOCLDWAIT`,
+  inherited from whatever started the agent, no executor starts and the
+  request fails, "SIGCHLD is ignored"; an executor reaped by something
+  else all the same fails the request without a signal to its number. The
+  supervisor test adds an executor that exits on its own with a descendant
+  that handles SIGTERM: it records that the leader was not reaped when the
+  group's SIGTERM reached it, and the SIGKILL still ends it; and a
+  supervisor that ignores SIGCHLD starts no executor.
 - A Git process starts with no signal blocked and every signal at its
   default action, whatever the launcher of Git Core blocks or ignores. It
   inherited both: a SIGPIPE an sshd ignores reached Git, and a SIGTERM a
