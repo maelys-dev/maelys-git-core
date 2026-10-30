@@ -587,6 +587,13 @@ if(MAELYS_GIT_BUILD_TESTS)
         target_compile_definitions(test-maelys-git-supervisor PRIVATE
             MAELYS_GIT_ENABLE_CLOUD_AGENT=1)
         add_test(NAME maelys-git-supervisor-isolation COMMAND test-maelys-git-supervisor)
+        add_executable(bench-maelys-git-supervisor EXCLUDE_FROM_ALL tests/bench_supervisor.c)
+        target_include_directories(bench-maelys-git-supervisor PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        target_link_libraries(bench-maelys-git-supervisor PRIVATE
+            maelys_git_agent_http SQLite::SQLite3 maelys_git_build_flags)
+        target_compile_definitions(bench-maelys-git-supervisor PRIVATE
+            MAELYS_GIT_ENABLE_CLOUD_AGENT=1)
         # The supervisor whose first observation of its executor fails, as a
         # host may refuse it: this supervisor.c replaces the library's.
         add_executable(test-maelys-git-supervisor-wait-fault

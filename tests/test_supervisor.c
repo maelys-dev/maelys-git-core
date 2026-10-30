@@ -94,6 +94,17 @@ static int executor_mode(const char *executable, const char *marker) {
         pause_ms(5000);
         return 0;
     }
+    /* An executor that answers, closes stdout and exits soon after. */
+    if (ends_with(marker, "/late-exit")) {
+        char request[16];
+        if (!fgets(request, sizeof(request), stdin)) return 2;
+        (void)fputs(valid_result, stdout);
+        (void)fputc('\n', stdout);
+        (void)fflush(stdout);
+        (void)close(STDOUT_FILENO);
+        pause_ms(50);
+        return 0;
+    }
     if (ends_with(marker, "/nested")) {
         char *argv[] = {(char *)executable, "--descendant", (char *)marker, NULL};
         maelys_git_error_t error = {0};
@@ -321,6 +332,32 @@ int main(int argc, char **argv) {
         if (access(config.manifest_path, F_OK) == 0)
             return fail("descendant survived a terminal executor result");
     }
+    /* An executor that answers, then outlives its deadline: the wait for
+     * its exit spends the rest of the budget, then ends it, its group and
+     * its zombie. */
+    (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/stdout-closed", directory);
+    config.request_timeout_ms = 300u;
+    response = NULL;
+    memset(&error, 0, sizeof(error));
+    int64_t started = mg_monotonic_ms();
+    result = mg_supervisor_execute(&config, &command, "{}", NULL, &response, &succeeded, &error);
+    int64_t elapsed = mg_monotonic_ms() - started;
+    free(response);
+    if (result != MAELYS_GIT_ERR_LIMIT || strcmp(error.message, "executor process group timed out") != 0)
+        return fail("an executor that outlived its deadline was not reported as timed out");
+    if (elapsed < 300 || elapsed > 1500)
+        return fail("the executor wait did not end at its deadline");
+    errno = 0;
+    if (waitpid(-1, NULL, WNOHANG) != -1 || errno != ECHILD)
+        return fail("an executor that outlived its deadline was not reaped");
+    /* An exit after the answer is waited for, not taken for a timeout. */
+    (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/late-exit", directory);
+    config.request_timeout_ms = 5000u;
+    response = NULL;
+    result = mg_supervisor_execute(&config, &command, "{}", NULL, &response, &succeeded, &error);
+    free(response);
+    if (result != MAELYS_GIT_OK || !succeeded)
+        return fail("an executor that exited after its answer was not waited for");
     /* The executor exits on its own; a descendant handles SIGTERM and lives
      * on. The group's SIGTERM reaches it while the leader is not reaped yet,
      * so the group's number can name no stranger, and the SIGKILL that
