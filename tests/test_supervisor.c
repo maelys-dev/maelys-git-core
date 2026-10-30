@@ -36,6 +36,24 @@ static int ends_with(const char *value, const char *suffix) {
            strcmp(value + value_length - suffix_length, suffix) == 0;
 }
 
+/* The descendant of the term-order executor: on the group's SIGTERM, says
+ * whether the leader still exists, reaped or not. Everything here is
+ * async-signal-safe: kill(2), open(2), write(2), close(2). */
+static pid_t term_order_leader;
+static char term_order_marker[4096];
+static void record_term_order(int signo) {
+    (void)signo;
+    int saved = errno;
+    int unreaped = kill(term_order_leader, 0) == 0 || errno == EPERM;
+    int fd = open(term_order_marker, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd >= 0) {
+        const char *line = unreaped ? "leader-unreaped\n" : "leader-reaped\n";
+        (void)!write(fd, line, strlen(line));
+        (void)close(fd);
+    }
+    errno = saved;
+}
+
 static int executor_mode(const char *executable, const char *marker) {
     if (ends_with(marker, "/reply")) {
         char buffer[4096];
@@ -49,6 +67,23 @@ static int executor_mode(const char *executable, const char *marker) {
     }
     /* An executor that exits before reading its request. */
     if (ends_with(marker, "/exit-early")) return 0;
+    /* An executor that answers, closes its stdout and goes on: it must not
+     * outlive the terminal result, whatever the supervisor's wait said. */
+    if (ends_with(marker, "/wait-fault")) {
+        char request[16];
+        if (!fgets(request, sizeof(request), stdin)) return 2;
+        (void)fputs(valid_result, stdout);
+        (void)fputc('\n', stdout);
+        (void)fflush(stdout);
+        (void)close(STDOUT_FILENO);
+        pause_ms(700);
+        FILE *stream = fopen(marker, "wb");
+        if (stream) {
+            (void)fputs("survived\n", stream);
+            (void)fclose(stream);
+        }
+        return 0;
+    }
     if (ends_with(marker, "/stdout-closed")) {
         char request[16];
         if (!fgets(request, sizeof(request), stdin)) return 2;
@@ -59,14 +94,47 @@ static int executor_mode(const char *executable, const char *marker) {
         pause_ms(5000);
         return 0;
     }
+    /* An executor that answers, closes stdout and exits soon after. */
+    if (ends_with(marker, "/late-exit")) {
+        char request[16];
+        if (!fgets(request, sizeof(request), stdin)) return 2;
+        (void)fputs(valid_result, stdout);
+        (void)fputc('\n', stdout);
+        (void)fflush(stdout);
+        (void)close(STDOUT_FILENO);
+        pause_ms(50);
+        return 0;
+    }
     if (ends_with(marker, "/nested")) {
         char *argv[] = {(char *)executable, "--descendant", (char *)marker, NULL};
         maelys_git_error_t error = {0};
         return mg_process_run_with_timeout(executable, argv, 4000u, NULL, &error) == MAELYS_GIT_OK ? 0 : 2;
     }
+    /* Taken before the fork: once the leader has exited, getppid() would
+     * name the process that adopted the descendant. */
+    term_order_leader = getpid();
     pid_t descendant = fork();
     if (descendant < 0) return 2;
     if (descendant == 0) {
+        if (ends_with(marker, "/term-order")) {
+            /* Handles the group's SIGTERM instead of ignoring it, to record
+             * whether the leader, its parent, was already reaped by then;
+             * then lives on, for the SIGKILL that must follow. Its stdout
+             * closes only once the handler is in place: the supervisor
+             * takes that EOF as the executor's end and signals the group. */
+            (void)snprintf(term_order_marker, sizeof(term_order_marker), "%s", marker);
+            struct sigaction record = {.sa_handler = record_term_order};
+            (void)sigemptyset(&record.sa_mask);
+            if (sigaction(SIGTERM, &record, NULL) != 0) _exit(2);
+            (void)close(STDOUT_FILENO);
+            pause_ms(700);
+            FILE *stream = fopen(marker, "ab");
+            if (stream) {
+                (void)fputs("survived\n", stream);
+                (void)fclose(stream);
+            }
+            _exit(0);
+        }
         if (ends_with(marker, "/success-descendant")) {
             (void)close(STDOUT_FILENO);
             (void)signal(SIGTERM, SIG_IGN);
@@ -79,7 +147,7 @@ static int executor_mode(const char *executable, const char *marker) {
         }
         _exit(0);
     }
-    if (ends_with(marker, "/success-descendant")) {
+    if (ends_with(marker, "/success-descendant") || ends_with(marker, "/term-order")) {
         (void)fputs(valid_result, stdout);
         (void)fputc('\n', stdout);
         return 0;
@@ -192,6 +260,28 @@ int main(int argc, char **argv) {
     mg_agent_message_t command = {.message_id = "supervised", .agent_id = "agent-1", .command = "health"};
     int succeeded = 0;
     char *response = NULL;
+#if defined(MG_SUPERVISOR_WAIT_FAULT)
+    /* The supervisor's first observation of its executor fails, EPERM: the
+     * request fails with that error, and the executor, answered and still
+     * running, does not outlive the terminal result. */
+    (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/wait-fault", directory);
+    config.request_timeout_ms = 2000u;
+    maelys_git_error_t fault = {0};
+    int64_t fault_started = mg_monotonic_ms();
+    maelys_git_result_t faulted = mg_supervisor_execute(
+        &config, &command, "{}", NULL, &response, &succeeded, &fault);
+    int64_t fault_elapsed = mg_monotonic_ms() - fault_started;
+    free(response);
+    if (faulted != MAELYS_GIT_ERR_PROCESS || response != NULL ||
+        !strstr(fault.message, "executor wait failed: ") || !strstr(fault.message, strerror(EPERM)))
+        return fail("a failed wait did not fail the request with its error");
+    if (fault_elapsed > 1500) return fail("a failed wait did not stop the executor group at once");
+    pause_ms(900);
+    if (access(config.manifest_path, F_OK) == 0)
+        return fail("the executor outlived a terminal result after a failed wait");
+    if (rmdir(directory) != 0) return fail("cannot remove temporary directory");
+    return 0;
+#endif
     char *request = malloc(MAELYS_GIT_MAX_PROTOCOL_LINE + 1u);
     if (!request) return fail("cannot allocate supervisor request");
     memset(request, 'x', MAELYS_GIT_MAX_PROTOCOL_LINE);
@@ -242,6 +332,52 @@ int main(int argc, char **argv) {
         if (access(config.manifest_path, F_OK) == 0)
             return fail("descendant survived a terminal executor result");
     }
+    /* An executor that answers, then outlives its deadline: the wait for
+     * its exit spends the rest of the budget, then ends it, its group and
+     * its zombie. */
+    (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/stdout-closed", directory);
+    config.request_timeout_ms = 300u;
+    response = NULL;
+    memset(&error, 0, sizeof(error));
+    int64_t started = mg_monotonic_ms();
+    result = mg_supervisor_execute(&config, &command, "{}", NULL, &response, &succeeded, &error);
+    int64_t elapsed = mg_monotonic_ms() - started;
+    free(response);
+    if (result != MAELYS_GIT_ERR_LIMIT || strcmp(error.message, "executor process group timed out") != 0)
+        return fail("an executor that outlived its deadline was not reported as timed out");
+    if (elapsed < 300 || elapsed > 1500)
+        return fail("the executor wait did not end at its deadline");
+    errno = 0;
+    if (waitpid(-1, NULL, WNOHANG) != -1 || errno != ECHILD)
+        return fail("an executor that outlived its deadline was not reaped");
+    /* An exit after the answer is waited for, not taken for a timeout. */
+    (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/late-exit", directory);
+    config.request_timeout_ms = 5000u;
+    response = NULL;
+    result = mg_supervisor_execute(&config, &command, "{}", NULL, &response, &succeeded, &error);
+    free(response);
+    if (result != MAELYS_GIT_OK || !succeeded)
+        return fail("an executor that exited after its answer was not waited for");
+    /* The executor exits on its own; a descendant handles SIGTERM and lives
+     * on. The group's SIGTERM reaches it while the leader is not reaped yet,
+     * so the group's number can name no stranger, and the SIGKILL that
+     * follows still ends it: no "survived" after its record. */
+    (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/term-order", directory);
+    config.request_timeout_ms = 2000u;
+    response = NULL;
+    result = mg_supervisor_execute(&config, &command, "{}", NULL, &response, &succeeded, &error);
+    free(response);
+    if (result != MAELYS_GIT_OK) return fail("the term-order executor failed");
+    pause_ms(900);
+    char order[64];
+    if (!read_text(config.manifest_path, order, sizeof(order)))
+        return fail("the descendant did not record the group's SIGTERM");
+    if (strcmp(order, "leader-unreaped\n") != 0) {
+        fprintf(stderr, "test_supervisor: descendant recorded %s", order);
+        return fail("the group was signaled after its leader was reaped, or a descendant survived");
+    }
+    if (unlink(config.manifest_path) != 0) return fail("cannot remove the term-order record");
+
     (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/reply", directory);
     config.request_timeout_ms = 5000u;
     char *wire = malloc(MAELYS_GIT_MAX_PROTOCOL_LINE + 4u);
@@ -296,6 +432,20 @@ int main(int argc, char **argv) {
     maelys_cli_sha256_hex(second, strlen(second), second_sha);
     if (!publish(source, first)) return fail("cannot publish the grants");
     mg_grants_archive_t grants;
+
+    /* Under a SIGCHLD disposition the kernel reaps by, the supervisor could
+     * not keep its executor, nor its number: no executor starts. */
+    struct sigaction ignore_children = {.sa_handler = SIG_IGN}, former;
+    (void)sigemptyset(&ignore_children.sa_mask);
+    if (sigaction(SIGCHLD, &ignore_children, &former) != 0) return fail("cannot ignore SIGCHLD");
+    response = NULL;
+    memset(&error, 0, sizeof(error));
+    result = mg_supervisor_execute(&config, &command, "{}", &grants, &response, &succeeded, &error);
+    free(response);
+    if (sigaction(SIGCHLD, &former, NULL) != 0) return fail("cannot restore SIGCHLD");
+    if (result != MAELYS_GIT_ERR_PROCESS || !strstr(error.message, "SIGCHLD is ignored") ||
+        access(recorded, F_OK) == 0)
+        return fail("an executor started under an ignored SIGCHLD");
     for (int with_grants = 0; with_grants < 2; ++with_grants) {
         (void)snprintf(config.grants_path, sizeof(config.grants_path), "%s", with_grants ? source : "");
         response = NULL;

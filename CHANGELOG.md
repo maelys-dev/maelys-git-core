@@ -14,6 +14,49 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   it is accepted with any OPERATION, as the library carries the kind of a
   merge too. A policy that names no kind decides as before. The decision
   receipt does not record the kind.
+- The transaction and PR core documentation states what the host leaves to
+  Git Core: it must not set `SIGCHLD` explicitly to `SIG_IGN`, set
+  `SA_NOCLDWAIT` or reap the children Git Core starts. A Git subprocess
+  reaped elsewhere fails with `ECHILD` as a process error; the network agent
+  refuses a request under `SIG_IGN` or `SA_NOCLDWAIT` before its executor
+  starts.
+- The Cloud agent waits for its executor's end as Git children are waited
+  for: on the exit itself, kqueue `EVFILT_PROC` on macOS and a pidfd on
+  Linux, bounded by the request's deadline, instead of looking every 10 ms.
+  One helper serves both waits: it reaps a Git child, and only observes
+  the executor (`waitid` with `WNOWAIT`), whose group the supervisor still
+  signals before it reaps the executor last. The deadline, the single
+  escalation, the result categories and the messages are unchanged. An
+  executor that closes its output and keeps running is seen to end when it
+  exits rather than on the next 10 ms tick. A supervised `health` command,
+  which pays the group's 100 ms grace, costs about 110 ms under Linux
+  before and after; on a macOS host with an Endpoint Security client its
+  fastest series drop from 149-153 ms to 140-148 ms.
+  `bench-maelys-git-supervisor`, built on demand, measures it.
+- The Cloud agent signals the executor's process group before it reaps
+  the executor, never after. It observes the executor's end without
+  reaping it (`waitid` with `WNOWAIT`), sends the group SIGTERM, then
+  SIGKILL after the same 100 ms, and reaps the executor last: until then
+  the group's number is the executor's own and can name no stranger. The
+  final SIGTERM and SIGKILL were sent after the reap, to a number nothing
+  reserved any more. What is signaled and when the executor is stopped are
+  unchanged, and the group is escalated once per request: an exchange that
+  failed before the executor ended paid the grace twice. A successful
+  request that leaves no descendant now waits the 100 ms grace, which the
+  empty group did not. The supervisor alone reaps its executor: under a
+  SIGCHLD disposition the kernel reaps by, ignored or `SA_NOCLDWAIT`,
+  inherited from whatever started the agent, no executor starts and the
+  request fails, "SIGCHLD is ignored"; an executor reaped by something
+  else all the same fails the request without a signal to its number. A
+  wait that fails otherwise, as a seccomp filter may answer, keeps its
+  error: the group is stopped once, the executor reaped last, and the
+  request fails with that error even when the reap succeeds. The
+  supervisor test adds an executor that exits on its own with a descendant
+  that handles SIGTERM: it records that the leader was not reaped when the
+  group's SIGTERM reached it, and the SIGKILL still ends it; a supervisor
+  that ignores SIGCHLD starts no executor; and, in a build whose first
+  observation fails, `maelys-git-supervisor-wait-fault`, the executor does
+  not outlive the terminal result.
 - A Git process starts with no signal blocked and every signal at its
   default action, whatever the launcher of Git Core blocks or ignores. It
   inherited both: a SIGPIPE an sshd ignores reached Git, and a SIGTERM a
