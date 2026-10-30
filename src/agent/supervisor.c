@@ -10,7 +10,6 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
-#include <time.h>
 #include <unistd.h>
 
 static void close_fd(int *fd) {
@@ -101,19 +100,18 @@ static int write_all_until(int fd, const void *bytes, size_t length,
     return ok;
 }
 
-/* Observes the executor's end without reaping it: 0 with *ended naming it
- * once it ended, 0 with si_pid 0 while it runs, -1 with errno otherwise. */
-static int observe_executor(pid_t child, siginfo_t *ended) {
+/* Waits until DEADLINE for the executor's end without reaping it. */
+static mg_wait_result_t observe_executor(pid_t child, int64_t deadline) {
 #if defined(MG_SUPERVISOR_WAIT_FAULT)
     /* A test build whose first observation fails as a host may refuse it. */
     static int faulted;
     if (!faulted) {
         faulted = 1;
         errno = EPERM;
-        return -1;
+        return MG_WAIT_FAILED;
     }
 #endif
-    return waitid(P_PID, (id_t)child, ended, WEXITED | WNOWAIT | WNOHANG);
+    return mg_wait_child_until(child, deadline, MG_WAIT_OBSERVE, NULL);
 }
 
 /* One executor for COMMAND, on the kept snapshot GRANTS names (none when its
@@ -238,24 +236,12 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
      * is: the group is stopped once, the executor reaped last, and the
      * request fails with that error even when the reap succeeds. */
     int lost = 0, wait_failed = 0;
-    for (;;) {
-        siginfo_t ended;
-        memset(&ended, 0, sizeof(ended));
-        int observed = observe_executor(child, &ended);
-        if (observed < 0 && errno == EINTR) continue;
-        if (observed < 0) {
-            wait_failed = errno;
-            lost = errno == ECHILD;
-            break;
-        }
-        if (ended.si_pid == child) break;
-        int timeout = 0;
-        if (!remaining_timeout(deadline, &timeout) || timeout == 0) {
-            timed_out = 1;
-            break;
-        }
-        struct timespec pause = {0, 1000000L * (timeout < 10 ? timeout : 10)};
-        (void)nanosleep(&pause, NULL);
+    mg_wait_result_t ended = observe_executor(child, deadline);
+    if (ended == MG_WAIT_TIMED_OUT) {
+        timed_out = 1;
+    } else if (ended == MG_WAIT_FAILED) {
+        wait_failed = errno;
+        lost = errno == ECHILD;
     }
     /* No descendant may keep mutating repositories after a terminal result,
      * even if the executor returned successfully or closed stdout early. The

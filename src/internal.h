@@ -117,15 +117,20 @@ maelys_git_result_t mg_spawn_executor(
     maelys_git_error_t *error);
 void mg_terminate_process_group(pid_t pid);
 typedef enum {
-    MG_WAIT_EXITED,    /* *out_status holds its wait status; it is reaped */
+    MG_WAIT_REAP,   /* reaps the child once it exited */
+    MG_WAIT_OBSERVE /* sees its exit only (waitid WNOWAIT): the caller reaps it */
+} mg_wait_mode_t;
+typedef enum {
+    MG_WAIT_EXITED,    /* it exited; reaped with *out_status its wait status, or seen */
     MG_WAIT_TIMED_OUT, /* it still runs, neither signalled nor reaped */
-    MG_WAIT_FAILED     /* waitpid failed; errno says why */
+    MG_WAIT_FAILED     /* the wait failed; errno says why, ECHILD once reaped elsewhere */
 } mg_wait_result_t;
 /* Waits for the child PID until DEADLINE, an mg_monotonic_ms() instant, on
  * an exit watcher where the platform has one and never by a signal handler.
  * A negative deadline or an unreadable clock counts as reached, after one
- * look at the child. OUT_STATUS may be NULL. */
-mg_wait_result_t mg_wait_child_until(pid_t pid, int64_t deadline, int *out_status);
+ * look at the child. OUT_STATUS may be NULL; MG_WAIT_OBSERVE leaves it alone. */
+mg_wait_result_t mg_wait_child_until(pid_t pid, int64_t deadline, mg_wait_mode_t mode,
+                                     int *out_status);
 maelys_git_result_t mg_process_run_with_timeout(
     const char *executable,
     char *const argv[],

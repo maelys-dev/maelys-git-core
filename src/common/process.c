@@ -273,7 +273,18 @@ static uint64_t until_ms(int64_t deadline) {
     return (uint64_t)(deadline - now);
 }
 
-mg_wait_result_t mg_wait_child_until(pid_t pid, int64_t deadline, int *out_status) {
+/* One look at the child: PID once it exited, 0 while it runs, -1 with errno.
+ * MG_WAIT_OBSERVE leaves it unreaped. */
+static pid_t look_at_child(pid_t pid, mg_wait_mode_t mode, int *out_status) {
+    if (mode == MG_WAIT_REAP) return waitpid(pid, out_status, WNOHANG);
+    siginfo_t ended;
+    memset(&ended, 0, sizeof(ended));
+    if (waitid(P_PID, (id_t)pid, &ended, WEXITED | WNOWAIT | WNOHANG) != 0) return -1;
+    return ended.si_pid;
+}
+
+mg_wait_result_t mg_wait_child_until(pid_t pid, int64_t deadline, mg_wait_mode_t mode,
+                                     int *out_status) {
     if (pid <= 0) {
         errno = EINVAL;
         return MG_WAIT_FAILED;
@@ -282,7 +293,7 @@ mg_wait_result_t mg_wait_child_until(pid_t pid, int64_t deadline, int *out_statu
     long backoff_ns = 50000L;
     mg_wait_result_t result;
     for (;;) {
-        pid_t waited = waitpid(pid, out_status, WNOHANG);
+        pid_t waited = look_at_child(pid, mode, out_status);
         if (waited == pid) { result = MG_WAIT_EXITED; break; }
         if (waited < 0 && errno != EINTR) { result = MG_WAIT_FAILED; break; }
         uint64_t remaining = until_ms(deadline);
@@ -326,7 +337,7 @@ static maelys_git_result_t wait_child(pid_t pid,
         deadline = timeout_ms < (uint64_t)(INT64_MAX - started) ?
             started + (int64_t)timeout_ms : INT64_MAX;
     int status = 0;
-    mg_wait_result_t waited = mg_wait_child_until(pid, deadline, &status);
+    mg_wait_result_t waited = mg_wait_child_until(pid, deadline, MG_WAIT_REAP, &status);
     if (waited == MG_WAIT_FAILED) {
         int saved = errno;
         mg_error_set(error, MAELYS_GIT_ERR_PROCESS, saved,
