@@ -216,3 +216,21 @@ own process group; a deadline terminates the whole group so a helper cannot
 leave a descendant running. The network agent applies the same boundary to
 each one-request executor process and uses one monotonic deadline across
 partial response reads.
+
+Git Core reaps the processes it starts, and nothing else may. The host must
+not set `SIGCHLD` explicitly to `SIG_IGN` (its default disposition is fine),
+set `SA_NOCLDWAIT` on it, or reap children it did not start itself, as a
+`SIGCHLD` handler that calls `waitpid(-1)` would. Until the leader of a process
+group is reaped, its number, which is also the group's, stays its own, so the
+signals of a deadline or a cleanup can reach no process outside the group; the
+Git processes an executor starts join its group and receive them. A Git
+subprocess reaped by something else makes its wait fail with `ECHILD`, reported
+as a process error, `waitpid failed: …`. The network agent checks its `SIGCHLD`
+disposition before each executor starts, and fails the request when it is
+`SIG_IGN` or carries `SA_NOCLDWAIT`: `the supervisor cannot keep its executor:
+SIGCHLD is ignored`. An executor reaped elsewhere all the same fails its
+request, and once the agent sees `ECHILD` it sends its group no further
+signal; a failed exchange may already have stopped the group before. The
+request reports `executor was reaped outside the supervisor` unless the same
+exchange already failed on its deadline, its size or a read, which is reported
+instead.

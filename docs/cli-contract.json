@@ -490,6 +490,24 @@
               },
               {
                 "argument": {
+                  "choices": [
+                    "create",
+                    "fast_forward",
+                    "force",
+                    "delete"
+                  ],
+                  "name": "VALUE",
+                  "type": "choice"
+                },
+                "conflictsWith": [],
+                "long": "--update-kind",
+                "repeatable": false,
+                "required": false,
+                "requires": [],
+                "summary": "Kind of ref update a push or merge request makes; a rule that names one, as a Gitolite ref grant does, never allows without it."
+              },
+              {
+                "argument": {
                   "name": "FILE",
                   "type": "path"
                 },
@@ -502,7 +520,7 @@
               }
             ],
             "passthrough": false,
-            "synopsis": "authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...] [--explain] [--grants FILE]"
+            "synopsis": "authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...] [--explain] [--update-kind create|fast_forward|force|delete] [--grants FILE]"
           },
           "outputMode": "json-envelope",
           "outputSchema": {
@@ -892,7 +910,7 @@
             "authorize"
           ],
           "purpose": "Evaluate one authorization request.",
-          "usage": "authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...] [--explain] [--grants FILE]"
+          "usage": "authorize MANIFEST PRINCIPAL REPOSITORY OPERATION [REF] [PATH...] [--explain] [--update-kind create|fast_forward|force|delete] [--grants FILE]"
         },
         {
           "available": true,

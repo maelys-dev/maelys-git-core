@@ -27,9 +27,14 @@ static const maelys_cli_operand_t authorize_operands[] = {
 static const maelys_cli_option_t validate_options[] = {
     MAELYS_GIT_CLI_GRANTS_OPTION,
 };
+/* The names maelys_git_update_kind_name() gives, in enumeration order. */
+static const char *const update_kinds[] = {"create", "fast_forward", "force", "delete", NULL};
 static const maelys_cli_option_t authorize_options[] = {
     {MAELYS_CLI_FLAG("explain",
      "Attach the engine's explanation document of the decision; write it before --.")},
+    {MAELYS_CLI_CHOICE("update-kind",
+     "Kind of ref update a push or merge request makes; a rule that names one, as a "
+     "Gitolite ref grant does, never allows without it.", update_kinds)},
     MAELYS_GIT_CLI_GRANTS_OPTION,
 };
 static const maelys_cli_operand_t parse_ssh_operands[] = {
@@ -290,6 +295,7 @@ static int command_authorize(maelys_cli_context_t *context) {
         .repository = maelys_cli_operand(context, 2u),
         .operation = maelys_cli_operand(context, 3u),
         .ref_name = ref_name,
+        .update_kind = maelys_cli_option(context, "update-kind"),
         .paths = path_count ? paths : NULL,
         .path_count = path_count,
     };

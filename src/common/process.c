@@ -266,32 +266,38 @@ static int exit_watcher_wait(int watcher, uint64_t budget_ms) {
     return ready > 0;
 }
 
-static maelys_git_result_t wait_child(pid_t pid,
-                                      int64_t started,
-                                      uint64_t timeout_ms,
-                                      int *out_exit_status,
-                                      int require_success,
-                                      maelys_git_error_t *error) {
-    int status = 0;
+/* 0 once DEADLINE is reached or the clock cannot be trusted. */
+static uint64_t until_ms(int64_t deadline) {
+    int64_t now = mg_monotonic_ms();
+    if (deadline < 0 || now < 0 || now >= deadline) return 0u;
+    return (uint64_t)(deadline - now);
+}
+
+/* One look at the child: PID once it exited, 0 while it runs, -1 with errno.
+ * MG_WAIT_OBSERVE leaves it unreaped. */
+static pid_t look_at_child(pid_t pid, mg_wait_mode_t mode, int *out_status) {
+    if (mode == MG_WAIT_REAP) return waitpid(pid, out_status, WNOHANG);
+    siginfo_t ended;
+    memset(&ended, 0, sizeof(ended));
+    if (waitid(P_PID, (id_t)pid, &ended, WEXITED | WNOWAIT | WNOHANG) != 0) return -1;
+    return ended.si_pid;
+}
+
+mg_wait_result_t mg_wait_child_until(pid_t pid, int64_t deadline, mg_wait_mode_t mode,
+                                     int *out_status) {
+    if (pid <= 0) {
+        errno = EINVAL;
+        return MG_WAIT_FAILED;
+    }
     int watcher = -1, watched = 0;
     long backoff_ns = 50000L;
+    mg_wait_result_t result;
     for (;;) {
-        pid_t waited = waitpid(pid, &status, WNOHANG);
-        if (waited == pid) break;
-        if (waited < 0 && errno != EINTR) {
-            int saved = errno;
-            if (watcher >= 0) (void)close(watcher);
-            mg_error_set(error, MAELYS_GIT_ERR_PROCESS, saved,
-                         "waitpid failed: %s", strerror(saved));
-            return MAELYS_GIT_ERR_PROCESS;
-        }
-        uint64_t remaining = remaining_ms(started, timeout_ms);
-        if (remaining == 0u) {
-            if (watcher >= 0) (void)close(watcher);
-            mg_terminate_process_group(pid);
-            reap_child(pid);
-            return timeout_failure(error, timeout_ms);
-        }
+        pid_t waited = look_at_child(pid, mode, out_status);
+        if (waited == pid) { result = MG_WAIT_EXITED; break; }
+        if (waited < 0 && errno != EINTR) { result = MG_WAIT_FAILED; break; }
+        uint64_t remaining = until_ms(deadline);
+        if (remaining == 0u) { result = MG_WAIT_TIMED_OUT; break; }
         /* Look again once the watcher exists: an exit just before it was
          * registered may not be reported. */
         if (!watched) {
@@ -312,7 +318,37 @@ static maelys_git_result_t wait_child(pid_t pid,
             if (backoff_ns < 10000000L) backoff_ns *= 2;
         }
     }
-    if (watcher >= 0) (void)close(watcher);
+    if (watcher >= 0) {
+        int saved = errno;
+        (void)close(watcher);
+        errno = saved;
+    }
+    return result;
+}
+
+static maelys_git_result_t wait_child(pid_t pid,
+                                      int64_t started,
+                                      uint64_t timeout_ms,
+                                      int *out_exit_status,
+                                      int require_success,
+                                      maelys_git_error_t *error) {
+    int64_t deadline = -1;
+    if (started >= 0)
+        deadline = timeout_ms < (uint64_t)(INT64_MAX - started) ?
+            started + (int64_t)timeout_ms : INT64_MAX;
+    int status = 0;
+    mg_wait_result_t waited = mg_wait_child_until(pid, deadline, MG_WAIT_REAP, &status);
+    if (waited == MG_WAIT_FAILED) {
+        int saved = errno;
+        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, saved,
+                     "waitpid failed: %s", strerror(saved));
+        return MAELYS_GIT_ERR_PROCESS;
+    }
+    if (waited == MG_WAIT_TIMED_OUT) {
+        mg_terminate_process_group(pid);
+        reap_child(pid);
+        return timeout_failure(error, timeout_ms);
+    }
     int exit_status = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
     if (out_exit_status) *out_exit_status = exit_status;
     if (!WIFEXITED(status) || (require_success && exit_status != 0)) {

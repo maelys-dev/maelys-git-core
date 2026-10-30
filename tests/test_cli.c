@@ -690,6 +690,117 @@ static int test_authorize_receipt(void) {
     return 1;
 }
 
+/* --update-kind takes exactly the names maelys_git_update_kind_name() gives,
+ * reaches the request, is refused outside them, and describe states it. */
+static int test_authorize_update_kind(void) {
+    const maelys_cli_app_t *admin = &maelys_git_cli_admin_app;
+    const maelys_cli_command_t *authorize = NULL;
+    for (size_t i = 0u; i < admin->command_count; ++i)
+        if (!strcmp(admin->commands[i].id, "authorize")) authorize = &admin->commands[i];
+    CHECK(authorize != NULL);
+    const maelys_cli_option_t *option = NULL;
+    for (size_t i = 0u; i < authorize->option_count; ++i)
+        if (!strcmp(authorize->options[i].name, "update-kind")) option = &authorize->options[i];
+    CHECK(option != NULL && option->kind == MAELYS_CLI_VALUE_CHOICE);
+    CHECK(!option->required && !option->repeatable && !option->default_text);
+    CHECK(!option->depends_on && !option->conflicts_with && !option->group);
+    const maelys_git_update_kind_t kinds[] = {
+        MAELYS_GIT_UPDATE_CREATE, MAELYS_GIT_UPDATE_FAST_FORWARD,
+        MAELYS_GIT_UPDATE_FORCE, MAELYS_GIT_UPDATE_DELETE};
+    const size_t kind_count = sizeof(kinds) / sizeof(kinds[0]);
+    for (size_t k = 0u; k < kind_count; ++k)
+        CHECK(option->choices[k] && !strcmp(option->choices[k], maelys_git_update_kind_name(kinds[k])));
+    CHECK(option->choices[kind_count] == NULL);
+
+    maelys_cli_invocation_t invocation;
+    maelys_cli_error_t error;
+    ARGV(accepted, "authorize", "/tmp/m.json", "alice", "x.git", "push", "refs/heads/main",
+         "--update-kind", "force");
+    CHECK(parse(admin, accepted, accepted_count, &invocation, &error));
+    CHECK(!strcmp(maelys_cli_invocation_option(&invocation, "update-kind")->value, "force"));
+    ARGV(joined, "authorize", "/tmp/m.json", "alice", "x.git", "push", "--update-kind=delete");
+    CHECK(parse(admin, joined, joined_count, &invocation, &error));
+    CHECK(!strcmp(maelys_cli_invocation_option(&invocation, "update-kind")->value, "delete"));
+    ARGV(absent, "authorize", "/tmp/m.json", "alice", "x.git", "push", "refs/heads/main");
+    CHECK(parse(admin, absent, absent_count, &invocation, &error));
+    CHECK(!maelys_cli_invocation_option(&invocation, "update-kind"));
+
+    ARGV(unknown, "authorize", "/tmp/m.json", "alice", "x.git", "push", "refs/heads/main",
+         "--update-kind", "rewind");
+    CHECK(!parse(admin, unknown, unknown_count, &invocation, &error));
+    CHECK(!strcmp(error.code, MAELYS_CLI_CODE_VALIDATION_FAILED) && strstr(error.message, "--update-kind"));
+    ARGV(spelled, "authorize", "/tmp/m.json", "alice", "x.git", "push", "--update-kind", "fast-forward");
+    CHECK(!parse(admin, spelled, spelled_count, &invocation, &error));
+    CHECK(!strcmp(error.code, MAELYS_CLI_CODE_VALIDATION_FAILED) && strstr(error.message, "--update-kind"));
+    ARGV(twice, "authorize", "/tmp/m.json", "alice", "x.git", "push", "--update-kind", "force",
+         "--update-kind", "create");
+    CHECK(!parse(admin, twice, twice_count, &invocation, &error));
+    CHECK(!strcmp(error.code, MAELYS_CLI_CODE_VALIDATION_FAILED) && strstr(error.message, "--update-kind"));
+    ARGV(missing, "authorize", "/tmp/m.json", "alice", "x.git", "push", "--update-kind");
+    CHECK(!parse(admin, missing, missing_count, &invocation, &error));
+    CHECK(!strcmp(error.code, MAELYS_CLI_CODE_VALIDATION_FAILED) && strstr(error.message, "--update-kind"));
+    ARGV(empty, "authorize", "/tmp/m.json", "alice", "x.git", "push", "--update-kind=");
+    CHECK(!parse(admin, empty, empty_count, &invocation, &error));
+    CHECK(!strcmp(error.code, MAELYS_CLI_CODE_VALIDATION_FAILED));
+
+    /* Refused before the handler: nothing on stdout, the envelope on stderr. */
+    run_result_t result;
+    ARGV(refused, "authorize", "/nonexistent/m.json", "alice", "x.git", "push", "refs/heads/main",
+         "--update-kind", "rewind", "--json", "--compact");
+    CHECK(run(admin, refused, refused_count, &result));
+    CHECK(result.code == 1 && result.out[0] == '\0');
+    CHECK(strstr(result.err, "\"code\":\"VALIDATION_FAILED\"") && strstr(result.err, "--update-kind"));
+    run_clear(&result);
+
+    /* A policy that names no kind decides as before; the envelope conforms. */
+    char manifest[] = FIXTURE_DIR "/../../../policies/manifest.json";
+    ARGV(decided, "authorize", manifest, "alice", "example.git", "push", "refs/heads/main",
+         "--update-kind", "fast_forward", "--json", "--compact");
+    maelys_json_document_t *schema = output_schema("authorize");
+    CHECK(schema != NULL);
+    maelys_json_document_t *data = authorize_data(decided, decided_count, 0, schema);
+    CHECK(data != NULL && tj_boolean(data, "data.allowed") == 1);
+    tj_release(data);
+
+    ARGV(describe, "describe", "authorize", "--json", "--compact");
+    CHECK(run(admin, describe, describe_count, &result));
+    CHECK(result.code == 0 && result.err[0] == '\0');
+    maelys_json_document_t *contract = tj_parse(result.out);
+    run_clear(&result);
+    CHECK(contract != NULL);
+    char path[96];
+    size_t found = 0u;
+    for (size_t i = 0u; i < tj_size(contract, "data.commands.0.input.options"); ++i) {
+        (void)snprintf(path, sizeof(path), "data.commands.0.input.options.%zu", i);
+        char member[128];
+        (void)snprintf(member, sizeof(member), "%s.long", path);
+        if (!tj_string_is(contract, member, "--update-kind")) continue;
+        ++found;
+        (void)snprintf(member, sizeof(member), "%s.argument.type", path);
+        CHECK(tj_string_is(contract, member, "choice"));
+        (void)snprintf(member, sizeof(member), "%s.argument.choices", path);
+        CHECK(tj_size(contract, member) == kind_count);
+        for (size_t k = 0u; k < kind_count; ++k) {
+            (void)snprintf(member, sizeof(member), "%s.argument.choices.%zu", path, k);
+            CHECK(tj_string_is(contract, member, maelys_git_update_kind_name(kinds[k])));
+        }
+        (void)snprintf(member, sizeof(member), "%s.required", path);
+        CHECK(tj_boolean(contract, member) == 0);
+    }
+    CHECK(found == 1u);
+    tj_release(contract);
+
+    /* Completion offers the same choices. */
+    ARGV(complete, "__complete", "--json", "--compact", "--", "authorize", "m", "alice", "x.git",
+         "push", "--update-kind", "f");
+    CHECK(run(admin, complete, complete_count, &result));
+    CHECK(result.code == 0 && result.err[0] == '\0');
+    CHECK(strstr(result.out, "\"records\":[{\"word\":\"fast_forward\"},{\"word\":\"force\"}]"));
+    run_clear(&result);
+    tj_release(schema);
+    return 1;
+}
+
 /* The authorize envelope of OUT with the first FROM replaced by TO, checked
  * against SCHEMA: 1 conforms, 0 does not, -1 when FROM is not there. */
 static int conforms_replaced(const char *out, const char *from, const char *to, const maelys_json_document_t *schema) {
@@ -955,11 +1066,12 @@ int main(void) {
     passed += test_envelopes();
     passed += test_validate_detail();
     passed += test_authorize_receipt();
+    passed += test_authorize_update_kind();
     passed += test_same_receipt();
     passed += test_variable_identity();
     passed += test_engine_capacities();
     passed += test_receipt_versions_schema();
-    if (passed != 9) return 1;
+    if (passed != 10) return 1;
     (void)printf("ok: %d CLI contract test groups passed\n", passed);
     return 0;
 }
