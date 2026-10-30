@@ -8,7 +8,10 @@ configuration with Git Core (tests/gitolite_oracle_decide.c) and:
 - a case listed as refused in cases.tsv must be refused, with that reason;
 - a case that migrates is asked every query (7 users, one unknown to it, W and +, the refs of
   refs.txt and their variants that Git can carry, and "any"; and R any, the
-  read gitolite-shell asks for upload-pack), and its decision is compared with
+  read gitolite-shell asks for upload-pack; and, on each ref, Git Core's merge
+  of a pull request and its update-ref, which Gitolite does not know: merging
+  into a ref is the push W of the result, an update-ref the forced update +,
+  and Gitolite is asked those), and its decision is compared with
   the oracle's in --mode deny-wins, Git Core's rule for the order of rules.
   A refusal of Gitolite at admission (ERROR) and a denial of Git Core agree.
   Every other difference must be listed in divergences.tsv with its kind,
@@ -34,6 +37,8 @@ import tempfile
 # zed is named by no configuration: @all holds it all the same.
 USERS = ["alice", "bob", "carol", "dave", "mallory", "eve", "zed"]
 GIT = "/usr/bin/git"
+# What Gitolite is asked for a query of Git Core alone.
+GITOLITE_AA = {"merge": "W", "update-ref": "+"}
 HEADER = (
     "# Where Git Core decides otherwise than Gitolite 3.6.15 (tests/gitolite_oracle.pl,\n"
     "# --mode deny-wins, Git Core's rule for the order of rules), each with its kind;\n"
@@ -42,6 +47,9 @@ HEADER = (
     "#   bare-literal-grant  a bare literal grant (RW refs/heads/main) is the exact ref\n"
     "#                       in Git Core and a prefix in Gitolite: Git Core denies\n"
     "#                       main-hotfix, main/x... Stricter, by design of the migration.\n"
+    "#   merge-ignores-ref-deny  Git Core's merge or update-ref of a ref a deny applies to\n"
+    "#                       is allowed, where Gitolite denies the push W or + of that ref:\n"
+    "#                       more permissive. The only listed kind that is: it must go.\n"
     "# Against Gitolite's own first-match rule, the order of rules adds differences,\n"
     "# all stricter too: they are order.tsv's.\n"
     "# case\tuser\taa\tref\tgit_core\tgitolite\tkind\n")
@@ -110,9 +118,12 @@ def compare(perl, oracle, decide, fixtures, workdir, record):
     order_observed = {}
     for (case,), outcome in sorted(cases.items()):
         conf = os.path.join(fixtures, "cases", case + ".conf")
-        queries = [("app", user, aa, ref) for user in USERS for aa in ("W", "+") for ref in refs]
+        queries = [("app", user, aa, ref) for user in USERS for aa in ("W", "+", "merge", "update-ref")
+                   for ref in refs]
         queries += [("app", user, aa, "any") for user in USERS for aa in ("W", "R")]
         text = "".join(" ".join(query) + "\n" for query in queries)
+        asked = "".join(" ".join((repo, user, GITOLITE_AA.get(aa, aa), ref)) + "\n"
+                        for repo, user, aa, ref in queries)
         result = subprocess.run([decide, conf, os.path.join(workdir, case)], input=text,
                                 capture_output=True, text=True)
         if result.returncode != 0:
@@ -132,7 +143,7 @@ def compare(perl, oracle, decide, fixtures, workdir, record):
         mine = lines[1 + len(remarks):1 + len(remarks) + len(queries)]
         answers = {}
         for mode in ("deny-wins", "first-match"):
-            oracle_run = subprocess.run([perl, oracle, "--mode", mode, conf], input=text,
+            oracle_run = subprocess.run([perl, oracle, "--mode", mode, conf], input=asked,
                                         capture_output=True, text=True)
             if oracle_run.returncode != 0:
                 failures.append(f"{case}: oracle {mode} failed: {oracle_run.stderr.strip()}")

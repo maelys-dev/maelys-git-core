@@ -1439,13 +1439,131 @@ static int test_read_by_ref_grant(void) {
     return 1;
 }
 
+/* ---- the denies of merge and update-ref ---------------------------------- */
+
+/* Gitolite has one way to write a ref, the push its update hook judges: a
+ * merge of a pull request into a ref is the push W of its result, an
+ * update-ref the forced update +, and the denies of the ref and the VREF
+ * denies apply to them. In the same context (user, ref, paths, summary), a
+ * merge is denied explicitly exactly when a fast-forward push is, and an
+ * update-ref exactly when a forced push is. Allows are not compared: the
+ * summary of a push is allowed by any write on the repository, as
+ * receive-pack has judged each of its refs, and merge has no such rule.
+ * GAPS is the count of contexts where the push is denied explicitly and the
+ * other is not, by configuration; the reverse never happens. */
+static int explicitly_denied(maelys_git_policy_t *policy, maelys_git_policy_request_t request,
+                             const char *operation, const char *update_kind, int *out) {
+    maelys_git_policy_decision_t decision;
+    maelys_git_error_t error;
+    request.operation = operation;
+    request.update_kind = update_kind;
+    if (maelys_git_policy_authorize(policy, &request, &decision, &error) != MAELYS_GIT_OK) {
+        (void)fprintf(stderr, "%s %s %s: %s\n", request.principal, operation, request.ref_name, error.message);
+        return 0;
+    }
+    *out = decision.explicit_deny;
+    return 1;
+}
+
+static int test_explicit_denies_alike(void) {
+    static const struct {
+        const char *name, *configuration;
+        size_t gaps;
+    } cases[] = {
+        {"deny-ref",
+         "@devs = bob\n@ops = @devs\n"
+         "repo app\n    - refs/heads/secret = mallory\n    RW+ refs/heads/ = mallory\n"
+         "    - refs/heads/locked = @ops\n    RW+ = @devs\n    RW refs/heads/feature/ = alice\n"
+         "    - refs/heads/feature/frozen = @all\n    - refs/heads/rel-[0-9]+$ = carol\n    RW+ = carol\n",
+         120u},
+        {"deny-vref",
+         "@devs = bob\n"
+         "repo app\n    - VREF/NAME/secret.txt = mallory\n    - VREF/COUNT/2 = mallory\n"
+         "    - VREF/COUNT/1/NEWFILES = @devs\n    - VREF/MAX_NEWBIN_SIZE/1000 = alice\n"
+         "    RW+ = mallory alice @devs\n    RW refs/heads/ = carol\n",
+         64u},
+    };
+    static const char *const users[] = {"alice", "bob", "carol", "dave", "mallory", "zed"};
+    static const char *const refs[] = {"refs/heads/main", "refs/heads/secret", "refs/heads/secret/x",
+                                       "refs/heads/locked", "refs/heads/feature/x", "refs/heads/feature/frozen",
+                                       "refs/heads/rel-1", "refs/heads/rel-x"};
+    static const char *const secret[] = {"secret.txt"}, *const image[] = {"img.bin"}, *const doc[] = {"docs/a.md"};
+    /* No change; one changed path each, a text, a new binary, another text;
+     * a summary over and one under the limits. */
+    const maelys_git_policy_request_t contexts[] = {
+        {.request_id = "x"},
+        {.request_id = "x", .paths = secret, .path_count = 1u, .has_change_details = 1, .change_kind = "modified",
+         .change_blob_size = 10u},
+        {.request_id = "x", .paths = image, .path_count = 1u, .has_change_details = 1, .change_kind = "added",
+         .change_binary = 1, .change_blob_size = 4096u},
+        {.request_id = "x", .paths = doc, .path_count = 1u, .has_change_details = 1, .change_kind = "modified",
+         .change_blob_size = 10u},
+        {.request_id = "x", .has_summary = 1, .changed_count = 3u, .added_count = 2u, .modified_count = 1u},
+        {.request_id = "x", .has_summary = 1, .changed_count = 1u, .modified_count = 1u},
+    };
+    for (size_t c = 0u; c < sizeof(cases) / sizeof(cases[0]); ++c) {
+        maelys_git_policy_t *compiled = NULL, *grants = NULL;
+        CHECK(migrate_both(cases[c].name, cases[c].configuration, &compiled, &grants));
+        maelys_git_policy_close(compiled); /* a regex: only the grants decide here */
+        size_t gaps = 0u;
+        for (size_t u = 0u; u < sizeof(users) / sizeof(users[0]); ++u)
+            for (size_t r = 0u; r < sizeof(refs) / sizeof(refs[0]); ++r)
+                for (size_t k = 0u; k < sizeof(contexts) / sizeof(contexts[0]); ++k) {
+                    maelys_git_policy_request_t request = contexts[k];
+                    request.principal = users[u];
+                    request.repository = "app.git";
+                    request.ref_name = refs[r];
+                    request.ref_kind = "branch";
+                    int push = 0, merge = 0, force = 0, update = 0;
+                    CHECK(explicitly_denied(grants, request, "push", "fast_forward", &push));
+                    CHECK(explicitly_denied(grants, request, "merge", "fast_forward", &merge));
+                    CHECK(explicitly_denied(grants, request, "push", "force", &force));
+                    CHECK(explicitly_denied(grants, request, "update-ref", NULL, &update));
+                    if ((merge && !push) || (update && !force)) {
+                        (void)fprintf(stderr, "%s: %s %s context %zu: merge %d push %d, update-ref %d force %d\n",
+                                      cases[c].name, users[u], refs[r], k, merge, push, update, force);
+                        return 0;
+                    }
+                    gaps += (size_t)(push && !merge) + (size_t)(force && !update);
+                }
+        maelys_git_policy_close(grants);
+        if (gaps != cases[c].gaps) {
+            (void)fprintf(stderr, "%s: %zu contexts where a push is denied explicitly and its merge or "
+                                  "update-ref is not, %zu expected\n", cases[c].name, gaps, cases[c].gaps);
+            return 0;
+        }
+    }
+    /* The summary of a push, allowed by a ref grant on another ref; merge
+     * and update-ref are denied by default, never explicitly. */
+    maelys_git_policy_t *compiled = NULL, *grants = NULL;
+    CHECK(migrate_both("summary-only", "repo app\n    RW+ refs/heads/feature/ = alice\n", &compiled, &grants));
+    maelys_git_policy_request_t summary = {.request_id = "s", .principal = "alice", .repository = "app.git",
+                                           .ref_name = "refs/heads/main", .has_summary = 1, .changed_count = 1u,
+                                           .modified_count = 1u};
+    maelys_git_policy_t *const policies[] = {compiled, grants};
+    for (size_t p = 0u; p < 2u; ++p) {
+        static const char *const operations[] = {"push", "merge", "update-ref"};
+        for (size_t o = 0u; o < 3u; ++o) {
+            maelys_git_policy_decision_t decision;
+            maelys_git_error_t error;
+            summary.operation = operations[o];
+            summary.update_kind = o == 2u ? NULL : "fast_forward";
+            CHECK(maelys_git_policy_authorize(policies[p], &summary, &decision, &error) == MAELYS_GIT_OK);
+            CHECK(decision.allowed == (o == 0u) && !decision.explicit_deny);
+        }
+    }
+    maelys_git_policy_close(compiled);
+    maelys_git_policy_close(grants);
+    return 1;
+}
+
 int main(void) {
     char template[] = "/tmp/maelys_git_gitolite_program_XXXXXX";
     char *root = mkdtemp(template);
     if (!root) return 1;
     (void)snprintf(g_root, sizeof(g_root), "%s", root);
     int ok = test_identity() && test_versions() && test_audited_consumer() && test_program_of_set() &&
-             test_read_by_ref_grant() && test_mixed_routing() && test_fixed_program() &&
+             test_read_by_ref_grant() && test_explicit_denies_alike() && test_mixed_routing() && test_fixed_program() &&
              test_written_snapshot() && test_counterexamples() && test_quotas() && test_engine_bounds() &&
              test_escaped_dot() && test_all() && test_ref_domain() && test_regex_decisions() &&
              test_vref_filtering() && test_admission() && test_total_bound() && test_parity();
