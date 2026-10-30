@@ -25,6 +25,19 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   `maelys_git_receipt_grants_t` gains the member `program`. A set migrated
   again has a new policy-set fingerprint: a `pr merge` plan made before is
   refused at `--apply`.
+- The Cloud agent waits for its executor's end as Git children are waited
+  for: on the exit itself, kqueue `EVFILT_PROC` on macOS and a pidfd on
+  Linux, bounded by the request's deadline, instead of looking every 10 ms.
+  One helper serves both waits: it reaps a Git child, and only observes
+  the executor (`waitid` with `WNOWAIT`), whose group the supervisor still
+  signals before it reaps the executor last. The deadline, the single
+  escalation, the result categories and the messages are unchanged. An
+  executor that closes its output and keeps running is seen to end when it
+  exits rather than on the next 10 ms tick. A supervised `health` command,
+  which pays the group's 100 ms grace, costs about 110 ms under Linux
+  before and after; on a macOS host with an Endpoint Security client its
+  fastest series drop from 149-153 ms to 140-148 ms.
+  `bench-maelys-git-supervisor`, built on demand, measures it.
 - The Cloud agent signals the executor's process group before it reaps
   the executor, never after. It observes the executor's end without
   reaping it (`waitid` with `WNOWAIT`), sends the group SIGTERM, then
