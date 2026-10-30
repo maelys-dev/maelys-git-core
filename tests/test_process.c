@@ -55,6 +55,43 @@ static int linger_mode(const char *marker) {
     return 0;
 }
 
+/* Says whether SIGTERM is blocked and SIGPIPE ignored in this process. */
+static int signals_mode(void) {
+    sigset_t blocked;
+    struct sigaction pipe_action;
+    if (sigprocmask(SIG_BLOCK, NULL, &blocked) != 0 ||
+        sigaction(SIGPIPE, NULL, &pipe_action) != 0)
+        return 2;
+    (void)printf("term-blocked=%d pipe-ignored=%d\n",
+                 sigismember(&blocked, SIGTERM) == 1,
+                 pipe_action.sa_handler == SIG_IGN);
+    return 0;
+}
+
+/* The launcher of this process may block or ignore signals, as sshd ignores
+ * SIGPIPE: a child starts with none blocked and every one at its default. */
+static int child_starts_with_default_signals(const char *executable) {
+    sigset_t term, saved;
+    if (sigemptyset(&term) != 0 || sigaddset(&term, SIGTERM) != 0 ||
+        sigprocmask(SIG_BLOCK, &term, &saved) != 0)
+        return fail("cannot block SIGTERM");
+    if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) return fail("cannot ignore SIGPIPE");
+    char *signals_argv[] = {(char *)executable, "--signals", NULL};
+    unsigned char *data = NULL;
+    size_t length = 0u;
+    maelys_git_error_t error = {0};
+    maelys_git_result_t result = mg_process_capture(
+        executable, signals_argv, &data, &length, 64u, &error);
+    if (sigprocmask(SIG_SETMASK, &saved, NULL) != 0 ||
+        signal(SIGPIPE, SIG_DFL) == SIG_ERR)
+        return fail("cannot restore the test's signals");
+    if (result != MAELYS_GIT_OK) return fail(error.message);
+    int inherited = strcmp((char *)data, "term-blocked=0 pipe-ignored=0\n") != 0;
+    if (inherited) fprintf(stderr, "test_process: child saw %s", (char *)data);
+    free(data);
+    return inherited ? fail("child inherited a blocked or ignored signal") : 0;
+}
+
 static int lingering_child_is_killed(const char *executable) {
     char directory[] = "/tmp/maelys-process-linger-XXXXXX";
     if (!mkdtemp(directory)) return fail("cannot create temporary directory");
@@ -109,6 +146,7 @@ int main(int argc, char **argv) {
         return descendant_mode(argv[2]);
     if (argc == 3 && strcmp(argv[1], "--linger") == 0)
         return linger_mode(argv[2]);
+    if (argc == 2 && strcmp(argv[1], "--signals") == 0) return signals_mode();
     if (argc == 2 && strcmp(argv[1], "--late-exit") == 0) {
         (void)close(STDOUT_FILENO);
         (void)close(STDERR_FILENO);
@@ -166,6 +204,7 @@ int main(int argc, char **argv) {
     result = mg_process_run_status(executable, late_argv, &child_status, &error);
     if (result != MAELYS_GIT_OK || child_status != 3)
         return fail("an exit after the output closed lost its status");
+    if (child_starts_with_default_signals(executable) != 0) return 1;
     if (lingering_child_is_killed(executable) != 0) return 1;
     char directory[] = "/tmp/maelys-process-test-XXXXXX";
     if (!mkdtemp(directory)) return fail("cannot create temporary directory");
