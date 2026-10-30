@@ -5,6 +5,18 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- The Cloud agent signals the executor's process group before it reaps
+  the executor, never after. It observes the executor's end without
+  reaping it (`waitid` with `WNOWAIT`), sends the group SIGTERM, then
+  SIGKILL after the same 100 ms, and reaps the executor last: until then
+  the group's number is the executor's own and can name no stranger. The
+  final SIGTERM and SIGKILL were sent after the reap, to a number nothing
+  reserved any more. What is signaled and when the executor is stopped are
+  unchanged; a successful request that leaves no descendant now waits the
+  100 ms grace, which the empty group did not. The supervisor test adds an
+  executor that exits on its own with a descendant that handles SIGTERM:
+  it records that the leader was not reaped when the group's SIGTERM
+  reached it, and the SIGKILL still ends it.
 - A Git process starts with no signal blocked and every signal at its
   default action, whatever the launcher of Git Core blocks or ignores. It
   inherited both: a SIGPIPE an sshd ignores reached Git, and a SIGTERM a

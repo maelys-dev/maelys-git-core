@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
+#include <signal.h>
 #include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
@@ -200,25 +201,30 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
     int oversized = used > MAELYS_GIT_MAX_PROTOCOL_LINE + 2u;
     if (!wrote || !response || timed_out || read_failed || oversized)
         mg_terminate_process_group(child);
-    int status = 0;
-    pid_t waited = 0;
-    while (waited == 0) {
-        waited = waitpid(child, &status, WNOHANG);
-        if (waited < 0 && errno == EINTR) { waited = 0; continue; }
-        if (waited != 0) break;
+    /* The executor's end is observed without reaping it: its number, the
+     * group's, stays its own until the last signal below has been sent. */
+    for (;;) {
+        siginfo_t ended;
+        memset(&ended, 0, sizeof(ended));
+        int observed = waitid(P_PID, (id_t)child, &ended, WEXITED | WNOWAIT | WNOHANG);
+        if (observed < 0 && errno == EINTR) continue;
+        if (observed < 0 || ended.si_pid == child) break;
         int timeout = 0;
         if (!remaining_timeout(deadline, &timeout) || timeout == 0) {
             timed_out = 1;
-            mg_terminate_process_group(child);
-            do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
             break;
         }
         struct timespec pause = {0, 1000000L * (timeout < 10 ? timeout : 10)};
         (void)nanosleep(&pause, NULL);
     }
     /* No descendant may keep mutating repositories after a terminal result,
-     * even if the executor returned successfully or closed stdout early. */
+     * even if the executor returned successfully or closed stdout early. The
+     * leader is not reaped yet, so the group's number can name no stranger,
+     * and a descendant that ignores SIGTERM still takes the SIGKILL. */
     mg_terminate_process_group(child);
+    int status = 0;
+    pid_t waited = 0;
+    do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
     if (!wrote || !response || timed_out || read_failed || used == 0u ||
         oversized || waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         free(response);

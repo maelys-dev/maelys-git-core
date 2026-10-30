@@ -36,6 +36,24 @@ static int ends_with(const char *value, const char *suffix) {
            strcmp(value + value_length - suffix_length, suffix) == 0;
 }
 
+/* The descendant of the term-order executor: on the group's SIGTERM, says
+ * whether the leader still exists, reaped or not. kill(2) and write(2) are
+ * async-signal-safe; the file is opened before the handler can run. */
+static pid_t term_order_leader;
+static char term_order_marker[4096];
+static void record_term_order(int signo) {
+    (void)signo;
+    int saved = errno;
+    int unreaped = kill(term_order_leader, 0) == 0 || errno == EPERM;
+    int fd = open(term_order_marker, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd >= 0) {
+        const char *line = unreaped ? "leader-unreaped\n" : "leader-reaped\n";
+        (void)!write(fd, line, strlen(line));
+        (void)close(fd);
+    }
+    errno = saved;
+}
+
 static int executor_mode(const char *executable, const char *marker) {
     if (ends_with(marker, "/reply")) {
         char buffer[4096];
@@ -64,9 +82,29 @@ static int executor_mode(const char *executable, const char *marker) {
         maelys_git_error_t error = {0};
         return mg_process_run_with_timeout(executable, argv, 4000u, NULL, &error) == MAELYS_GIT_OK ? 0 : 2;
     }
+    /* Taken before the fork: once the leader has exited, getppid() would
+     * name the process that adopted the descendant. */
+    term_order_leader = getpid();
     pid_t descendant = fork();
     if (descendant < 0) return 2;
     if (descendant == 0) {
+        if (ends_with(marker, "/term-order")) {
+            /* Handles the group's SIGTERM instead of ignoring it, to record
+             * whether the leader, its parent, was already reaped by then;
+             * then lives on, for the SIGKILL that must follow. */
+            (void)close(STDOUT_FILENO);
+            (void)snprintf(term_order_marker, sizeof(term_order_marker), "%s", marker);
+            struct sigaction record = {.sa_handler = record_term_order};
+            (void)sigemptyset(&record.sa_mask);
+            if (sigaction(SIGTERM, &record, NULL) != 0) _exit(2);
+            pause_ms(700);
+            FILE *stream = fopen(marker, "ab");
+            if (stream) {
+                (void)fputs("survived\n", stream);
+                (void)fclose(stream);
+            }
+            _exit(0);
+        }
         if (ends_with(marker, "/success-descendant")) {
             (void)close(STDOUT_FILENO);
             (void)signal(SIGTERM, SIG_IGN);
@@ -79,7 +117,7 @@ static int executor_mode(const char *executable, const char *marker) {
         }
         _exit(0);
     }
-    if (ends_with(marker, "/success-descendant")) {
+    if (ends_with(marker, "/success-descendant") || ends_with(marker, "/term-order")) {
         (void)fputs(valid_result, stdout);
         (void)fputc('\n', stdout);
         return 0;
@@ -242,6 +280,26 @@ int main(int argc, char **argv) {
         if (access(config.manifest_path, F_OK) == 0)
             return fail("descendant survived a terminal executor result");
     }
+    /* The executor exits on its own; a descendant handles SIGTERM and lives
+     * on. The group's SIGTERM reaches it while the leader is not reaped yet,
+     * so the group's number can name no stranger, and the SIGKILL that
+     * follows still ends it: no "survived" after its record. */
+    (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/term-order", directory);
+    config.request_timeout_ms = 2000u;
+    response = NULL;
+    result = mg_supervisor_execute(&config, &command, "{}", NULL, &response, &succeeded, &error);
+    free(response);
+    if (result != MAELYS_GIT_OK) return fail("the term-order executor failed");
+    pause_ms(900);
+    char order[64];
+    if (!read_text(config.manifest_path, order, sizeof(order)))
+        return fail("the descendant did not record the group's SIGTERM");
+    if (strcmp(order, "leader-unreaped\n") != 0) {
+        fprintf(stderr, "test_supervisor: descendant recorded %s", order);
+        return fail("the group was signaled after its leader was reaped, or a descendant survived");
+    }
+    if (unlink(config.manifest_path) != 0) return fail("cannot remove the term-order record");
+
     (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/reply", directory);
     config.request_timeout_ms = 5000u;
     char *wire = malloc(MAELYS_GIT_MAX_PROTOCOL_LINE + 4u);
