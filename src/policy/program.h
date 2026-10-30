@@ -9,9 +9,12 @@
  * slice_* and is none of them is refused at open.
  *
  * Version 1, maelys-git-gitolite-program/1, reads a repository only by a
- * grant on the whole repository. Version 2, maelys-git-gitolite-program/2,
- * the one the migration writes, also reads it by a grant on one of its
- * refs, as Gitolite does. A set holds one version, never both. */
+ * grant on the whole repository, and applies the denies of a ref and the
+ * VREF denies to push alone. Version 2, maelys-git-gitolite-program/2, the
+ * one the migration writes, also reads it by a grant on one of its refs,
+ * and applies those denies to merge and update-ref too, as Gitolite does. A
+ * set holds one version, never both; a set of version 1 is refused a merge
+ * or an update-ref its denies concern (policy.c). */
 
 #include <stddef.h>
 

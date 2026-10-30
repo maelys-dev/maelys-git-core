@@ -47,9 +47,6 @@ HEADER = (
     "#   bare-literal-grant  a bare literal grant (RW refs/heads/main) is the exact ref\n"
     "#                       in Git Core and a prefix in Gitolite: Git Core denies\n"
     "#                       main-hotfix, main/x... Stricter, by design of the migration.\n"
-    "#   merge-ignores-ref-deny  Git Core's merge or update-ref of a ref a deny applies to\n"
-    "#                       is allowed, where Gitolite denies the push W or + of that ref:\n"
-    "#                       more permissive. The only listed kind that is: it must go.\n"
     "# Against Gitolite's own first-match rule, the order of rules adds differences,\n"
     "# all stricter too: they are order.tsv's.\n"
     "# case\tuser\taa\tref\tgit_core\tgitolite\tkind\n")

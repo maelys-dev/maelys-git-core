@@ -33,33 +33,33 @@ JSON = ["--format", "json", "--compact", "--non-interactive"]
 EXPECTED = {
     # A deny of the ref, then a grant on its prefix, on the whole repository,
     # or a deny by a nested group: Gitolite refuses W on the ref.
-    "ref-deny ff secret": "applied",  # merge ignores the ref deny
+    "ref-deny ff secret": "refused",
     "ref-deny ff other": "applied",
-    "ref-deny-repository ff secret": "applied",  # merge ignores the ref deny
-    "ref-deny-group ff secret": "applied",  # merge ignores the ref deny
+    "ref-deny-repository ff secret": "refused",
+    "ref-deny-group ff secret": "refused",
     # VREF/NAME on a path the pull request adds.
-    "vref-name ff main": "applied",  # merge ignores the VREF deny
+    "vref-name ff main": "refused",
     # The base renames public.txt to secret.txt after the merge base, the
     # pull request edits public.txt: the merge writes secret.txt.
-    "rename merge main": "applied",  # merge ignores the VREF deny, and judges the PR's diff
+    "rename merge main": "applied",  # merge judges the PR's diff, not the change it applies
     "rename squash main": "applied",  # likewise
     "rename-control ff main": "applied",
     # The pull request edits a.txt and b.txt, the base has the same edit of
     # b.txt: the applied change touches a.txt alone, which COUNT/1 and
     # NAME/b.txt let through.
-    "counts merge main": "applied",
-    "counts squash main": "applied",
-    "counts-name merge main": "applied",
-    "counts-name squash main": "applied",
+    "counts merge main": "refused",  # merge judges the PR's diff, of two files
+    "counts squash main": "refused",  # likewise
+    "counts-name merge main": "refused",  # merge judges the PR's diff, which has b.txt
+    "counts-name squash main": "refused",  # likewise
     # The executor: its pr_merge, its update_ref (a push), its authorize.
-    "executor pr_merge secret": "applied",  # merge ignores the ref deny
+    "executor pr_merge secret": "refused",
     "executor pr_merge other": "applied",
     "executor update_ref secret": "refused",
     "executor update_ref other": "applied",
 }
 # What authorize answers mallory on refs/heads/secret of the ref-deny scene,
 # through the CLI and through the executor: (allowed, explicit_deny).
-AUTHORIZED = {"push": (False, True), "merge": (True, False), "update-ref": (True, False)}
+AUTHORIZED = {"push": (False, True), "merge": (False, True), "update-ref": (False, True)}
 
 
 def run(*args, cwd=None, input=None, ok=True):

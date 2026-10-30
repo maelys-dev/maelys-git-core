@@ -259,11 +259,14 @@ static int test_prefix_capacity(void) {
     return 1;
 }
 
-/* A bare-literal deny stays a rule: the rules left by the fixed part, at
- * least the 56 that 62778f0 admitted beside its 72 fixed rules. */
+/* A bare-literal deny stays a rule: the rules left by the fixed part.
+ * 62778f0 admitted 56 beside its 72 fixed rules; the denies of merge and
+ * update-ref take 12 more, and 47 remain beside 81. A configuration of more
+ * is refused by the compiled plan; as grants, its denies are facts
+ * (bare-56 of tests/test_gitolite_differential.c). */
 static int test_rule_capacity(void) {
     size_t count = g_minimal.rule_limit - (g_minimal.rules);
-    CHECK(count >= 56u);
+    CHECK(g_minimal.rules == 81u && count >= 47u);
     CHECK(at_bound("bare", "repo app\n    RW = alice\n", count, bare_deny_line, "MAX_RULES"));
     char name[64];
     (void)snprintf(name, sizeof(name), "bare-%zu", count);

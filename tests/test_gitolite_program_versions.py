@@ -7,18 +7,23 @@ written: a set deployed before any later version. decisions.tsv records,
 for each request, the decision and the SHA-256 of the receipt and of the
 whole output of `maelys-git authorize --explain`, as that Git Core wrote
 them. Whatever version Git Core migrates to now, it must decide this set
-as it did, byte for byte.
+as it did, byte for byte, but for the requests guarded.tsv lists: /1
+applies the denies of a ref to push alone, and a merge or an update-ref one
+of them concerns is now refused before evaluation, a policy error that
+asks to migrate again (exit 1, POLICY_FAILED, the SHA-256 of the error
+envelope), whatever /1 decided of it.
 
 The same gitolite.conf migrated now gives maelys-git-gitolite-program/2:
 the same decisions, but a ref grant also lets its holder read the
-repository, as Gitolite does; and a manifest holding both versions is
-refused when it is opened. A clone through maelys-git-shell reads as each
-version decides.
+repository, and a deny of a ref also denies its merge and its update-ref,
+as Gitolite does; and a manifest holding both versions is refused when it
+is opened. A clone through maelys-git-shell reads as each version decides.
 
-    test_gitolite_program_versions.py MAELYS_GIT SHELL FIXTURES [--record]
+    test_gitolite_program_versions.py MAELYS_GIT SHELL FIXTURES [--record | --record-guarded]
 
 --record rewrites decisions.tsv from what is observed; only a commit that
-records the set as it was first written does that.
+records the set as it was first written does that. --record-guarded
+rewrites guarded.tsv, the requests the guard refuses, as observed.
 """
 import hashlib
 import json
@@ -39,6 +44,10 @@ HEADER = ("# The decisions of tests/fixtures/gitolite-program-1 as the Git Core 
           "# made them: maelys-git authorize MANIFEST USER app.git OPERATION REF --grants\n"
           "# grants.json --explain --format json --compact --non-interactive.\n"
           "# user\toperation\tref\tallowed\treceiptSha256\toutputSha256\n")
+GUARDED_HEADER = ("# The requests of decisions.tsv a set of maelys-git-gitolite-program/1 is now refused, a\n"
+                  "# merge or an update-ref a deny concerns: maelys-git authorize, as decisions.tsv asks it,\n"
+                  "# exits 1 with this error code and this SHA-256 of its error envelope.\n"
+                  "# user\toperation\tref\texit\tcode\terrorSha256\n")
 
 
 def authorize(maelys_git, directory, user, operation, ref):
@@ -47,8 +56,8 @@ def authorize(maelys_git, directory, user, operation, ref):
          "--explain", "--format", "json", "--compact", "--non-interactive"],
         cwd=directory, capture_output=True, timeout=60)
     if result.returncode != 0:
-        raise SystemExit(f"authorize {user} {operation} {ref}: exit {result.returncode}: "
-                         f"{result.stderr.decode(errors='replace')}")
+        error = json.loads(result.stderr)["error"]
+        return (str(result.returncode), error["code"], hashlib.sha256(result.stderr).hexdigest(), result.stderr)
     data = json.loads(result.stdout)["data"]
     return ("true" if data["allowed"] else "false", data["receiptSha256"],
             hashlib.sha256(result.stdout).hexdigest(), result.stdout)
@@ -56,8 +65,9 @@ def authorize(maelys_git, directory, user, operation, ref):
 
 def second_version(maelys_git, shell, one, root, first):
     """The same gitolite.conf migrated now: maelys-git-gitolite-program/2,
-    which decides as /1 but also lets a ref grant read the repository, and
-    which no manifest may hold beside /1."""
+    which decides as /1 but also lets a ref grant read the repository and
+    applies the deny of a ref to its merge and its update-ref, and which no
+    manifest may hold beside /1. FIRST is what /1 decided, as recorded."""
     failures = []
     two = root / "two"
     result = subprocess.run([maelys_git, "migrate", "gitolite", str(one / "gitolite.conf"), str(two), "--apply",
@@ -74,14 +84,20 @@ def second_version(maelys_git, shell, one, root, first):
     # Ref grants alone: alice (prefix), bob (regex, by @devs), mallory (a
     # deny, then a prefix).
     reads = {"alice", "bob", "mallory"}
-    for (user, operation, ref), (allowed, _, _, _) in first.items():
+    # - refs/heads/secret = mallory, the only deny.
+    denied = {("mallory", "merge", "refs/heads/secret"), ("mallory", "update-ref", "refs/heads/secret")}
+    for (user, operation, ref), allowed in first.items():
         now, _, _, stdout = authorize(maelys_git, two, user, operation, ref)
-        expected = "true" if (operation == "read" and user in reads) else allowed
+        expected = ("true" if (operation == "read" and user in reads) else
+                    "false" if (user, operation, ref) in denied else allowed)
         if now != expected:
             failures.append(f"/2 {user} {operation} {ref}: {now}, expected {expected}")
+            continue
         receipt = json.loads(stdout)["data"]["receipt"]
         if receipt["grants"]["program"] != "maelys-git-gitolite-program/2":
             failures.append(f"/2 {user} {operation} {ref}: receipt names {receipt['grants']['program']}")
+        if ((user, operation, ref) in denied) != (receipt["decision"] == "deny_explicit"):
+            failures.append(f"/2 {user} {operation} {ref}: receipt decision {receipt['decision']}")
     # A real clone through the shell, as the SSH forced command: alice holds
     # a ref grant alone; /2 lets her read, /1 does not, nor /2 anyone else.
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
@@ -134,13 +150,14 @@ def second_version(maelys_git, shell, one, root, first):
 
 def main():
     record = "--record" in sys.argv
-    args = [a for a in sys.argv[1:] if a != "--record"]
+    record_guarded = "--record-guarded" in sys.argv
+    args = [a for a in sys.argv[1:] if a not in ("--record", "--record-guarded")]
     if len(args) != 3:
         print(__doc__, file=sys.stderr)
         return 2
     maelys_git, shell, fixtures = os.path.abspath(args[0]), os.path.abspath(args[1]), Path(args[2])
     one = fixtures / "gitolite-program-1"
-    table = one / "decisions.tsv"
+    table, guarded_table = one / "decisions.tsv", one / "guarded.tsv"
     observed = {}
     for user in USERS:
         for operation, ref in REQUESTS:
@@ -152,6 +169,14 @@ def main():
                 out.write("\t".join(key + (allowed, receipt, output)) + "\n")
         print(f"recorded {len(observed)} decisions")
         return 0
+    if record_guarded:
+        with open(guarded_table, "w") as out:
+            out.write(GUARDED_HEADER)
+            for key, (status, code, error, _) in observed.items():
+                if status not in ("true", "false"):
+                    out.write("\t".join(key + (status, code, error)) + "\n")
+        print("recorded the guarded requests")
+        return 0
     failures = []
     expected = {}
     for line in open(table):
@@ -159,15 +184,27 @@ def main():
             continue
         fields = line.rstrip("\n").split("\t")
         expected[tuple(fields[:3])] = tuple(fields[3:])
+    guarded = {}
+    for line in open(guarded_table):
+        if line.startswith("#") or not line.strip():
+            continue
+        fields = line.rstrip("\n").split("\t")
+        guarded[tuple(fields[:3])] = tuple(fields[3:])
     if set(expected) != set(observed):
         failures.append(f"{len(expected)} recorded requests, {len(observed)} asked")
+    if set(guarded) != {("mallory", "merge", "refs/heads/secret"), ("mallory", "update-ref", "refs/heads/secret")}:
+        failures.append(f"guarded requests: {sorted(guarded)}")
     for key, (allowed, receipt, output, stdout) in observed.items():
-        if key in expected and expected[key] != (allowed, receipt, output):
-            failures.append(f"/1 {' '.join(key)}: recorded {expected[key]}, now {(allowed, receipt, output)}:\n"
+        record = guarded.get(key, expected.get(key))
+        if record != (allowed, receipt, output):
+            failures.append(f"/1 {' '.join(key)}: recorded {record}, now {(allowed, receipt, output)}:\n"
                             f"{stdout.decode(errors='replace')}")
-    print(f"{len(observed)} decisions of a /1 set compared with their record")
+        if key in guarded and b"maelys-git-gitolite-program/1 does not apply ref or VREF denies to " not in stdout:
+            failures.append(f"/1 {' '.join(key)}: not refused by the guard: {stdout!r}")
+    print(f"{len(observed)} decisions of a /1 set compared with their record, {len(guarded)} now guarded")
     with tempfile.TemporaryDirectory(prefix="maelys-program-versions-") as temporary:
-        failures += second_version(maelys_git, shell, one, Path(temporary).resolve(), observed)
+        failures += second_version(maelys_git, shell, one, Path(temporary).resolve(),
+                                   {key: fields[0] for key, fields in expected.items()})
     for failure in failures:
         print("FAIL", failure)
     return 1 if failures else 0

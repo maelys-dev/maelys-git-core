@@ -1,0 +1,6 @@
+# The requests of decisions.tsv a set of maelys-git-gitolite-program/1 is now refused, a
+# merge or an update-ref a deny concerns: maelys-git authorize, as decisions.tsv asks it,
+# exits 1 with this error code and this SHA-256 of its error envelope.
+# user	operation	ref	exit	code	errorSha256
+mallory	merge	refs/heads/secret	1	POLICY_FAILED	b657e8bae0faed8ddb34a42dc28f2d2dba1439fa9d5de49723e27d03ac7649ba
+mallory	update-ref	refs/heads/secret	1	POLICY_FAILED	74a5afdd6a9c682691b2a518f1b58af70927643895a91d565dcf319e21276faf

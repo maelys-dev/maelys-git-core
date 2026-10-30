@@ -5,6 +5,24 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- **Security: merge and update-ref take the denies of a migrated Gitolite
+  set.** Gitolite writes a ref only by the push its update hook judges: the
+  deny of the ref, then the VREF of the files it changes. A merge of a pull
+  request is the push `W` of its result, an update-ref the forced update
+  `+`. The audited program applied the denies of a ref and the VREF denies
+  (`NAME`, `COUNT`, `COUNT/NEWFILES`, `MAX_NEWBIN_SIZE`) to `push` alone:
+  with `- refs/heads/secret = mallory` and `RW+ refs/heads/ = mallory`,
+  `maelys-git pr merge --apply` wrote `refs/heads/secret`, and `authorize
+  merge` or `update-ref` allowed it. `maelys-git-gitolite-program/2` now
+  applies those denies to `merge` and `update-ref` as to `push`, in the
+  audited program and in the compiled encoding: stricter. A set of
+  `maelys-git-gitolite-program/1` is still opened, but a `merge` or an
+  `update-ref` a deny concerns is refused before any policy is evaluated,
+  a policy error (`POLICY_FAILED`; a `deny_error` receipt of kind
+  `semantics`) that asks to migrate again; every other decision of `/1` is
+  unchanged. The executor's `update_ref` was already a push and is
+  unchanged. The compiled encoding has 81 fixed rules, and room for 47
+  bare-literal denies (56 before).
 - **Access widened, on a new migration only.** The Gitolite migration
   writes the audited program `maelys-git-gitolite-program/2`, which lets a
   ref grant read its repository, as Gitolite 3.6.15 does: for `R any`, the

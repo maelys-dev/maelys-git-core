@@ -1028,6 +1028,40 @@ static maelys_git_result_t build_slice_facts(maelys_git_policy_t *policy,
     return MAELYS_GIT_OK;
 }
 
+/* Version 1 of the audited program applies the denies of a ref and the
+ * VREF denies to push alone: a merge or an update-ref it would decide past
+ * one of them is refused before any policy is evaluated, never allowed.
+ * The slice says whether a deny concerns the request: a deny of its ref, a
+ * VREF name among its paths, a VREF limit of the user or of one of its
+ * groups, exceeded or not. The guard only refuses: every allow is still the
+ * program's. */
+static int misses_a_deny(const maelys_git_policy_t *policy, const maelys_git_policy_request_t *request) {
+    if (policy->program_version != 1u ||
+        (strcmp(request->operation, "merge") != 0 && strcmp(request->operation, "update-ref") != 0))
+        return 0;
+    for (size_t i = 0u; i < policy->slice.count; ++i) {
+        const mg_slice_fact_t *fact = &policy->slice.facts[i];
+        switch (fact->predicate) {
+            case MG_SLICE_REF_MATCH:
+            case MG_SLICE_GROUP_REF_MATCH:
+                if (!strcmp(fact->text[2], "-")) return 1;
+                break;
+            case MG_SLICE_VREF_NAME:
+            case MG_SLICE_GROUP_VREF_NAME:
+            case MG_SLICE_VREF_COUNT:
+            case MG_SLICE_GROUP_VREF_COUNT:
+            case MG_SLICE_VREF_NEW_COUNT:
+            case MG_SLICE_GROUP_VREF_NEW_COUNT:
+            case MG_SLICE_VREF_MAX_NEW_BINARY:
+            case MG_SLICE_GROUP_VREF_MAX_NEW_BINARY:
+                return 1;
+            default:
+                break;
+        }
+    }
+    return 0;
+}
+
 /* The detail of refused request facts: the bound that refused them, its
  * engine name and the capacity read from the engine. The fact buffer reports,
  * as the engine does, the attempted count: one more than it holds. A slice
@@ -1169,6 +1203,14 @@ static maelys_git_result_t decide(maelys_git_policy_t *policy,
             mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
                          "the slice of grants for this request exceeds the engine limits; it is never truncated");
             set_request_detail(error, policy, request);
+        }
+        if (result == MAELYS_GIT_OK && misses_a_deny(policy, request)) {
+            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                         "%s does not apply ref or VREF denies to %s: migrate the configuration again",
+                         MG_GITOLITE_PROGRAM_FORMAT_1, request->operation);
+            const maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_SEMANTICS};
+            mg_error_set_detail(error, &detail);
+            result = MAELYS_GIT_ERR_POLICY;
         }
     }
     size_t allow_policy = SIZE_MAX;

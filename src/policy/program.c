@@ -17,7 +17,11 @@
  *
  * Each version is the pieces marked for it, in order. Version 2 reads a
  * repository by a ref grant too, as Gitolite answers R any whatever the
- * refex; version 1, which did not, stays byte for byte what it was. */
+ * refex; and it applies the denies of a ref and the VREF denies to merge
+ * and update-ref as to push, since Gitolite writes a ref only by the push
+ * its update hook judges, a merge being the push W of its result and an
+ * update-ref the forced update +. Version 1, which did neither, stays byte
+ * for byte what it was. */
 #define IN_1 1u
 #define IN_2 2u
 #define IN_ALL (IN_1 | IN_2)
@@ -76,6 +80,8 @@ static const struct {
     {IN_ALL, "allow(R) :- push_request(R, U, P, F), update_kind(\"force\"), effective_ref_grant_force(U, P, F).\n"},
     {IN_ALL, "allow(R) :- push_request(R, U, P, F), update_kind(\"delete\"), effective_ref_grant_force(U, P, F).\n"},
     {IN_ALL, "deny(R) :- push_request(R, U, P, F), effective_ref_deny(U, P, F).\n"},
+    {IN_2, "deny(R) :- request(R), user(U), repository(P), operation(\"merge\"), ref(F), effective_ref_deny(U, P, F).\n"},
+    {IN_2, "deny(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), ref(F), effective_ref_deny(U, P, F).\n"},
     {IN_ALL, "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), changed_count(_), has_push_access(U, P).\n"},
     {IN_ALL, "allow(R) :- request(R), user(U), repository(P), operation(\"merge\"), ref(F), effective_ref_grant_push(U, P, F).\n"},
     {IN_ALL, "allow(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), ref(F), effective_ref_grant_force(U, P, F).\n"},
@@ -92,6 +98,16 @@ static const struct {
     {IN_ALL, "deny(R) :- request(R), user(U), repository(P), operation(\"push\"), vref_count_exceeded(U, P).\n"},
     {IN_ALL, "deny(R) :- request(R), user(U), repository(P), operation(\"push\"), vref_new_count_exceeded(U, P).\n"},
     {IN_ALL, "deny(R) :- request(R), user(U), repository(P), operation(\"push\"), vref_new_binary_exceeded(U, P).\n"},
+    {IN_2, "deny(R) :- request(R), user(U), repository(P), operation(\"merge\"), path(F), slice_vref_name(U, P, F).\n"},
+    {IN_2, "deny(R) :- request(R), user(U), repository(P), operation(\"merge\"), path(F), effective_group_member(U, G), slice_group_vref_name(G, P, F).\n"},
+    {IN_2, "deny(R) :- request(R), user(U), repository(P), operation(\"merge\"), vref_count_exceeded(U, P).\n"},
+    {IN_2, "deny(R) :- request(R), user(U), repository(P), operation(\"merge\"), vref_new_count_exceeded(U, P).\n"},
+    {IN_2, "deny(R) :- request(R), user(U), repository(P), operation(\"merge\"), vref_new_binary_exceeded(U, P).\n"},
+    {IN_2, "deny(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), path(F), slice_vref_name(U, P, F).\n"},
+    {IN_2, "deny(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), path(F), effective_group_member(U, G), slice_group_vref_name(G, P, F).\n"},
+    {IN_2, "deny(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), vref_count_exceeded(U, P).\n"},
+    {IN_2, "deny(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), vref_new_count_exceeded(U, P).\n"},
+    {IN_2, "deny(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), vref_new_binary_exceeded(U, P).\n"},
 };
 
 /* Each text is held in pieces, each within the length a compiler must
