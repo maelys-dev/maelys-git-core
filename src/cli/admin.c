@@ -816,6 +816,10 @@ static int emit_pr_result(maelys_cli_context_t *context,
         mg_json_string(&data, NULL, result->conflict_paths.items[i]);
     mg_json_end_array(&data);
     maelys_git_cli_change_summary(&data, "changeSummary", &result->changes);
+    if (result->has_applied_changes)
+        maelys_git_cli_change_summary(&data, "appliedChangeSummary", &result->applied_changes);
+    else
+        mg_json_null(&data, "appliedChangeSummary");
     mg_json_object(&data, "event");
     mg_json_string(&data, "version", "1");
     mg_json_string(&data, "type", event_type);

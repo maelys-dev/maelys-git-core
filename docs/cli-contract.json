@@ -2826,6 +2826,12 @@
           "outputSchema": {
             "additionalProperties": false,
             "properties": {
+              "appliedChangeSummary": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
               "changeSummary": {
                 "type": "object"
               },
@@ -2942,6 +2948,7 @@
               "prMergedRef",
               "conflicts",
               "changeSummary",
+              "appliedChangeSummary",
               "event"
             ],
             "type": "object"
@@ -3336,6 +3343,12 @@
           "outputSchema": {
             "additionalProperties": false,
             "properties": {
+              "appliedChangeSummary": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
               "changeSummary": {
                 "type": "object"
               },
@@ -3452,6 +3465,7 @@
               "prMergedRef",
               "conflicts",
               "changeSummary",
+              "appliedChangeSummary",
               "event"
             ],
             "type": "object"

@@ -453,6 +453,24 @@ static char *pr_result(const mg_agent_message_t *message, maelys_git_pr_check_re
     mg_json_i64(&json, "total_new_blob_size", (int64_t)result->changes.total_new_blob_size);
     mg_json_i64(&json, "inspected_blob_bytes", (int64_t)result->changes.inspected_blob_bytes);
     mg_json_boolean(&json, "has_binary", result->changes.has_binary);
+    /* The flat counts are the pull request's diff, a diagnostic; the change
+     * the merge applies, which pr_merge authorizes, is applied_changes. */
+    if (result->has_applied_changes) {
+        const maelys_git_change_summary_t *summary = &result->applied_changes;
+        mg_json_object(&json, "applied_changes");
+        mg_json_i64(&json, "changed_count", (int64_t)summary->changed_count);
+        mg_json_i64(&json, "added_count", (int64_t)summary->added_count);
+        mg_json_i64(&json, "modified_count", (int64_t)summary->modified_count);
+        mg_json_i64(&json, "deleted_count", (int64_t)summary->deleted_count);
+        mg_json_i64(&json, "renamed_count", (int64_t)summary->renamed_count);
+        mg_json_i64(&json, "max_new_blob_size", (int64_t)summary->max_new_blob_size);
+        mg_json_i64(&json, "total_new_blob_size", (int64_t)summary->total_new_blob_size);
+        mg_json_i64(&json, "inspected_blob_bytes", (int64_t)summary->inspected_blob_bytes);
+        mg_json_boolean(&json, "has_binary", summary->has_binary);
+        mg_json_end_object(&json);
+    } else {
+        mg_json_null(&json, "applied_changes");
+    }
     maelys_git_pr_check_result_clear(result);
     return mg_protocol_result_end(&json, error);
 }

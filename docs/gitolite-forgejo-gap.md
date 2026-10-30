@@ -225,7 +225,9 @@ et a un oracle calibre sur lui.
   `MAX_NEWBIN_SIZE`) comme a `push` : a contexte egal, la fusion est
   refusee explicitement exactement quand le push en avance rapide l'est, et
   `update-ref` quand le push force l'est. `pr merge`, en ligne de commande
-  et par l'executeur, refuse donc d'ecrire une ref refusee.
+  et par l'executeur, refuse donc d'ecrire une ref refusee, et juge, comme
+  le hook de Gitolite, les fichiers que la fusion change dans la ref
+  (base -> commit prepare), pas le diff de la pull request.
 
 - **Lecture accordee par un droit de ref seul.** Pour `R any`, Gitolite
   applique toute regle dont la permission contient `R`, quel que soit son

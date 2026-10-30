@@ -50,7 +50,13 @@ repository and full branch ref for fork PRs. A check does not write objects,
 refs, or `FETCH_HEAD` in the target repository. It computes:
 
 - the merge base;
-- changed-file counters;
+- changed-file counters of the PR's own diff, merge base -> head
+  (`changeSummary`, `changed_count`... through the agent): a diagnostic,
+  always present, that no decision reads;
+- changed-file counters of the change the merge applies to its base, base ->
+  prepared commit (`appliedChangeSummary`, `applied_changes` through the
+  agent), present only with a prepared commit, `null` for a conflict, a
+  fast-forward that cannot be, or an empty PR;
 - whether the PR is empty;
 - fast-forward eligibility or a three-way merge tree;
 - conflict paths;
@@ -77,7 +83,13 @@ interaction are disabled.
 
 `maelys_git_pr_merge()` and its `with_source` variant additionally validate
 approvals, status checks, and blocking reviews supplied by the forge. They
-authorize the reference, every path, and the summary through Datalog. On
+authorize the reference, every path, and the summary through Datalog, of the
+change the merge applies, base -> prepared commit, and never of the PR's own
+diff: a merge that follows a rename of the base writes a path that diff does
+not name. Paths, their attributes (`change_binary`, `change_blob_size`) and
+the summary's counts all come from that change, as Gitolite's update hook
+reads the files the push changes. A PR refused for a conflict or as empty
+keeps its error, without summaries. On
 `apply`, the core repeats that complete authorization immediately before
 promoting the quarantined source and prepared objects, then updates the target
 through Git compare-and-swap: a concurrent update cannot be overwritten.

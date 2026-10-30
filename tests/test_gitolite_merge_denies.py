@@ -9,10 +9,14 @@ on the change it applies, base -> prepared commit. Each scene migrates a
 gitolite.conf, prepares a repository, then runs `maelys-git pr merge` (plan,
 then --apply) as mallory, and the executor's pr_merge, update_ref and
 authorize; EXPECTED says, for each, whether the ref is written, and the
-test checks the ref moved exactly then.
+test checks the ref moved exactly then. The change applied is what pr merge
+authorizes, for any policy, a written one too; pr check and pr merge show it
+as appliedChangeSummary (applied_changes through the executor), beside the
+pull request's own diff, changeSummary, a diagnostic always present.
 
     test_gitolite_merge_denies.py MAELYS_GIT EXECUTOR
 """
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -41,16 +45,18 @@ EXPECTED = {
     "vref-name ff main": "refused",
     # The base renames public.txt to secret.txt after the merge base, the
     # pull request edits public.txt: the merge writes secret.txt.
-    "rename merge main": "applied",  # merge judges the PR's diff, not the change it applies
-    "rename squash main": "applied",  # likewise
+    "rename merge main": "refused",
+    "rename squash main": "refused",
     "rename-control ff main": "applied",
     # The pull request edits a.txt and b.txt, the base has the same edit of
     # b.txt: the applied change touches a.txt alone, which COUNT/1 and
     # NAME/b.txt let through.
-    "counts merge main": "refused",  # merge judges the PR's diff, of two files
-    "counts squash main": "refused",  # likewise
-    "counts-name merge main": "refused",  # merge judges the PR's diff, which has b.txt
-    "counts-name squash main": "refused",  # likewise
+    "counts merge main": "applied",
+    "counts squash main": "applied",
+    "counts-name merge main": "applied",
+    "counts-name squash main": "applied",
+    # A written policy that denies secret.txt to a merge sees the rename.
+    "written rename merge main": "refused",
     # The executor: its pr_merge, its update_ref (a push), its authorize.
     "executor pr_merge secret": "refused",
     "executor pr_merge other": "applied",
@@ -102,21 +108,38 @@ class Scene:
     def policy(self, name):
         return str(self.dir / "policy" / name)
 
+    def written_policy(self, source):
+        """A set of one written policy in place of the migrated one."""
+        written = self.dir / "policy"
+        (written / "written.dl").write_text(source)
+        manifest = json.loads((written / "manifest.json").read_text())
+        manifest["policies"][0].update(policy_id="written", file="written.dl", description="written",
+                                       sha256=hashlib.sha256(source.encode()).hexdigest())
+        (written / "manifest.json").write_text(json.dumps(manifest))
+        (written / "grants.json").unlink()
+
+    def check(self, base, head, style):
+        result = run(MAELYS_GIT, "pr", "check", self.dir, "app.git", base, head, "--style", style, *JSON, ok=False)
+        return json.loads(result.stdout)["data"]
+
     def pr_merge(self, ref, style):
         """Plan then apply a pull request of feature into REF; whether the
         ref was written."""
         base, head = self.oid(ref), self.oid("refs/heads/feature")
+        grants = ["--grants", self.policy("grants.json")] if os.path.exists(self.policy("grants.json")) else []
         common = ["pr", "merge", self.dir, "app.git", ref, base, head, self.policy("manifest.json"), "mallory",
-                  "--grants", self.policy("grants.json"), "--style", style, "--message", "m", "--approvals", "1",
+                  *grants, "--style", style, "--message", "m", "--approvals", "1",
                   "--required-approvals", "1", "--status-checks-passed", *JSON]
         plan = run(MAELYS_GIT, *common, ok=False)
         written = False
+        self.plan = None
         if plan.returncode == 0:
-            data = json.loads(plan.stdout)["data"]
+            data = self.plan = json.loads(plan.stdout)["data"]
+            expected_grants = (["--expected-grants-fingerprint", data["grantsFingerprint"]]
+                               if data["grantsFingerprint"] else [])
             apply = run(MAELYS_GIT, *common, "--apply", "--expected-prepared-oid", data["preparedOid"],
                         "--expected-policy-fingerprint", data["policyFingerprint"],
-                        "--expected-target-identity", data["targetIdentity"],
-                        "--expected-grants-fingerprint", data["grantsFingerprint"], ok=False)
+                        "--expected-target-identity", data["targetIdentity"], *expected_grants, ok=False)
             written = apply.returncode == 0
             if not written:
                 assert json.loads(apply.stderr)["error"]["code"] == "ACCESS_DENIED", apply.stderr
@@ -216,12 +239,20 @@ def main():
             git("-C", scene.work, "checkout", "-q", "main")
             scene.commit({}, "rename", renames=(("public.txt", "secret.txt"),))
             scene.push("main:refs/heads/main", "feature:refs/heads/feature")
+            check = scene.check(scene.oid("refs/heads/main"), scene.oid("refs/heads/feature"), style)
+            assert check["changeSummary"]["changed"] == 1 and check["appliedChangeSummary"]["changed"] == 1, check
             observed[f"rename {style} main"] = scene.pr_merge("refs/heads/main", style)
             if observed[f"rename {style} main"] == "applied":
                 assert git("--git-dir", scene.bare, "show", "main:secret.txt").stdout.split("\n")[9] == "ten"
+            if style == "merge":
+                scene.written_policy('deny(R) :- request(R), operation("merge"), path("secret.txt").\n'
+                                     'allow(R) :- request(R), operation("merge").\n')
+                observed["written rename merge main"] = scene.pr_merge("refs/heads/main", style)
         scene = Scene(root, "rename-control", "repo app\n    - VREF/NAME/secret.txt = mallory\n    RW+ = mallory\n")
         linear(scene, {"public.txt": "edited\n"})
         observed["rename-control ff main"] = scene.pr_merge("refs/heads/main", "ff")
+        assert scene.plan["appliedChangeSummary"] == scene.plan["changeSummary"], scene.plan
+        assert scene.plan["changeSummary"]["changed"] == 1, scene.plan
 
         for limit in ("counts", "counts-name"):
             deny = "- VREF/COUNT/1 = mallory" if limit == "counts" else "- VREF/NAME/b.txt = mallory"
@@ -234,10 +265,50 @@ def main():
                 scene.commit({"b.txt": "b2\n"}, "edit b as the pull request does")
                 scene.push("main:refs/heads/main", "feature:refs/heads/feature")
                 base = scene.oid("refs/heads/main")
+                head = scene.oid("refs/heads/feature")
                 observed[f"{limit} {style} main"] = scene.pr_merge("refs/heads/main", style)
+                if limit == "counts":
+                    summaries = (scene.plan["changeSummary"], scene.plan["appliedChangeSummary"])
+                    assert [summary["changed"] for summary in summaries] == [2, 1], summaries
+                    answer = scene.executor("pr_check", dict(base_oid=base, head_oid=head, style=style))
+                    assert answer["status"] == "ok", answer
+                    payload = answer["payload"]
+                    assert payload["changed_count"] == 2 and payload["applied_changes"]["changed_count"] == 1, payload
                 if observed[f"{limit} {style} main"] == "applied":
                     applied = git("--git-dir", scene.bare, "diff", "--name-only", base, "main").stdout.split()
                     assert applied == ["a.txt"], applied
+
+        scene = Scene(root, "no-prepared", "repo app\n    RW+ = mallory\n")
+        scene.commit({"a.txt": "a\n"}, "base")
+        git("-C", scene.work, "checkout", "-q", "-b", "feature")
+        scene.commit({"a.txt": "feature\n"}, "feature")
+        git("-C", scene.work, "checkout", "-q", "main")
+        scene.commit({"a.txt": "main\n"}, "main")
+        scene.push("main:refs/heads/main", "feature:refs/heads/feature", "main~1:refs/heads/start")
+        main, feature, start = (scene.oid(f"refs/heads/{name}") for name in ("main", "feature", "start"))
+        # The pull request's diff is there whatever is prepared: one file,
+        # none for the empty one.
+        for label, base, head, style, mergeable, changed in (("conflict", main, feature, "merge", False, 1),
+                                                             ("no fast-forward", main, feature, "ff", False, 1),
+                                                             ("empty", main, start, "merge", True, 0),
+                                                             ("prepared", start, feature, "merge", True, 1)):
+            data = scene.check(base, head, style)
+            assert data["mergeable"] == mergeable, (label, data)
+            assert data["changeSummary"]["changed"] == changed, (label, data)
+            assert (data["appliedChangeSummary"] is None) == (label != "prepared"), (label, data)
+            answer = scene.executor("pr_check", dict(base_oid=base, head_oid=head, style=style))
+            assert answer["status"] == "ok" and "changed_count" in answer["payload"], (label, answer)
+            assert (answer["payload"]["applied_changes"] is None) == (label != "prepared"), (label, answer)
+        # A pr merge refused for a conflict or an empty pull request keeps its
+        # error envelope, without summaries.
+        for base, head in ((main, feature), (main, start)):
+            refused = run(MAELYS_GIT, "pr", "merge", scene.dir, "app.git", "refs/heads/main", base, head,
+                          scene.policy("manifest.json"), "mallory", "--grants", scene.policy("grants.json"),
+                          "--style", "merge", "--approvals", "1", "--required-approvals", "1",
+                          "--status-checks-passed", *JSON, ok=False)
+            envelope = json.loads(refused.stderr)
+            assert refused.returncode == 1 and not refused.stdout, refused
+            assert envelope["error"]["code"] == "ACCESS_DENIED" and "data" not in envelope, envelope
 
     failures = [f"{scene}: {observed.get(scene, 'not run')}, expected {outcome}"
                 for scene, outcome in EXPECTED.items() if observed.get(scene) != outcome]

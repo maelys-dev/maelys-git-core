@@ -646,10 +646,18 @@ typedef struct {
     char pr_head_ref[MAELYS_GIT_MAX_REF];
     char pr_merged_ref[MAELYS_GIT_MAX_REF];
     maelys_git_path_list_t conflict_paths;
+    /* The pull request's own diff, merge base -> head: a diagnostic, always
+     * present, that no decision reads. */
     maelys_git_change_summary_t changes;
     /* The SHA-256 of the policy handle's snapshot of grants; empty without
      * one, and for pr check, which decides nothing. */
     char grants_fingerprint[65];
+    /* The change the merge applies to its base, base -> prepared commit:
+     * what pr merge authorizes, its paths, their attributes and this
+     * summary. Present only with a prepared commit: not for a conflict, a
+     * fast-forward that cannot be, or an empty pull request. */
+    int has_applied_changes;
+    maelys_git_change_summary_t applied_changes;
 } maelys_git_pr_check_result_t;
 
 typedef struct {

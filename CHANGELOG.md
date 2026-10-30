@@ -5,6 +5,21 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- **Security: pr merge authorizes the change it applies.** Its paths, their
+  attributes and its summary came from the pull request's diff, merge base
+  -> head. A merge that follows a rename of the base writes a path that diff
+  does not name: with the base renaming `public.txt` to `secret.txt` and the
+  pull request editing `public.txt`, a merge or a squash wrote `secret.txt`
+  past a policy that denies it. `maelys_git_pr_merge()` now authorizes
+  base -> prepared commit, for every policy, written ones too: stricter
+  there, and, where the base already has a change of the pull request, the
+  path it does not change is no longer judged, as Gitolite would not judge
+  it. `pr check` and `pr merge` keep `changeSummary`, the pull request's
+  diff, as a diagnostic, and gain `appliedChangeSummary`, the change
+  applied, `null` without a prepared commit; the agent's `pr_check` and
+  `pr_merge` results keep their flat counts and gain `applied_changes`,
+  object or `null`; `maelys_git_pr_check_result_t` gains
+  `has_applied_changes` and `applied_changes`.
 - **Security: merge and update-ref take the denies of a migrated Gitolite
   set.** Gitolite writes a ref only by the push its update hook judges: the
   deny of the ref, then the VREF of the files it changes. A merge of a pull
