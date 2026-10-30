@@ -19,11 +19,16 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   SIGCHLD disposition the kernel reaps by, ignored or `SA_NOCLDWAIT`,
   inherited from whatever started the agent, no executor starts and the
   request fails, "SIGCHLD is ignored"; an executor reaped by something
-  else all the same fails the request without a signal to its number. The
+  else all the same fails the request without a signal to its number. A
+  wait that fails otherwise, as a seccomp filter may answer, keeps its
+  error: the group is stopped once, the executor reaped last, and the
+  request fails with that error even when the reap succeeds. The
   supervisor test adds an executor that exits on its own with a descendant
   that handles SIGTERM: it records that the leader was not reaped when the
-  group's SIGTERM reached it, and the SIGKILL still ends it; and a
-  supervisor that ignores SIGCHLD starts no executor.
+  group's SIGTERM reached it, and the SIGKILL still ends it; a supervisor
+  that ignores SIGCHLD starts no executor; and, in a build whose first
+  observation fails, `maelys-git-supervisor-wait-fault`, the executor does
+  not outlive the terminal result.
 - A Git process starts with no signal blocked and every signal at its
   default action, whatever the launcher of Git Core blocks or ignores. It
   inherited both: a SIGPIPE an sshd ignores reached Git, and a SIGTERM a

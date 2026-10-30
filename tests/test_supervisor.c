@@ -67,6 +67,23 @@ static int executor_mode(const char *executable, const char *marker) {
     }
     /* An executor that exits before reading its request. */
     if (ends_with(marker, "/exit-early")) return 0;
+    /* An executor that answers, closes its stdout and goes on: it must not
+     * outlive the terminal result, whatever the supervisor's wait said. */
+    if (ends_with(marker, "/wait-fault")) {
+        char request[16];
+        if (!fgets(request, sizeof(request), stdin)) return 2;
+        (void)fputs(valid_result, stdout);
+        (void)fputc('\n', stdout);
+        (void)fflush(stdout);
+        (void)close(STDOUT_FILENO);
+        pause_ms(700);
+        FILE *stream = fopen(marker, "wb");
+        if (stream) {
+            (void)fputs("survived\n", stream);
+            (void)fclose(stream);
+        }
+        return 0;
+    }
     if (ends_with(marker, "/stdout-closed")) {
         char request[16];
         if (!fgets(request, sizeof(request), stdin)) return 2;
@@ -232,6 +249,28 @@ int main(int argc, char **argv) {
     mg_agent_message_t command = {.message_id = "supervised", .agent_id = "agent-1", .command = "health"};
     int succeeded = 0;
     char *response = NULL;
+#if defined(MG_SUPERVISOR_WAIT_FAULT)
+    /* The supervisor's first observation of its executor fails, EPERM: the
+     * request fails with that error, and the executor, answered and still
+     * running, does not outlive the terminal result. */
+    (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/wait-fault", directory);
+    config.request_timeout_ms = 2000u;
+    maelys_git_error_t fault = {0};
+    int64_t fault_started = mg_monotonic_ms();
+    maelys_git_result_t faulted = mg_supervisor_execute(
+        &config, &command, "{}", NULL, &response, &succeeded, &fault);
+    int64_t fault_elapsed = mg_monotonic_ms() - fault_started;
+    free(response);
+    if (faulted != MAELYS_GIT_ERR_PROCESS || response != NULL ||
+        !strstr(fault.message, "executor wait failed: ") || !strstr(fault.message, strerror(EPERM)))
+        return fail("a failed wait did not fail the request with its error");
+    if (fault_elapsed > 1500) return fail("a failed wait did not stop the executor group at once");
+    pause_ms(900);
+    if (access(config.manifest_path, F_OK) == 0)
+        return fail("the executor outlived a terminal result after a failed wait");
+    if (rmdir(directory) != 0) return fail("cannot remove temporary directory");
+    return 0;
+#endif
     char *request = malloc(MAELYS_GIT_MAX_PROTOCOL_LINE + 1u);
     if (!request) return fail("cannot allocate supervisor request");
     memset(request, 'x', MAELYS_GIT_MAX_PROTOCOL_LINE);

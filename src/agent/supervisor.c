@@ -101,6 +101,21 @@ static int write_all_until(int fd, const void *bytes, size_t length,
     return ok;
 }
 
+/* Observes the executor's end without reaping it: 0 with *ended naming it
+ * once it ended, 0 with si_pid 0 while it runs, -1 with errno otherwise. */
+static int observe_executor(pid_t child, siginfo_t *ended) {
+#if defined(MG_SUPERVISOR_WAIT_FAULT)
+    /* A test build whose first observation fails as a host may refuse it. */
+    static int faulted;
+    if (!faulted) {
+        faulted = 1;
+        errno = EPERM;
+        return -1;
+    }
+#endif
+    return waitid(P_PID, (id_t)child, ended, WEXITED | WNOWAIT | WNOHANG);
+}
+
 /* One executor for COMMAND, on the kept snapshot GRANTS names (none when its
  * digest is empty). */
 static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
@@ -217,15 +232,22 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
     if (escalated) mg_terminate_process_group(child);
     /* The executor's end is observed without reaping it: its number, the
      * group's, stays its own until the last signal below has been sent. A
-     * wait that fails, ECHILD, says something else reaped it: the number is
-     * nobody's to signal, and the request fails. */
-    int lost = 0;
+     * wait that fails with ECHILD says something else reaped it: the number
+     * is nobody's to signal, and the request fails. Any other failure of
+     * the wait, as a seccomp filter may answer, leaves the executor where it
+     * is: the group is stopped once, the executor reaped last, and the
+     * request fails with that error even when the reap succeeds. */
+    int lost = 0, wait_failed = 0;
     for (;;) {
         siginfo_t ended;
         memset(&ended, 0, sizeof(ended));
-        int observed = waitid(P_PID, (id_t)child, &ended, WEXITED | WNOWAIT | WNOHANG);
+        int observed = observe_executor(child, &ended);
         if (observed < 0 && errno == EINTR) continue;
-        if (observed < 0) { lost = 1; break; }
+        if (observed < 0) {
+            wait_failed = errno;
+            lost = errno == ECHILD;
+            break;
+        }
         if (ended.si_pid == child) break;
         int timeout = 0;
         if (!remaining_timeout(deadline, &timeout) || timeout == 0) {
@@ -245,11 +267,16 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
     if (!lost) {
         do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
     }
-    if (!wrote || !response || timed_out || read_failed || used == 0u ||
+    if (!wrote || !response || timed_out || read_failed || wait_failed || used == 0u ||
         oversized || waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         free(response);
         maelys_git_result_t result = timed_out || oversized ?
             MAELYS_GIT_ERR_LIMIT : MAELYS_GIT_ERR_PROCESS;
+        if (wait_failed && !lost) {
+            mg_error_set(error, result, wait_failed, "executor wait failed: %s",
+                         strerror(wait_failed));
+            return result;
+        }
         mg_error_set(error, result, errno,
                      timed_out ? "executor process group timed out" :
                      oversized ? "executor response exceeded 64 KiB" :
