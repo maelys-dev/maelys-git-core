@@ -14,6 +14,24 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   it is accepted with any OPERATION, as the library carries the kind of a
   merge too. A policy that names no kind decides as before. The decision
   receipt does not record the kind.
+- A Git process starts with no signal blocked and every signal at its
+  default action, whatever the launcher of Git Core blocks or ignores. It
+  inherited both: a SIGPIPE an sshd ignores reached Git, and a SIGTERM a
+  service blocks would have kept the SIGTERM that stops a process group
+  from reaching it, so that only the SIGKILL that follows did. The
+  isolated spawn now sets `POSIX_SPAWN_SETSIGMASK` with an empty mask and
+  `POSIX_SPAWN_SETSIGDEF` on every signal, as maelys-system 0.13.1 does.
+  The process test blocks SIGTERM and ignores SIGPIPE before starting a
+  child that reports both.
+- maelys-system is pinned to 0.14.4 (was 0.13.0), the version maelys-http
+  0.1.18 was tested with: the two pins describe a pair that was tested
+  together again. Nothing this repository calls changes: it reads the
+  monotonic clock, and maelys-http 0.1.18 neither starts a process nor
+  touches a signal. 0.13.1 gives a program started by
+  `maelys_sys_process_spawn` no blocked or ignored signal of its caller's;
+  0.14.0 adds owned process groups and the keeper that holds them, a
+  program `make all` now builds and installs. The Cloud agent builds the
+  archive alone: the keeper is neither linked nor installed here.
 - A child process is reaped as soon as it exits. Once its output closed,
   the wait polled `waitpid` and slept 10 ms whenever the child had not
   exited yet, which cost almost every Git command 10 ms: about 100 s on a
@@ -78,8 +96,8 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   the cycle failed. This is the intermittent failure of the Cloud
   transport test on macOS. Neither the codec, the client nor ABI 1
   changes. maelys-http 0.1.17 and 0.1.18 pin maelys-system 0.14; this
-  repository keeps 0.13.0, and maelys-http calls nothing those versions
-  change.
+  repository kept 0.13.0 until the entry above, and maelys-http calls
+  nothing those versions change.
 - A policy set holding the audited Gitolite program decides only the refs
   Gitolite 3.6.15 admits with its default patterns (`REF_OR_FILENAME_PATT`
   of `Rc.pm`): a ref that is not a valid ref, does not begin with a
