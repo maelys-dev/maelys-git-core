@@ -5,6 +5,15 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- `authorize` takes `--update-kind create|fast_forward|force|delete`, the
+  kind of ref update the hook, the shell and the executor already pass.
+  Without it a rule that names a kind never allows: a migrated Gitolite
+  ref grant (`RW`, `RW+` on a refex) allowed no push from the command
+  line, where only its denies decided. The option is a choice of the
+  catalog, refused outside the four names before any policy is opened;
+  it is accepted with any OPERATION, as the library carries the kind of a
+  merge too. A policy that names no kind decides as before. The decision
+  receipt does not record the kind.
 - The transaction and PR core documentation states what the host leaves to
   Git Core: it must not set `SIGCHLD` explicitly to `SIG_IGN`, set
   `SA_NOCLDWAIT` or reap the children Git Core starts. A Git subprocess

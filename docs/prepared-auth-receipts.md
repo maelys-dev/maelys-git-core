@@ -197,6 +197,16 @@ structurées du moteur, et l'empreinte du document, qui voyage à côté.
   rendu ; le document n'est jamais dans le reçu.
 - `request` ne contient pas les chemins, seulement leur nombre. `stats`
   compte les faits de requête construits et les policies résolues.
+- `request` ne restitue pas tout le contexte de la décision : il ne porte
+  que l'identifiant, le principal, le dépôt, l'opération, la ref et le
+  nombre de chemins. Les autres faits de la requête n'y sont pas : type de
+  ref et de mise à jour (`ref_kind`, `update_kind`), type de changement,
+  comptes et tailles des changements, faits des commits et de leurs
+  signatures, clé SSH, adresse distante. Deux requêtes qui ne diffèrent que
+  par eux ont le même `request` et peuvent recevoir des décisions
+  différentes : sous un droit Gitolite `RW` sur une ref, un `push`
+  `fast_forward` est autorisé et un `push` `force` refusé. Le reçu seul ne
+  suffit donc pas à rejouer une décision ; il faut aussi la requête.
 - Tous les nombres sont des entiers non signés.
 
 ### 6.2 bis Version 2 : les droits utilisés (GIT-C06)

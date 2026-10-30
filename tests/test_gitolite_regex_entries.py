@@ -3,7 +3,7 @@
 GIT-C08, section 6 of the directive: a configuration whose refexes are
 regular expressions migrates to a maelys-git-grants/2 snapshot, and each
 entry point decides with it as Gitolite reads the refexes: the authorize
-command, by its denies; a real push through the pre-receive hook, run by Git itself or by
+command, by its grants with --update-kind and by its denies alone without; a real push through the pre-receive hook, run by Git itself or by
 maelys-git-shell as the SSH forced command; the executor's update_ref and
 pr_check, a read without a ref beside regex grants; and pr merge, by the command line and by the executor, on its
 target ref.
@@ -50,15 +50,27 @@ with tempfile.TemporaryDirectory(prefix="maelys-regex-entries-") as temporary:
     assert plan["data"]["grantsFormat"] == "maelys-git-grants/2", plan
     manifest, grants = migrated / "manifest.json", migrated / "grants.json"
 
-    # The authorize command carries no kind of update, which a grant needs:
-    # a push is decided by its denies, the regex one included.
+    def authorize(ref, *kind):
+        answer = run(MAELYS_GIT, "authorize", manifest, "alice", "example.git", "push", ref, "--grants", grants,
+                     *kind, "--format", "json", "--non-interactive", ok=False)
+        data = json.loads(answer.stdout)["data"] if answer.stdout else None
+        assert data is not None, (ref, kind, answer.stdout, answer.stderr)
+        return data["allowed"], data["explicitDeny"]
+
+    # Without --update-kind, which a grant needs, a push is decided by its
+    # denies alone, the regex one included.
     for ref, denied in [("refs/tags/v1.0", True), ("refs/tags/v12.0", True), ("refs/tags/v1x0", False),
                         ("refs/tags/va.0", False), ("refs/heads/dev", False)]:
-        answer = run(MAELYS_GIT, "authorize", manifest, "alice", "example.git", "push", ref, "--grants", grants,
-                     "--format", "json", "--non-interactive", ok=False)
-        data = json.loads(answer.stdout)["data"] if answer.stdout else None
-        assert data is not None and data["explicitDeny"] is denied and not data["allowed"], \
-            (ref, answer.stdout, answer.stderr)
+        assert authorize(ref) == (False, denied), ref
+    # With it, the regex grants decide as Gitolite reads them: RW creates and
+    # fast-forwards, RW+ also forces and deletes, the regex deny comes first.
+    for kind in ["create", "fast_forward", "force", "delete"]:
+        rewrites = kind in ("force", "delete")
+        for ref, expected in [("refs/tags/v1.0", (False, True)), ("refs/tags/v12.0", (False, True)),
+                              ("refs/tags/v1x0", (True, False)), ("refs/tags/va.0", (True, False)),
+                              ("refs/heads/dev", (not rewrites, False)), ("refs/heads/main", (not rewrites, False)),
+                              ("refs/heads/devx", (False, False)), ("refs/heads/feature/x", (True, False))]:
+            assert authorize(ref, "--update-kind", kind) == expected, (ref, kind)
 
     work, bare = root / "work", root / "example.git"
     git("init", "-q", work)
