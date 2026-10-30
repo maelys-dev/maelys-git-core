@@ -5,6 +5,15 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- A Git process starts with no signal blocked and every signal at its
+  default action, whatever the launcher of Git Core blocks or ignores. It
+  inherited both: a SIGPIPE an sshd ignores reached Git, and a SIGTERM a
+  service blocks would have kept the SIGTERM that stops a process group
+  from reaching it, so that only the SIGKILL that follows did. The
+  isolated spawn now sets `POSIX_SPAWN_SETSIGMASK` with an empty mask and
+  `POSIX_SPAWN_SETSIGDEF` on every signal, as maelys-system 0.13.1 does.
+  The process test blocks SIGTERM and ignores SIGPIPE before starting a
+  child that reports both.
 - A child process is reaped as soon as it exits. Once its output closed,
   the wait polled `waitpid` and slept 10 ms whenever the child had not
   exited yet, which cost almost every Git command 10 ms: about 100 s on a
