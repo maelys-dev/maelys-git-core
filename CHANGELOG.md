@@ -5,6 +5,12 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- The transaction and PR core documentation states what the host leaves to
+  Git Core: it must not set `SIGCHLD` explicitly to `SIG_IGN`, set
+  `SA_NOCLDWAIT` or reap the children Git Core starts. A Git subprocess
+  reaped elsewhere fails with `ECHILD` as a process error; the network agent
+  refuses a request under `SIG_IGN` or `SA_NOCLDWAIT` before its executor
+  starts.
 - The Cloud agent waits for its executor's end as Git children are waited
   for: on the exit itself, kqueue `EVFILT_PROC` on macOS and a pidfd on
   Linux, bounded by the request's deadline, instead of looking every 10 ms.
