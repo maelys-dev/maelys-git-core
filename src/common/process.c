@@ -127,7 +127,20 @@ static maelys_git_result_t spawn_isolated(
     int rc = posix_spawnattr_init(&attributes);
     int initialized = rc == 0;
     if (rc == 0) rc = posix_spawnattr_setpgroup(&attributes, executor ? 0 : supervised_group());
-    if (rc == 0) rc = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+    /* What the launcher of this process blocks or ignores is not Git's: no
+     * signal blocked, every one at its default action. A SIGPIPE an sshd
+     * ignores, or a SIGTERM a service blocks, would otherwise be handed on,
+     * and the SIGTERM that stops a process group could not reach Git. */
+    sigset_t none, every;
+    if (rc == 0 && (sigemptyset(&none) != 0 || sigfillset(&every) != 0 ||
+                    sigdelset(&every, SIGKILL) != 0 || sigdelset(&every, SIGSTOP) != 0))
+        rc = errno ? errno : EINVAL;
+    if (rc == 0) rc = posix_spawnattr_setsigmask(&attributes, &none);
+    if (rc == 0) rc = posix_spawnattr_setsigdefault(&attributes, &every);
+    if (rc == 0)
+        rc = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP |
+                                                   POSIX_SPAWN_SETSIGMASK |
+                                                   POSIX_SPAWN_SETSIGDEF);
     /* Only the absolute service-account HOME survives: Git reads signature
      * trust stores from it. Everything else comes from the allowlist. */
     char home_entry[PATH_MAX + 6u];
