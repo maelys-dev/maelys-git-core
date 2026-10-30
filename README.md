@@ -126,7 +126,10 @@ For automation, add `--format json --compact --non-interactive`. Authorization
 is a successful read even when denied: inspect `data.allowed`. Every decision
 also carries `data.receipt`, a bounded record of it in Maelys Canonical JSON
 v1, and `data.receiptSha256`; `--explain`, written before `--`, adds the
-engine's explanation as `data.explanationText`. The receipt contract is in
+engine's explanation as `data.explanationText`. `--update-kind
+create|fast_forward|force|delete` gives the kind of ref update the hook would
+pass; a rule that names one, as a migrated Gitolite ref grant does, never
+allows without it. The receipt contract is in
 [docs/prepared-auth-receipts.md](docs/prepared-auth-receipts.md). Policy
 validation exits `2` when it completes and finds violations.
 

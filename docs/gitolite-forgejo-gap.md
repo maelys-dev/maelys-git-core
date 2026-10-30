@@ -228,10 +228,12 @@ comparees a Gitolite lui-meme et a un oracle calibre sur lui.
   migration, jamais par la seule mise a jour de Git Core. Un manifeste qui
   tient `/1` et `/2` a la fois est refuse a l'ouverture ; le recu nomme la
   version de l'ensemble (`grants.program`).
-- **`authorize push` en ligne de commande.** La commande ne transmet pas le
-  type de mise a jour, dont une attribution de ref a besoin : un `push` n'y
-  est decide que par ses refus. Le hook, le shell et l'executeur, qui le
-  connaissent, decident les attributions. Ecart connu, a corriger a part.
+
+`authorize push` en ligne de commande decide les attributions de ref quand
+il recoit le type de mise a jour, `--update-kind
+create|fast_forward|force|delete`, celui que le hook, le shell et
+l'executeur transmettent. Sans lui, une attribution de ref n'accorde rien
+et un `push` n'est decide que par ses refus.
 
 L'objectif raisonnable n'est pas la compatibilite syntaxique complete. Il faut
 fournir une bibliotheque de politiques typees couvrant les VREF utiles, puis
