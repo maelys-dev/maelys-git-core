@@ -16,9 +16,10 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   path it does not change is no longer judged, as Gitolite would not judge
   it. `pr check` and `pr merge` keep `changeSummary`, the pull request's
   diff, as a diagnostic, and gain `appliedChangeSummary`, the change
-  applied, `null` without a prepared commit; the agent's `pr_check` and
-  `pr_merge` results keep their flat counts and gain `applied_changes`,
-  object or `null`; `maelys_git_pr_check_result_t` gains
+  applied, `null` when nothing is applied (a conflict, a fast-forward that
+  cannot be, an empty pull request, fast-forward or not); the agent's
+  `pr_check` and `pr_merge` results keep their flat counts and gain
+  `applied_changes`, object or `null`; `maelys_git_pr_check_result_t` gains
   `has_applied_changes` and `applied_changes`.
 - **Security: merge and update-ref take the denies of a migrated Gitolite
   set.** Gitolite writes a ref only by the push its update hook judges: the

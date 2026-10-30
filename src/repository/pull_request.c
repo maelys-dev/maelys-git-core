@@ -723,7 +723,10 @@ static maelys_git_result_t prepare_pr(const char *git,
             if (rc == MAELYS_GIT_OK)
                 (void)mg_copy_string(prepared->result.prepared_oid,
                                      sizeof(prepared->result.prepared_oid), head_oid);
-            if (rc == MAELYS_GIT_OK) rc = summarize_applied(git, base_oid, prepared, error);
+            /* An empty fast-forward applies nothing: no applied change, as
+             * for an empty merge or squash, which prepare no commit. */
+            if (rc == MAELYS_GIT_OK && !prepared->result.empty)
+                rc = summarize_applied(git, base_oid, prepared, error);
         }
         if (rc != MAELYS_GIT_OK) prepared_clear(prepared);
         return rc;

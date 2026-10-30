@@ -55,8 +55,9 @@ refs, or `FETCH_HEAD` in the target repository. It computes:
   always present, that no decision reads;
 - changed-file counters of the change the merge applies to its base, base ->
   prepared commit (`appliedChangeSummary`, `applied_changes` through the
-  agent), present only with a prepared commit, `null` for a conflict, a
-  fast-forward that cannot be, or an empty PR;
+  agent), present only with a prepared commit that applies a change, `null`
+  for a conflict, a fast-forward that cannot be, or an empty PR, an empty
+  fast-forward included;
 - whether the PR is empty;
 - fast-forward eligibility or a three-way merge tree;
 - conflict paths;

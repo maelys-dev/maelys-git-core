@@ -91,13 +91,13 @@ class Scene:
         git("init", "-q", "--initial-branch=main", self.work)
         git("-C", self.work, "config", "commit.gpgSign", "false")
 
-    def commit(self, files, message, renames=()):
+    def commit(self, files, message, renames=(), allow_empty=False):
         for old, new in renames:
             git("-C", self.work, "mv", old, new)
         for path, text in files.items():
             (self.work / path).write_text(text)
         git("-C", self.work, "add", "-A")
-        git("-C", self.work, "commit", "-qm", message)
+        git("-C", self.work, "commit", "-qm", message, *(["--allow-empty"] if allow_empty else []))
 
     def push(self, *refs):
         git("-C", self.work, "push", "-q", "--force", self.bare, *refs)
@@ -284,13 +284,20 @@ def main():
         scene.commit({"a.txt": "feature\n"}, "feature")
         git("-C", scene.work, "checkout", "-q", "main")
         scene.commit({"a.txt": "main\n"}, "main")
-        scene.push("main:refs/heads/main", "feature:refs/heads/feature", "main~1:refs/heads/start")
-        main, feature, start = (scene.oid(f"refs/heads/{name}") for name in ("main", "feature", "start"))
+        scene.commit({}, "nothing", allow_empty=True)
+        scene.push("main~1:refs/heads/main", "feature:refs/heads/feature", "main~2:refs/heads/start",
+                   "main:refs/heads/nothing")
+        main, feature, start, nothing = (scene.oid(f"refs/heads/{name}")
+                                         for name in ("main", "feature", "start", "nothing"))
         # The pull request's diff is there whatever is prepared: one file,
-        # none for the empty one.
+        # none for an empty one. An empty fast-forward, of the base itself or
+        # of an empty commit on it, has a prepared commit but applies nothing.
         for label, base, head, style, mergeable, changed in (("conflict", main, feature, "merge", False, 1),
                                                              ("no fast-forward", main, feature, "ff", False, 1),
                                                              ("empty", main, start, "merge", True, 0),
+                                                             ("empty ff of the base", main, main, "ff", True, 0),
+                                                             ("empty ff of an empty commit", main, nothing, "ff",
+                                                              True, 0),
                                                              ("prepared", start, feature, "merge", True, 1)):
             data = scene.check(base, head, style)
             assert data["mergeable"] == mergeable, (label, data)
@@ -301,10 +308,11 @@ def main():
             assert (answer["payload"]["applied_changes"] is None) == (label != "prepared"), (label, answer)
         # A pr merge refused for a conflict or an empty pull request keeps its
         # error envelope, without summaries.
-        for base, head in ((main, feature), (main, start)):
+        for base, head, style in ((main, feature, "merge"), (main, start, "merge"), (main, main, "ff"),
+                                  (main, nothing, "ff")):
             refused = run(MAELYS_GIT, "pr", "merge", scene.dir, "app.git", "refs/heads/main", base, head,
                           scene.policy("manifest.json"), "mallory", "--grants", scene.policy("grants.json"),
-                          "--style", "merge", "--approvals", "1", "--required-approvals", "1",
+                          "--style", style, "--approvals", "1", "--required-approvals", "1",
                           "--status-checks-passed", *JSON, ok=False)
             envelope = json.loads(refused.stderr)
             assert refused.returncode == 1 and not refused.stdout, refused

@@ -654,8 +654,9 @@ typedef struct {
     char grants_fingerprint[65];
     /* The change the merge applies to its base, base -> prepared commit:
      * what pr merge authorizes, its paths, their attributes and this
-     * summary. Present only with a prepared commit: not for a conflict, a
-     * fast-forward that cannot be, or an empty pull request. */
+     * summary. Present only with a prepared commit that applies a change:
+     * not for a conflict, a fast-forward that cannot be, or an empty pull
+     * request, a fast-forward one included. */
     int has_applied_changes;
     maelys_git_change_summary_t applied_changes;
 } maelys_git_pr_check_result_t;
