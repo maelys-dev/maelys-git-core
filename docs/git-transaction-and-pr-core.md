@@ -50,7 +50,14 @@ repository and full branch ref for fork PRs. A check does not write objects,
 refs, or `FETCH_HEAD` in the target repository. It computes:
 
 - the merge base;
-- changed-file counters;
+- changed-file counters of the PR's own diff, merge base -> head
+  (`changeSummary`, `changed_count`... through the agent): a diagnostic,
+  always present, that no decision reads;
+- changed-file counters of the change the merge applies to its base, base ->
+  prepared commit (`appliedChangeSummary`, `applied_changes` through the
+  agent), present only with a prepared commit that applies a change, `null`
+  for a conflict, a fast-forward that cannot be, or an empty PR, an empty
+  fast-forward included;
 - whether the PR is empty;
 - fast-forward eligibility or a three-way merge tree;
 - conflict paths;
@@ -77,7 +84,13 @@ interaction are disabled.
 
 `maelys_git_pr_merge()` and its `with_source` variant additionally validate
 approvals, status checks, and blocking reviews supplied by the forge. They
-authorize the reference, every path, and the summary through Datalog. On
+authorize the reference, every path, and the summary through Datalog, of the
+change the merge applies, base -> prepared commit, and never of the PR's own
+diff: a merge that follows a rename of the base writes a path that diff does
+not name. Paths, their attributes (`change_binary`, `change_blob_size`) and
+the summary's counts all come from that change, as Gitolite's update hook
+reads the files the push changes. A PR refused for a conflict or as empty
+keeps its error, without summaries. On
 `apply`, the core repeats that complete authorization immediately before
 promoting the quarantined source and prepared objects, then updates the target
 through Git compare-and-swap: a concurrent update cannot be overwritten.
@@ -154,8 +167,10 @@ violations. Every incompatible source line is reported rather than silently
 weakened.
 
 The output holds three files: `gitolite-migrated.dl`, the audited Gitolite
-program `maelys-git-gitolite-program/1`, whose text is the same for every
-configuration; `manifest.json`; and `grants.json`, the configuration's grants
+program `maelys-git-gitolite-program/2`, whose text is the same for every
+configuration and which, as Gitolite, lets a ref grant read the repository
+(a set migrated earlier as `/1` is still opened and decided as it was, and a
+manifest never holds both); `manifest.json`; and `grants.json`, the configuration's grants
 as data, `maelys-git-grants/1` (or `/2` when it holds regex ref patterns).
 Every command that opens the manifest takes
 the snapshot with `--grants FILE`: `authorize`, `validate`, `pr merge`, the

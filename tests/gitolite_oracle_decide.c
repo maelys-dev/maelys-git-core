@@ -8,8 +8,12 @@
  * entry on its own line, and then nothing else.
  *
  * A Gitolite repository REPO is the Git Core repository REPO.git. W is a
- * fast-forward, + a forced update; the ref "any" is a write without a ref,
- * which Gitolite answers without its deny rules, as Git Core does. */
+ * fast-forward, + a forced update; with the ref "any", W is a write and R
+ * a read, without a ref, which Gitolite answers without its deny rules, as
+ * Git Core does: gitolite-shell asks R any for upload-pack. AA may also be
+ * merge or update-ref, which Gitolite does not know: Git Core's merge of a
+ * pull request into REF, sent as pr merge sends it, and its update of REF;
+ * the test asks Gitolite W and + of the same ref for them. */
 #include "maelys_git.h"
 #include "internal.h"
 #include "policy/policy_grants.h"
@@ -24,14 +28,17 @@ static const char *decide(maelys_git_policy_t *policy, const char *repository, c
     int written = snprintf(repo, sizeof(repo), "%s.git", repository);
     if (written < 0 || (size_t)written >= sizeof(repo)) return "ERROR";
     int any = strcmp(ref, "any") == 0;
-    if (any && strcmp(aa, "W") != 0) return "ERROR";
+    int read = strcmp(aa, "R") == 0;
+    int merge = strcmp(aa, "merge") == 0, update = strcmp(aa, "update-ref") == 0;
+    if (any ? !read && strcmp(aa, "W") != 0 : read) return "ERROR";
+    if (any && (merge || update)) return "ERROR";
     maelys_git_policy_request_t request = {
         .request_id = "oracle",
         .principal = user,
         .repository = repo,
-        .operation = any ? "write" : "push",
+        .operation = any ? (read ? "read" : "write") : merge ? "merge" : update ? "update-ref" : "push",
         .ref_name = any ? NULL : ref,
-        .update_kind = any ? NULL : (strcmp(aa, "+") == 0 ? "force" : "fast_forward"),
+        .update_kind = any || update ? NULL : (strcmp(aa, "+") == 0 ? "force" : "fast_forward"),
     };
     maelys_git_policy_decision_t decision;
     maelys_git_error_t error;
@@ -83,8 +90,8 @@ int main(int argc, char **argv) {
     free(remarks);
     char line[1024];
     while (fgets(line, sizeof(line), stdin)) {
-        char repository[256], user[256], aa[8], ref[600];
-        if (sscanf(line, "%255s %255s %7s %599s", repository, user, aa, ref) != 4) continue;
+        char repository[256], user[256], aa[16], ref[600];
+        if (sscanf(line, "%255s %255s %15s %599s", repository, user, aa, ref) != 4) continue;
         (void)printf("%s\n", decide(policy, repository, user, aa, ref));
     }
     maelys_git_policy_close(policy);

@@ -27,7 +27,7 @@ test -f "$test_root/generated/manifest.json"
 test -f "$test_root/generated/gitolite-migrated.dl"
 test -f "$test_root/generated/grants.json"
 # The program is the same for every configuration; the grants are data.
-grep -q 'maelys-git-gitolite-program/1' "$test_root/generated/gitolite-migrated.dl"
+grep -q 'maelys-git-gitolite-program/2' "$test_root/generated/gitolite-migrated.dl"
 if grep -q 'alice' "$test_root/generated/gitolite-migrated.dl"; then
   printf 'the migrated program names a principal of the configuration\n' >&2
   exit 1

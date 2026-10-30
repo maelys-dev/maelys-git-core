@@ -625,6 +625,17 @@ static void prepared_clear(prepared_pr_t *prepared) {
     memset(prepared, 0, sizeof(*prepared));
 }
 
+/* The change a merge applies to its base, base -> prepared commit, which is
+ * what Gitolite's update hook would judge of the push that writes it. */
+static maelys_git_result_t summarize_applied(const char *git, const char *base_oid, prepared_pr_t *prepared,
+                                             maelys_git_error_t *error) {
+    maelys_git_result_t rc = maelys_git_repository_visit_changes(
+        git, prepared->temporary_repository, base_oid, prepared->result.prepared_oid,
+        NULL, NULL, &prepared->result.applied_changes, error);
+    prepared->result.has_applied_changes = rc == MAELYS_GIT_OK;
+    return rc;
+}
+
 static maelys_git_result_t prepare_pr(const char *git,
                                       const char *repository,
                                       const char *base_oid,
@@ -712,6 +723,10 @@ static maelys_git_result_t prepare_pr(const char *git,
             if (rc == MAELYS_GIT_OK)
                 (void)mg_copy_string(prepared->result.prepared_oid,
                                      sizeof(prepared->result.prepared_oid), head_oid);
+            /* An empty fast-forward applies nothing: no applied change, as
+             * for an empty merge or squash, which prepare no commit. */
+            if (rc == MAELYS_GIT_OK && !prepared->result.empty)
+                rc = summarize_applied(git, base_oid, prepared, error);
         }
         if (rc != MAELYS_GIT_OK) prepared_clear(prepared);
         return rc;
@@ -745,6 +760,7 @@ static maelys_git_result_t prepare_pr(const char *git,
                         "update-ref", "refs/maelys/prepared",
                         prepared->result.prepared_oid, NULL};
     rc = mg_process_run(git, ref_argv, NULL, error);
+    if (rc == MAELYS_GIT_OK) rc = summarize_applied(git, base_oid, prepared, error);
     if (rc != MAELYS_GIT_OK) prepared_clear(prepared);
     return rc;
 }
@@ -1087,13 +1103,21 @@ static maelys_git_result_t merge(
         prepared_clear(&prepared);
         return MAELYS_GIT_ERR_DENIED;
     }
+    /* What is authorized is the change the merge applies, base -> prepared
+     * commit, never the pull request's own diff: a merge that follows a
+     * rename of the base writes a path that diff does not name. */
+    if (!prepared.result.has_applied_changes) {
+        mg_error_set(error, MAELYS_GIT_ERR_PROCESS, 0, "the prepared merge has no applied change to authorize");
+        prepared_clear(&prepared);
+        return MAELYS_GIT_ERR_PROCESS;
+    }
     auth->policy = policy;
     auth->repository = repository_name;
     auth->principal = principal;
     auth->ref = base_ref;
     result = authorize_pr(git, prepared.temporary_repository,
-                          prepared.result.merge_base_oid, head_oid,
-                          &prepared.result.changes, auth, error);
+                          base_oid, prepared.result.prepared_oid,
+                          &prepared.result.applied_changes, auth, error);
     if (result != MAELYS_GIT_OK) { prepared_clear(&prepared); return result; }
     char *current_argv[] = {(char *)git, "--git-dir", (char *)repository_path,
                             "rev-parse", "--verify", (char *)base_ref, NULL};
@@ -1108,8 +1132,8 @@ static maelys_git_result_t merge(
     if (apply) {
         /* Authorization is deliberately repeated immediately before the state change. */
         result = authorize_pr(git, prepared.temporary_repository,
-                              prepared.result.merge_base_oid, head_oid,
-                              &prepared.result.changes, auth, error);
+                              base_oid, prepared.result.prepared_oid,
+                              &prepared.result.applied_changes, auth, error);
         if (result == MAELYS_GIT_OK)
             result = verify_repository_identity(repository_path,
                                                 prepared.result.target_identity,

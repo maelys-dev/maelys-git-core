@@ -220,7 +220,7 @@ membres sont ceux de la version 1.
 "grants": {
   "facts": 2,
   "format": "maelys-git-grants/1",
-  "program": "maelys-git-gitolite-program/1",
+  "program": "maelys-git-gitolite-program/2",
   "sha256": "<64 hex>",
   "slice": "maelys-git-slice/1"
 }
@@ -234,7 +234,13 @@ membres sont ceux de la version 1.
   chaque policy du jeu. La tranche n'est donnée qu'au programme audité.
 - `format` est le format de l'instantané lu : `maelys-git-grants/1`, ou
   `maelys-git-grants/2` quand il porte des motifs de ref `regex` (GIT-C08).
-  `slice` et `program` sont fixés par la version 2.
+- `program` est la version du programme audité que tient le jeu, connue à
+  l'ouverture, quelle que soit la policy qui décide :
+  `maelys-git-gitolite-program/2`, qu'écrit la migration et qui lit aussi
+  un dépôt par un droit de ref, ou `maelys-git-gitolite-program/1`, celle
+  des jeux migrés avant elle. Un jeu ne tient qu'une version. Le lecteur
+  accepte les deux ; un reçu de `/1` ne change pas d'un octet.
+- `slice` est fixé par la version 2.
 
 Sans instantané, le reçu reste en version 1, octet pour octet. Le lecteur
 accepte les deux versions : `grants` en version 2, et seulement là.

@@ -624,7 +624,9 @@ static int append_ref_grant(text_buffer_t *policy,
  * what a derived predicate holds then depends on the request, never on the
  * size of the configuration (see judge_budget). The level of the owner of a
  * CREATOR namespace is an access level like any grant's, read by the same
- * allow rules. */
+ * allow rules. A ref grant also lets its holder read the repository, as
+ * Gitolite answers R any whatever the refex: the rules of
+ * maelys-git-gitolite-program/2. */
 static int append_authorization_rules(text_buffer_t *policy) {
     if (!append_text(policy,
         "\neffective_group_member(U, \"" MG_GRANTS_ALL_GROUP "\") :- user(U).\n"
@@ -664,6 +666,7 @@ static int append_authorization_rules(text_buffer_t *policy) {
         "\nallow(R) :- request(R), user(U), repository(P), operation(\"read\"), effective_access(U, P, \"R\").\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"read\"), effective_access(U, P, \"RW\").\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"read\"), effective_access(U, P, \"RW+\").\n"
+        "allow(R) :- request(R), user(U), repository(P), operation(\"read\"), has_ref_write(U, P).\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"write\"), effective_access(U, P, \"RW\").\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"write\"), effective_access(U, P, \"RW+\").\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"write\"), has_ref_write(U, P).\n"
@@ -682,6 +685,8 @@ static int append_authorization_rules(text_buffer_t *policy) {
         "allow(R) :- push_request(R, U, P, F), update_kind(\"force\"), effective_ref_grant_force(U, P, F).\n"
         "allow(R) :- push_request(R, U, P, F), update_kind(\"delete\"), effective_ref_grant_force(U, P, F).\n"
         "deny(R) :- push_request(R, U, P, F), effective_ref_deny(U, P, F).\n"
+        "deny(R) :- request(R), user(U), repository(P), operation(\"merge\"), ref(F), effective_ref_deny(U, P, F).\n"
+        "deny(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), ref(F), effective_ref_deny(U, P, F).\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"push\"), changed_count(_), has_push_access(U, P).\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"merge\"), ref(F), effective_ref_grant_push(U, P, F).\n"
         "allow(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), ref(F), effective_ref_grant_force(U, P, F).\n"))
@@ -690,7 +695,7 @@ static int append_authorization_rules(text_buffer_t *policy) {
         "allow(R) :- request(R), user(U), operation(\"create\"), repository_owner_namespace(N, U), can_create_namespace(U, N).\n"
 ))
         return 0;
-    return append_text(policy,
+    if (!append_text(policy,
         "vref_count_exceeded(U, P) :- user(U), repository(P), changed_count(C), vref_deny_count(U, P, N), C > N.\n"
         "vref_count_exceeded(U, P) :- user(U), repository(P), changed_count(C), effective_group_member(U, G), group_vref_deny_count(G, P, N), C > N.\n"
         "vref_new_count_exceeded(U, P) :- user(U), repository(P), added_count(C), vref_deny_new_count(U, P, N), C > N.\n"
@@ -701,7 +706,25 @@ static int append_authorization_rules(text_buffer_t *policy) {
         "deny(R) :- request(R), user(U), repository(P), operation(\"push\"), path(F), effective_group_member(U, G), group_vref_deny_name(G, P, F).\n"
         "deny(R) :- request(R), user(U), repository(P), operation(\"push\"), vref_count_exceeded(U, P).\n"
         "deny(R) :- request(R), user(U), repository(P), operation(\"push\"), vref_new_count_exceeded(U, P).\n"
-        "deny(R) :- request(R), user(U), repository(P), operation(\"push\"), vref_new_binary_exceeded(U, P).\n");
+        "deny(R) :- request(R), user(U), repository(P), operation(\"push\"), vref_new_binary_exceeded(U, P).\n"))
+        return 0;
+    /* A merge is the push W of its result, an update-ref the forced update
+     * +: the VREF denies apply to them as to a push. */
+    if (!append_text(policy,
+        "deny(R) :- request(R), user(U), repository(P), operation(\"merge\"), path(F), vref_deny_name(U, P, F).\n"
+        "deny(R) :- request(R), user(U), repository(P), operation(\"merge\"), path(F), effective_group_member(U, G), group_vref_deny_name(G, P, F).\n"
+        "deny(R) :- request(R), user(U), repository(P), operation(\"merge\"), vref_count_exceeded(U, P).\n"
+        "deny(R) :- request(R), user(U), repository(P), operation(\"merge\"), vref_new_count_exceeded(U, P).\n"
+        "deny(R) :- request(R), user(U), repository(P), operation(\"merge\"), vref_new_binary_exceeded(U, P).\n"))
+        return 0;
+    if (!append_text(policy,
+        "deny(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), path(F), vref_deny_name(U, P, F).\n"
+        "deny(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), path(F), effective_group_member(U, G), group_vref_deny_name(G, P, F).\n"
+        "deny(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), vref_count_exceeded(U, P).\n"
+        "deny(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), vref_new_count_exceeded(U, P).\n"
+        "deny(R) :- request(R), user(U), repository(P), operation(\"update-ref\"), vref_new_binary_exceeded(U, P).\n"))
+        return 0;
+    return 1;
 }
 
 typedef struct {

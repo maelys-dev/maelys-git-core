@@ -1,0 +1,20 @@
+{
+  "policy_set_id": "maelys-git.gitolite-migration",
+  "policy_set_version": "1",
+  "manifest_version": "1",
+  "default_profile": "enforce",
+  "created_for": "maelys-git-core",
+  "strict_loading": true,
+  "fail_closed": true,
+  "capabilities": [],
+  "policies": [{
+    "policy_id": "maelys-git.gitolite.authorization",
+    "domain": "maelys_git",
+    "file": "gitolite-migrated.dl",
+    "sha256": "065fc71a4f7eb3eea17a8db70597b2ec663900f6cb0db3ae4a19d2fb7b068126",
+    "mode": "enforce",
+    "enabled": true,
+    "description": "Audited Gitolite program maelys-git-gitolite-program/1; its grants are a maelys-git-grants/2 snapshot",
+    "queries": [{"name":"allow","arity":1},{"name":"deny","arity":1}]
+  }]
+}

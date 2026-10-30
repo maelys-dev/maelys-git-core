@@ -63,6 +63,7 @@ struct maelys_git_policy {
     int verified_unused;      /* a reading of those bytes no command has used yet */
     int verified_current;     /* that reading serves the command in progress */
     int has_audited;
+    unsigned program_version; /* of the audited Gitolite program the set holds, 0 for none */
     mg_slice_t slice;
     mg_policy_slice_filter_t slice_filter;
     void *slice_filter_context;
@@ -419,25 +420,37 @@ static int reads_slice(mg_policy_reads_t reads, const maelys_datalog_policy_t *l
 /* The audited consumer. A policy that reads a slice_* predicate must be the
  * audited Gitolite program: its session fingerprint, the SHA-256 of the
  * source the engine checked against its manifest, must be that of the
- * canonical text. Only that program receives the slice. A set that has it
- * needs a snapshot of grants, and a snapshot needs a set that has it. */
+ * canonical text of one of its versions. Only that program receives the
+ * slice. A set holds one version: the receipt names it, whichever policy
+ * decides. A set that has the program needs a snapshot of grants, and a
+ * snapshot needs a set that has it. */
 static maelys_git_result_t audit_consumers(maelys_git_policy_t *policy, const maelys_datalog_policy_t *loaded,
                                            mg_policy_reads_t reads, maelys_git_error_t *error) {
-    const char *program = mg_gitolite_program_sha256();
     const char *reader = NULL;
     for (size_t i = 0u; i < policy->count; ++i) {
         policy_entry_t *entry = &policy->entries[i];
         if (!reads_slice(reads, loaded, i)) continue;
-        if (strcmp(entry->fingerprint, program) != 0) {
+        unsigned version = mg_gitolite_program_version(entry->fingerprint);
+        if (!version) {
             mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
-                         "policy %s reads slice facts but is not the audited Gitolite program (%s)",
-                         entry->policy_id, MG_GITOLITE_PROGRAM_FORMAT);
+                         "policy %s reads slice facts but is not the audited Gitolite program (%s or %s)",
+                         entry->policy_id, MG_GITOLITE_PROGRAM_FORMAT_1, MG_GITOLITE_PROGRAM_FORMAT_2);
+            const maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_SEMANTICS};
+            mg_error_set_detail(error, &detail);
+            return MAELYS_GIT_ERR_POLICY;
+        }
+        if (reader && version != policy->program_version) {
+            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                         "policy %s is %s but policy %s is %s: a set holds one version of the audited "
+                         "Gitolite program", entry->policy_id, mg_gitolite_program_format_of(version), reader,
+                         mg_gitolite_program_format_of(policy->program_version));
             const maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_SEMANTICS};
             mg_error_set_detail(error, &detail);
             return MAELYS_GIT_ERR_POLICY;
         }
         entry->audited = 1;
         policy->has_audited = 1;
+        policy->program_version = version;
         if (!reader) reader = entry->policy_id;
     }
     if (reader && !policy->grants) {
@@ -1015,6 +1028,40 @@ static maelys_git_result_t build_slice_facts(maelys_git_policy_t *policy,
     return MAELYS_GIT_OK;
 }
 
+/* Version 1 of the audited program applies the denies of a ref and the
+ * VREF denies to push alone: a merge or an update-ref it would decide past
+ * one of them is refused before any policy is evaluated, never allowed.
+ * The slice says whether a deny concerns the request: a deny of its ref, a
+ * VREF name among its paths, a VREF limit of the user or of one of its
+ * groups, exceeded or not. The guard only refuses: every allow is still the
+ * program's. */
+static int misses_a_deny(const maelys_git_policy_t *policy, const maelys_git_policy_request_t *request) {
+    if (policy->program_version != 1u ||
+        (strcmp(request->operation, "merge") != 0 && strcmp(request->operation, "update-ref") != 0))
+        return 0;
+    for (size_t i = 0u; i < policy->slice.count; ++i) {
+        const mg_slice_fact_t *fact = &policy->slice.facts[i];
+        switch (fact->predicate) {
+            case MG_SLICE_REF_MATCH:
+            case MG_SLICE_GROUP_REF_MATCH:
+                if (!strcmp(fact->text[2], "-")) return 1;
+                break;
+            case MG_SLICE_VREF_NAME:
+            case MG_SLICE_GROUP_VREF_NAME:
+            case MG_SLICE_VREF_COUNT:
+            case MG_SLICE_GROUP_VREF_COUNT:
+            case MG_SLICE_VREF_NEW_COUNT:
+            case MG_SLICE_GROUP_VREF_NEW_COUNT:
+            case MG_SLICE_VREF_MAX_NEW_BINARY:
+            case MG_SLICE_GROUP_VREF_MAX_NEW_BINARY:
+                return 1;
+            default:
+                break;
+        }
+    }
+    return 0;
+}
+
 /* The detail of refused request facts: the bound that refused them, its
  * engine name and the capacity read from the engine. The fact buffer reports,
  * as the engine does, the attempted count: one more than it holds. A slice
@@ -1156,6 +1203,14 @@ static maelys_git_result_t decide(maelys_git_policy_t *policy,
             mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
                          "the slice of grants for this request exceeds the engine limits; it is never truncated");
             set_request_detail(error, policy, request);
+        }
+        if (result == MAELYS_GIT_OK && misses_a_deny(policy, request)) {
+            mg_error_set(error, MAELYS_GIT_ERR_POLICY, 0,
+                         "%s does not apply ref or VREF denies to %s: migrate the configuration again",
+                         MG_GITOLITE_PROGRAM_FORMAT_1, request->operation);
+            const maelys_git_failure_detail_t detail = {.kind = MAELYS_GIT_FAILURE_SEMANTICS};
+            mg_error_set_detail(error, &detail);
+            result = MAELYS_GIT_ERR_POLICY;
         }
     }
     size_t allow_policy = SIZE_MAX;
@@ -1467,6 +1522,8 @@ maelys_git_result_t maelys_git_policy_authorize_receipt(
         mg_grants_view_t read;
         mg_grants_view(policy->grants, &read);
         (void)mg_copy_string(receipt->grants.format, sizeof(receipt->grants.format), read.format);
+        (void)mg_copy_string(receipt->grants.program, sizeof(receipt->grants.program),
+                             mg_gitolite_program_format_of(policy->program_version));
     }
     receipt->evaluated_policies = evaluated;
     if (result != MAELYS_GIT_OK) {

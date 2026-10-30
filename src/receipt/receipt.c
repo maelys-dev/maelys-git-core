@@ -125,14 +125,17 @@ static maelys_json_result_t write_explanation(maelys_json_writer_t *writer,
     return status;
 }
 
-/* The snapshot a decision used, by its digest; the formats of version 2. */
+/* The snapshot a decision used, by its digest; the formats of version 2. A
+ * format or a program left empty is the first one, the only one when the
+ * member was added. */
 static maelys_json_result_t write_grants(maelys_json_writer_t *writer, const maelys_git_receipt_grants_t *grants) {
     maelys_json_result_t status = maelys_json_writer_key_cstr(writer, "grants");
     if (status == MAELYS_JSON_OK) status = maelys_json_writer_object_begin(writer);
     if (status == MAELYS_JSON_OK) status = key_u64(writer, "facts", grants->facts);
     if (status == MAELYS_JSON_OK)
         status = key_string(writer, "format", grants->format[0] ? grants->format : MG_GRANTS_FORMAT);
-    if (status == MAELYS_JSON_OK) status = key_string(writer, "program", MG_GITOLITE_PROGRAM_FORMAT);
+    if (status == MAELYS_JSON_OK)
+        status = key_string(writer, "program", grants->program[0] ? grants->program : MG_GITOLITE_PROGRAM_FORMAT_1);
     if (status == MAELYS_JSON_OK) status = key_string(writer, "sha256", grants->sha256);
     if (status == MAELYS_JSON_OK) status = key_string(writer, "slice", MG_SLICE_FORMAT);
     if (status == MAELYS_JSON_OK) status = maelys_json_writer_object_end(writer);
@@ -354,14 +357,12 @@ static void constant(shape_t *shape, maelys_json_value_t value, const char *expe
 
 static void check_grants(shape_t *shape, maelys_json_value_t grants) {
     static const char *const keys[] = {"facts", "format", "program", "sha256", "slice"};
+    static const char *const formats[] = {MG_GRANTS_FORMAT, MG_GRANTS_FORMAT_REGEX};
+    static const char *const programs[] = {MG_GITOLITE_PROGRAM_FORMAT_1, MG_GITOLITE_PROGRAM_FORMAT_2};
     closed_object(shape, grants, keys, COUNT(keys));
     (void)unsigned_value(shape, member(shape, grants, "facts"));
-    maelys_json_value_t format = member(shape, grants, "format");
-    maelys_json_view_t view = string_value(shape, format);
-    if (shape->ok && !(view.size == strlen(MG_GRANTS_FORMAT) && !memcmp(view.data, MG_GRANTS_FORMAT, view.size)) &&
-        !(view.size == strlen(MG_GRANTS_FORMAT_REGEX) && !memcmp(view.data, MG_GRANTS_FORMAT_REGEX, view.size)))
-        shape->ok = 0;
-    constant(shape, member(shape, grants, "program"), MG_GITOLITE_PROGRAM_FORMAT);
+    (void)one_of(shape, member(shape, grants, "format"), formats, COUNT(formats));
+    (void)one_of(shape, member(shape, grants, "program"), programs, COUNT(programs));
     sha256_hex(shape, member(shape, grants, "sha256"));
     constant(shape, member(shape, grants, "slice"), MG_SLICE_FORMAT);
 }

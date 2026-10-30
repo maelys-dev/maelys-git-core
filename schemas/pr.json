@@ -26,6 +26,7 @@
     "prMergedRef",
     "conflicts",
     "changeSummary",
+    "appliedChangeSummary",
     "event"
   ],
   "properties": {
@@ -115,6 +116,12 @@
     },
     "changeSummary": {
       "type": "object"
+    },
+    "appliedChangeSummary": {
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "event": {
       "type": "object"

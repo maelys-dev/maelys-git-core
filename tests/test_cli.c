@@ -827,7 +827,7 @@ static int test_receipt_versions_schema(void) {
     run_result_t result;
     CHECK(run(&maelys_git_cli_admin_app, argv, argv_count, &result) && result.code == 0);
     static const char grants[] =
-        "\"grants\":{\"facts\":3,\"format\":\"maelys-git-grants/1\",\"program\":\"maelys-git-gitolite-program/1\","
+        "\"grants\":{\"facts\":3,\"format\":\"maelys-git-grants/1\",\"program\":\"maelys-git-gitolite-program/2\","
         "\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\","
         "\"slice\":\"maelys-git-slice/1\"},";
     char v2[512], v1_grants[512], other_format[512];

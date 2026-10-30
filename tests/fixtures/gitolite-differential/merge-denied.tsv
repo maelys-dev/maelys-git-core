@@ -1,0 +1,13 @@
+# merges and update-refs a deny of their ref concerns, denied explicitly (maelys-git-gitolite-program/2), not by the policies of 62778f0
+mixed	alice refs.git merge refs/heads/release/frozen/x
+mixed	alice refs.git update-ref refs/heads/release/frozen/x
+mixed	mallory refs.git merge refs/heads/main
+mixed	mallory refs.git update-ref refs/heads/main
+mixed	mallory refs.git merge refs/heads/main-hotfix
+mixed	mallory refs.git update-ref refs/heads/main-hotfix
+bare-56	mallory app.git merge refs/heads/lock1
+bare-56	mallory app.git update-ref refs/heads/lock1
+bare-56	mallory app.git merge refs/heads/lock56
+bare-56	mallory app.git update-ref refs/heads/lock56
+bare-56	mallory app.git merge refs/heads/lock1-x
+bare-56	mallory app.git update-ref refs/heads/lock1-x

@@ -5,6 +5,60 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- **Security: pr merge authorizes the change it applies.** Its paths, their
+  attributes and its summary came from the pull request's diff, merge base
+  -> head. A merge that follows a rename of the base writes a path that diff
+  does not name: with the base renaming `public.txt` to `secret.txt` and the
+  pull request editing `public.txt`, a merge or a squash wrote `secret.txt`
+  past a policy that denies it. `maelys_git_pr_merge()` now authorizes
+  base -> prepared commit, for every policy, written ones too: stricter
+  there, and, where the base already has a change of the pull request, the
+  path it does not change is no longer judged, as Gitolite would not judge
+  it. `pr check` and `pr merge` keep `changeSummary`, the pull request's
+  diff, as a diagnostic, and gain `appliedChangeSummary`, the change
+  applied, `null` when nothing is applied (a conflict, a fast-forward that
+  cannot be, an empty pull request, fast-forward or not); the agent's
+  `pr_check` and `pr_merge` results keep their flat counts and gain
+  `applied_changes`, object or `null`; `maelys_git_pr_check_result_t` gains
+  `has_applied_changes` and `applied_changes`.
+- **Security: merge and update-ref take the denies of a migrated Gitolite
+  set.** Gitolite writes a ref only by the push its update hook judges: the
+  deny of the ref, then the VREF of the files it changes. A merge of a pull
+  request is the push `W` of its result, an update-ref the forced update
+  `+`. The audited program applied the denies of a ref and the VREF denies
+  (`NAME`, `COUNT`, `COUNT/NEWFILES`, `MAX_NEWBIN_SIZE`) to `push` alone:
+  with `- refs/heads/secret = mallory` and `RW+ refs/heads/ = mallory`,
+  `maelys-git pr merge --apply` wrote `refs/heads/secret`, and `authorize
+  merge` or `update-ref` allowed it. `maelys-git-gitolite-program/2` now
+  applies those denies to `merge` and `update-ref` as to `push`, in the
+  audited program and in the compiled encoding: stricter. A set of
+  `maelys-git-gitolite-program/1` is still opened, but a `merge` or an
+  `update-ref` a deny concerns is refused before any policy is evaluated,
+  a policy error (`POLICY_FAILED`; a `deny_error` receipt of kind
+  `semantics`) that asks to migrate again; every other decision of `/1` is
+  unchanged. The executor's `update_ref` was already a push and is
+  unchanged. The compiled encoding has 81 fixed rules, and room for 47
+  bare-literal denies (56 before).
+- **Access widened, on a new migration only.** The Gitolite migration
+  writes the audited program `maelys-git-gitolite-program/2`, which lets a
+  ref grant read its repository, as Gitolite 3.6.15 does: for `R any`, the
+  read gitolite-shell asks for upload-pack, Gitolite applies every rule
+  whose permission holds `R`, whatever its refex. With only `RW+
+  refs/heads/feature/ = alice`, alice now reads the whole repository:
+  `clone` and `fetch` through `maelys-git shell`, and `repository_info`,
+  `diff` and `pr_check` through the executor. The grant may be the user's,
+  a group's or `@all`'s, literal or regex; a deny alone, or `C` alone,
+  reads nothing. Every other decision is unchanged. A set migrated earlier
+  holds `maelys-git-gitolite-program/1`: it is still opened and decided as
+  it was, byte for byte, its read stricter than Gitolite's, until it is
+  migrated again. A manifest that holds both versions is refused when it
+  is opened (`policy X is maelys-git-gitolite-program/2 but policy Y is
+  maelys-git-gitolite-program/1: a set holds one version of the audited
+  Gitolite program`). A receipt names the version its set holds,
+  whichever policy decides; the verifier accepts both;
+  `maelys_git_receipt_grants_t` gains the member `program`. A set migrated
+  again has a new policy-set fingerprint: a `pr merge` plan made before is
+  refused at `--apply`.
 - `authorize` takes `--update-kind create|fast_forward|force|delete`, the
   kind of ref update the hook, the shell and the executor already pass.
   Without it a rule that names a kind never allows: a migrated Gitolite

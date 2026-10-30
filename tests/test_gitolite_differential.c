@@ -10,7 +10,26 @@
  *     snapshot, GIT-C06) gives the recorded outcome too, never failing for
  *     capacity.
  * MG_RECORD_DIFFERENTIAL=FILE writes the old policy's outcomes instead; it is
- * run on the LARGE profile, in a commit that explains every changed line. */
+ * run on the LARGE profile, in a commit that explains every changed line.
+ *
+ * One change is deliberate: a ref grant lets its holder read the repository,
+ * as Gitolite does (maelys-git-gitolite-program/2), where the old policy
+ * denied the read by default. read-by-ref-grant.tsv lists every such read;
+ * both new encodings allow it, and each listed one must still occur.
+ * MG_RECORD_READ_BY_REF_GRANT=FILE writes the reads that differ so instead
+ * of failing on them.
+ *
+ * A second change is deliberate: the denies of a ref apply to merge and
+ * update-ref as to push, as Gitolite applies them to the push that writes
+ * the ref, where the old policy allowed the merge or denied it by default.
+ * merge-denied.tsv lists every such request; both new encodings deny it
+ * explicitly, and each listed one must still occur. MG_RECORD_MERGE_DENIED=
+ * FILE writes them instead of failing on them.
+ *
+ * The fixed rules of the compiled encoding leave fewer rules to bare-literal
+ * denies than 62778f0's did (tests/test_gitolite_budget.c): bare-56 is
+ * beyond it, its plan refuses it for MAX_RULES, and its grid is compared on
+ * the grants as data alone. */
 #include "maelys_git.h"
 #include "internal.h"
 #include "policy/policy_grants.h"
@@ -26,6 +45,20 @@ static char *g_expected[MAX_ROWS];
 static size_t g_expected_count, g_row;
 static size_t g_old_capacity_failures, g_compared;
 static maelys_git_policy_t *g_grants_policy;
+static char *g_reads[MAX_ROWS];
+static size_t g_read_count, g_reads_seen;
+static unsigned char g_read_seen[MAX_ROWS];
+static FILE *g_record_reads;
+static char *g_denied[MAX_ROWS];
+static size_t g_denied_count, g_denied_seen_count;
+static unsigned char g_denied_seen[MAX_ROWS];
+static FILE *g_record_denied;
+
+static const char k_denied[] = "allowed=0 explicit=0 matched=- reason=no allow rule matched; denied by default";
+static const char k_read_allowed[] =
+    "allowed=1 explicit=0 matched=0 reason=allowed by policy maelys-git.gitolite.authorization";
+static const char k_explicitly_denied[] =
+    "allowed=0 explicit=1 matched=0 reason=explicit deny from policy maelys-git.gitolite.authorization";
 
 typedef struct {
     const char *name;
@@ -33,6 +66,7 @@ typedef struct {
     const char *const *repositories;     /* operations without a ref */
     const char *const *ref_repositories; /* operations on a ref */
     const char *const *refs;             /* NULL-terminated; "-" is no ref */
+    int beyond_compiled;                 /* the compiled encoding refuses it */
 } grid_t;
 
 static const char k_deep[] =
@@ -67,17 +101,17 @@ static const char *const k_fallback_refs[] = {
     "-", "refs/heads/team1/x", "refs/heads/team10/y/z", "refs/heads/team1", "refs/heads/main", NULL};
 
 static const grid_t k_grids[] = {
-    {"mixed", k_mixed_principals, k_mixed_repositories, k_mixed_ref_repositories, k_mixed_refs},
-    {"members-64", k_members_principals, k_app, k_app, k_main_refs},
-    {"members-65", k_members_principals, k_app, k_app, k_main_refs},
-    {"refs-65", k_refs_principals, k_app, k_app, k_refs_refs},
-    {"vref-65", k_vref_principals, k_app, k_app, k_main_refs},
-    {"r70", k_r70_principals, k_app, k_app, k_main_refs},
+    {"mixed", k_mixed_principals, k_mixed_repositories, k_mixed_ref_repositories, k_mixed_refs, 0},
+    {"members-64", k_members_principals, k_app, k_app, k_main_refs, 0},
+    {"members-65", k_members_principals, k_app, k_app, k_main_refs, 0},
+    {"refs-65", k_refs_principals, k_app, k_app, k_refs_refs, 0},
+    {"vref-65", k_vref_principals, k_app, k_app, k_main_refs, 0},
+    {"r70", k_r70_principals, k_app, k_app, k_main_refs, 0},
     /* Accepted by 62778f0 at its bounds: 56 bare-literal denies fill its
      * rules; 120 facts and 10 prefixes fill the new facts, and take the
      * rule form. */
-    {"bare-56", k_bare_principals, k_app, k_app, k_bare_refs},
-    {"fallback", k_fallback_principals, k_app, k_app, k_fallback_refs},
+    {"bare-56", k_bare_principals, k_app, k_app, k_bare_refs, 1},
+    {"fallback", k_fallback_principals, k_app, k_app, k_fallback_refs, 0},
 };
 
 static void outcome_of(maelys_git_policy_t *policy, const maelys_git_policy_request_t *request,
@@ -119,10 +153,77 @@ static int compare(const char *name, maelys_git_policy_t *old_policy, maelys_git
         return 0;
     }
     expected += prefix;
-    outcome_of(new_policy, request, new_outcome, sizeof(new_outcome), &new_capacity);
-    if (new_capacity || strcmp(new_outcome, expected) != 0) {
-        (void)fprintf(stderr, "%s%s: new %s, expected %s\n", row, "", new_outcome, expected);
-        return 0;
+    if (!strcmp(request->operation, "read") && !strcmp(expected, k_denied)) {
+        /* The read of a ref grant: listed, allowed by both new encodings. */
+        size_t key = prefix - 1u, listed = 0u; /* the row without its last tab */
+        while (listed < g_read_count &&
+               (strlen(g_reads[listed]) != key || strncmp(g_reads[listed], row, key)))
+            ++listed;
+        if (new_policy) outcome_of(new_policy, request, new_outcome, sizeof(new_outcome), &new_capacity);
+        else (void)snprintf(new_outcome, sizeof(new_outcome), "%s", k_read_allowed);
+        char grants_outcome[512];
+        int grants_capacity = 0;
+        outcome_of(g_grants_policy, request, grants_outcome, sizeof(grants_outcome), &grants_capacity);
+        int read = !strcmp(new_outcome, k_read_allowed) && !strcmp(grants_outcome, k_read_allowed);
+        if (read && g_record_reads) {
+            (void)fprintf(g_record_reads, "%.*s\n", (int)key, row);
+            ++g_compared;
+            return 1;
+        }
+        if (read != (listed < g_read_count)) {
+            (void)fprintf(stderr, "%s: new %s, grants %s, old %s, %s in read-by-ref-grant.tsv\n", row,
+                          new_outcome, grants_outcome, expected, listed < g_read_count ? "listed" : "not listed");
+            return 0;
+        }
+        if (read) {
+            if (!g_read_seen[listed]) ++g_reads_seen;
+            g_read_seen[listed] = 1u;
+            ++g_compared;
+            return 1;
+        }
+    }
+    if ((!strcmp(request->operation, "merge") || !strcmp(request->operation, "update-ref")) &&
+        strcmp(expected, k_explicitly_denied) != 0) {
+        /* A merge or an update-ref a deny of its ref concerns: listed,
+         * denied explicitly by both new encodings. */
+        size_t key = prefix - 1u, listed = 0u;
+        while (listed < g_denied_count &&
+               (strlen(g_denied[listed]) != key || strncmp(g_denied[listed], row, key)))
+            ++listed;
+        char grants_outcome[512];
+        int grants_capacity = 0;
+        outcome_of(g_grants_policy, request, grants_outcome, sizeof(grants_outcome), &grants_capacity);
+        int denied = !strcmp(grants_outcome, k_explicitly_denied);
+        if (new_policy) {
+            outcome_of(new_policy, request, new_outcome, sizeof(new_outcome), &new_capacity);
+            if (denied != !strcmp(new_outcome, k_explicitly_denied)) {
+                (void)fprintf(stderr, "%s: new %s, grants %s\n", row, new_outcome, grants_outcome);
+                return 0;
+            }
+        }
+        if (denied && g_record_denied) {
+            (void)fprintf(g_record_denied, "%.*s\n", (int)key, row);
+            ++g_compared;
+            return 1;
+        }
+        if (denied != (listed < g_denied_count)) {
+            (void)fprintf(stderr, "%s: grants %s, old %s, %s in merge-denied.tsv\n", row, grants_outcome,
+                          expected, listed < g_denied_count ? "listed" : "not listed");
+            return 0;
+        }
+        if (denied) {
+            if (!g_denied_seen[listed]) ++g_denied_seen_count;
+            g_denied_seen[listed] = 1u;
+            ++g_compared;
+            return 1;
+        }
+    }
+    if (new_policy) {
+        outcome_of(new_policy, request, new_outcome, sizeof(new_outcome), &new_capacity);
+        if (new_capacity || strcmp(new_outcome, expected) != 0) {
+            (void)fprintf(stderr, "%s%s: new %s, expected %s\n", row, "", new_outcome, expected);
+            return 0;
+        }
     }
     outcome_of(g_grants_policy, request, new_outcome, sizeof(new_outcome), &new_capacity);
     if (new_capacity || strcmp(new_outcome, expected) != 0) {
@@ -212,11 +313,17 @@ static int run_case(const grid_t *grid) {
     maelys_git_policy_t *old_policy = NULL, *new_policy = NULL;
     CHECK(maelys_git_policy_open(old_manifest, &old_policy, &error) == MAELYS_GIT_OK);
     maelys_git_gitolite_migration_result_t migration;
-    CHECK(mg_migrate_gitolite_compiled(input, output, 1, &migration, &error) == MAELYS_GIT_OK);
-    CHECK(migration.unsupported_count == 0u);
-    maelys_git_gitolite_migration_result_clear(&migration);
-    (void)snprintf(new_manifest, sizeof(new_manifest), "%s/manifest.json", output);
-    CHECK(maelys_git_policy_open(new_manifest, &new_policy, &error) == MAELYS_GIT_OK);
+    if (grid->beyond_compiled) {
+        CHECK(mg_migrate_gitolite_compiled(input, output, 0, &migration, &error) == MAELYS_GIT_OK);
+        CHECK(migration.unsupported_count == 1u && !strcmp(migration.budget.failure.budget, "MAX_RULES"));
+        maelys_git_gitolite_migration_result_clear(&migration);
+    } else {
+        CHECK(mg_migrate_gitolite_compiled(input, output, 1, &migration, &error) == MAELYS_GIT_OK);
+        CHECK(migration.unsupported_count == 0u);
+        maelys_git_gitolite_migration_result_clear(&migration);
+        (void)snprintf(new_manifest, sizeof(new_manifest), "%s/manifest.json", output);
+        CHECK(maelys_git_policy_open(new_manifest, &new_policy, &error) == MAELYS_GIT_OK);
+    }
     (void)snprintf(grants_output, sizeof(grants_output), "%s-grants", output);
     CHECK(mg_migrate_gitolite_grants(input, grants_output, 1, &migration, &error) == MAELYS_GIT_OK);
     CHECK(migration.unsupported_count == 0u);
@@ -249,6 +356,41 @@ static int load_expected(void) {
     return g_expected_count > 0u;
 }
 
+/* read-by-ref-grant.tsv: one "CASE\tLABEL" per line, as compare() builds it. */
+static int load_list(const char *path, char **rows, size_t *count) {
+    FILE *file = fopen(path, "r");
+    CHECK(file != NULL);
+    char line[2048];
+    while (fgets(line, sizeof(line), file)) {
+        size_t length = strlen(line);
+        if (length && line[length - 1u] == '\n') line[--length] = '\0';
+        if (line[0] == '#' || !length) continue;
+        CHECK(*count < MAX_ROWS);
+        rows[*count] = strdup(line);
+        CHECK(rows[*count] != NULL);
+        ++*count;
+    }
+    (void)fclose(file);
+    return 1;
+}
+
+static int load_reads(void) {
+    FILE *file = fopen(DIFFERENTIAL_DIR "/read-by-ref-grant.tsv", "r");
+    CHECK(file != NULL);
+    char line[2048];
+    while (fgets(line, sizeof(line), file)) {
+        size_t length = strlen(line);
+        if (length && line[length - 1u] == '\n') line[--length] = '\0';
+        if (line[0] == '#' || !length) continue;
+        CHECK(g_read_count < MAX_ROWS);
+        g_reads[g_read_count] = strdup(line);
+        CHECK(g_reads[g_read_count] != NULL);
+        ++g_read_count;
+    }
+    (void)fclose(file);
+    return 1;
+}
+
 int main(void) {
     char template[] = "/tmp/maelys_git_differential_XXXXXX";
     char *root = mkdtemp(template);
@@ -262,6 +404,25 @@ int main(void) {
              fprintf(g_record, "# outcomes of the Gitolite policies migrated by 62778f0, LARGE profile\n") > 0;
     } else {
         ok = load_expected();
+        const char *reads = getenv("MG_RECORD_READ_BY_REF_GRANT");
+        if (ok && reads && *reads) {
+            g_record_reads = fopen(reads, "w");
+            ok = g_record_reads != NULL &&
+                 fprintf(g_record_reads, "# reads a ref grant gives (maelys-git-gitolite-program/2), denied by "
+                                         "the policies of 62778f0\n") > 0;
+        } else if (ok) {
+            ok = load_reads();
+        }
+        const char *denied = getenv("MG_RECORD_MERGE_DENIED");
+        if (ok && denied && *denied) {
+            g_record_denied = fopen(denied, "w");
+            ok = g_record_denied != NULL &&
+                 fprintf(g_record_denied, "# merges and update-refs a deny of their ref concerns, denied "
+                                          "explicitly (maelys-git-gitolite-program/2), not by the policies of "
+                                          "62778f0\n") > 0;
+        } else if (ok) {
+            ok = load_list(DIFFERENTIAL_DIR "/merge-denied.tsv", g_denied, &g_denied_count);
+        }
     }
     for (size_t i = 0u; ok && i < sizeof(k_grids) / sizeof(k_grids[0]); ++i)
         ok = run_case(&k_grids[i]);
@@ -269,12 +430,27 @@ int main(void) {
         (void)fprintf(stderr, "%zu recorded rows, %zu compared\n", g_expected_count, g_row);
         ok = 0;
     }
+    if (ok && !g_record && !g_record_reads && g_reads_seen != g_read_count) {
+        for (size_t i = 0u; i < g_read_count; ++i)
+            if (!g_read_seen[i]) (void)fprintf(stderr, "listed read no longer observed: %s\n", g_reads[i]);
+        ok = 0;
+    }
+    if (ok && !g_record && !g_record_denied && g_denied_seen_count != g_denied_count) {
+        for (size_t i = 0u; i < g_denied_count; ++i)
+            if (!g_denied_seen[i]) (void)fprintf(stderr, "listed deny no longer observed: %s\n", g_denied[i]);
+        ok = 0;
+    }
+    if (g_record_denied && fclose(g_record_denied) != 0) ok = 0;
     if (g_record && fclose(g_record) != 0) ok = 0;
+    if (g_record_reads && fclose(g_record_reads) != 0) ok = 0;
     for (size_t i = 0u; i < g_expected_count; ++i) free(g_expected[i]);
+    for (size_t i = 0u; i < g_read_count; ++i) free(g_reads[i]);
+    for (size_t i = 0u; i < g_denied_count; ++i) free(g_denied[i]);
     if (!test_remove_tree(g_root)) ok = 0;
     if (ok && !g_record)
-        (void)printf("Gitolite encodings, compiled and as grants: %zu requests identical; %zu where the old "
-                     "policy failed for capacity on this profile: ok\n",
-                     g_compared, g_old_capacity_failures);
+        (void)printf("Gitolite encodings, compiled and as grants: %zu requests compared, %zu reads a ref grant "
+                     "gives, %zu merges and update-refs a deny concerns; %zu where the old policy failed for "
+                     "capacity on this profile: ok\n",
+                     g_compared, g_reads_seen, g_denied_seen_count, g_old_capacity_failures);
     return ok ? 0 : 1;
 }

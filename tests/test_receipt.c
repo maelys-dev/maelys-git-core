@@ -493,11 +493,11 @@ static int write_file(const char *path, const char *text) {
     return fclose(file) == 0 && ok;
 }
 
-/* The audited program and a snapshot in DIRECTORY, opened. */
-static maelys_git_policy_t *open_program_with(const char *directory, const char *snapshot) {
+/* Version VERSION of the audited program and a snapshot in DIRECTORY, opened. */
+static maelys_git_policy_t *open_program_version(const char *directory, unsigned version, const char *snapshot) {
     char path[512], manifest[2048], digest[MAELYS_CLI_SHA256_HEX_SIZE];
     size_t length = 0u;
-    const char *program = mg_gitolite_program_text(&length);
+    const char *program = mg_gitolite_program_text_of(version, &length);
     maelys_cli_sha256_hex(program, length, digest);
     (void)snprintf(path, sizeof(path), "%s/program.dl", directory);
     if (!write_file(path, program)) return NULL;
@@ -522,11 +522,39 @@ static maelys_git_policy_t *open_program_with(const char *directory, const char 
     return policy;
 }
 
+static maelys_git_policy_t *open_program_with(const char *directory, const char *snapshot) {
+    return open_program_version(directory, MG_GITOLITE_PROGRAM_VERSION, snapshot);
+}
+
+static const char k_devs_snapshot[] =
+    "{\"access\":[[\"group\",\"devs\",\"app.git\",\"RW\"]],\"format\":\"maelys-git-grants/1\","
+    "\"members\":[[\"alice\",\"devs\"]],\"namespace_creators\":[],\"nested\":[],\"owner_access\":[],"
+    "\"refs\":[],\"vref_limits\":[],\"vref_names\":[]}";
+
 static maelys_git_policy_t *open_program(const char *directory) {
-    return open_program_with(directory,
-        "{\"access\":[[\"group\",\"devs\",\"app.git\",\"RW\"]],\"format\":\"maelys-git-grants/1\","
-        "\"members\":[[\"alice\",\"devs\"]],\"namespace_creators\":[],\"nested\":[],\"owner_access\":[],"
-        "\"refs\":[],\"vref_limits\":[],\"vref_names\":[]}");
+    return open_program_with(directory, k_devs_snapshot);
+}
+
+/* A set that holds maelys-git-gitolite-program/1 names it in its receipts,
+ * which verify. */
+static int test_version_two_program_one(void) {
+    char template[] = "/tmp/maelys_git_receipt_program1_XXXXXX";
+    char *root = mkdtemp(template);
+    CHECK(root);
+    maelys_git_policy_t *policy = open_program_version(root, 1u, k_devs_snapshot);
+    CHECK(policy != NULL);
+    maelys_git_policy_request_t write = {.request_id = "v2", .principal = "alice", .repository = "app.git",
+                                         .operation = "write"};
+    produced_t produced;
+    CHECK(produce(policy, &write, MAELYS_GIT_EXPLAIN_NEVER, NULL, 0u, &produced));
+    CHECK(produced.result == MAELYS_GIT_OK && produced.receipt.decision == MAELYS_GIT_RECEIPT_ALLOW);
+    CHECK(!strcmp(produced.receipt.grants.program, "maelys-git-gitolite-program/1"));
+    CHECK(strstr(produced.bytes, "\"program\":\"maelys-git-gitolite-program/1\"") != NULL);
+    maelys_git_error_t error;
+    CHECK(maelys_git_receipt_verify(produced.bytes, produced.size, NULL, &error) == MAELYS_GIT_OK);
+    free(produced.bytes);
+    maelys_git_policy_close(policy);
+    return test_remove_tree(root);
 }
 
 /* A decision on a snapshot of regex patterns names the format it read,
@@ -576,7 +604,7 @@ static int test_version_two(void) {
     char expected[512];
     (void)snprintf(expected, sizeof(expected),
                    "\"grants\":{\"facts\":3,\"format\":\"maelys-git-grants/1\","
-                   "\"program\":\"maelys-git-gitolite-program/1\",\"sha256\":\"%s\","
+                   "\"program\":\"maelys-git-gitolite-program/2\",\"sha256\":\"%s\","
                    "\"slice\":\"maelys-git-slice/1\"},\"matched\":", grants->sha256);
     CHECK(strstr(produced.bytes, expected) != NULL);
     CHECK(produced.size > 12u && !strcmp(produced.bytes + produced.size - 12u, "\"version\":2}"));
@@ -616,7 +644,12 @@ static int test_version_two(void) {
     CHECK(refused(bytes, "\"facts\":3", "\"facts\":3.0"));                                  /* fraction */
     CHECK(refused(bytes, "\"maelys-git-grants/1\"", "\"maelys-git-grants/3\""));            /* format */
     CHECK(refused(bytes, "\"maelys-git-slice/1\"", "\"maelys-git-slice/2\""));              /* slice */
-    CHECK(refused(bytes, "\"maelys-git-gitolite-program/1\"", "\"maelys-git-gitolite-program/2\""));
+    CHECK(refused(bytes, "\"maelys-git-gitolite-program/2\"", "\"maelys-git-gitolite-program/3\""));
+    CHECK(refused(bytes, "\"maelys-git-gitolite-program/2\"", "\"maelys-git-gitolite-program/\""));
+    char *first = replaced(bytes, "\"maelys-git-gitolite-program/2\"", "\"maelys-git-gitolite-program/1\"");
+    CHECK(first != NULL);                                                                    /* either version */
+    CHECK(maelys_git_receipt_verify(first, strlen(first), NULL, &error) == MAELYS_GIT_OK);
+    free(first);
     CHECK(refused(bytes, sha64, sha63));                                                     /* 63 digits */
     CHECK(refused(bytes, "\"slice\":\"maelys-git-slice/1\"}",
                   "\"slice\":\"maelys-git-slice/1\",\"zzz\":1}"));                          /* unknown key */
@@ -679,7 +712,7 @@ int main(void) {
     int ok = test_corpus() && test_decisions() && test_determinism() && test_budget() &&
              test_strict_verification() && test_text_buffer() && test_summary() &&
              test_single_path() && test_hot_path() && test_version_two() &&
-             test_version_two_regex();
+             test_version_two_regex() && test_version_two_program_one();
     if (ok)
         puts("receipts: corpus, decisions, canonical form, budget, verification, summary, hot path and "
              "version 2: ok");

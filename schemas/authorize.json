@@ -320,7 +320,11 @@
               "description": "The format of the snapshot read: /2 when it holds regex ref patterns."
             },
             "program": {
-              "const": "maelys-git-gitolite-program/1"
+              "enum": [
+                "maelys-git-gitolite-program/1",
+                "maelys-git-gitolite-program/2"
+              ],
+              "description": "The version of the audited Gitolite program the set holds: /2 also reads a repository by a ref grant."
             },
             "sha256": {
               "type": "string",

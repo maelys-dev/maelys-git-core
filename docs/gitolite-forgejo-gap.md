@@ -156,12 +156,14 @@ fin et une sous-chaine libre suppose `.*`.
 Une attribution elementaire, sujet, depot ou espace de noms, ref ou prefixe,
 niveau, coute un fait de politique et aucune regle, sauf le refus d'un
 litteral nu et les prefixes hors des faits `ref_prefix`, qui coutent une
-regle. Le socle d'autorisation genere compte 67 regles sur 128 et ne lit les
+regle. Le socle d'autorisation genere compte 81 regles sur 128 et ne lit les
 faits de politique qu'apres avoir lie le sujet, le depot et la ref de la
 requete : ce qu'un predicat derive contient depend de la requete, jamais de
 la taille de la configuration. Mesure en SMALL et en LARGE : 128 lignes `RW`
 sur un depot (128 faits), 120 prefixes `RW+` de sujets distincts (borne des
-256 atomes de politique), 61 refus nus (borne des regles). Un prefixe en fait
+256 atomes de politique), 47 refus nus (borne des regles ; 56 avant que
+`merge` et `update-ref` ne recoivent les refus, et une configuration de plus
+reste admise en droits comme donnees, ou ces refus sont des faits). Un prefixe en fait
 coute un fait et un atome ; quand ces budgets refusent la politique, la
 migration la regenere avec ses prefixes en regles et la garde si elle tient :
 une configuration admise par la forme en regles reste admise.
@@ -208,17 +210,47 @@ publiee.
 ### Perimetre de la fidelite mesuree
 
 La fidelite a Gitolite 3.6.15 est mesuree sur l'ecriture : mise a jour
-(`W`), mise a jour forcee (`+`) et ecriture sans ref (`any`), comparees a
-Gitolite lui-meme et a un oracle calibre sur lui. La lecture n'est pas
-comparee, et elle differe :
+(`W`), mise a jour forcee (`+`) et ecriture sans ref (`any`), sur la
+lecture (`R any`, que `gitolite-shell` demande pour `upload-pack`), et sur
+`merge` et `update-ref` de Git Core, que Gitolite ne connait pas et qu'il
+decide comme le push qui ecrit la ref : `W` pour la fusion d'une pull
+request, `+` pour un `update-ref`. Elles sont comparees a Gitolite lui-meme
+et a un oracle calibre sur lui.
 
-- **Lecture accordee par un droit de ref seul.** Avec seulement
-  `RW+ refs/heads/feature/ = alice`, Gitolite laisse alice lire le depot
-  (`R any`) ; Git Core lui refuse la lecture et ne lui laisse que
-  l'ecriture. Plus strict, en litteral comme en regex. Un droit `R`, `RW`
-  ou `RW+` sans refex sur le depot donne la lecture dans les deux.
+- **Refus d'une ref et refus VREF contre `merge` et `update-ref`.** Gitolite
+  n'ecrit une ref que par le push que juge son hook `update` : le refus de
+  la ref, puis les VREF des fichiers changes. Le programme audite
+  `maelys-git-gitolite-program/2` applique donc a `merge` et `update-ref`
+  les refus d'une ref et les refus VREF (`NAME`, `COUNT`, `COUNT/NEWFILES`,
+  `MAX_NEWBIN_SIZE`) comme a `push` : a contexte egal, la fusion est
+  refusee explicitement exactement quand le push en avance rapide l'est, et
+  `update-ref` quand le push force l'est. `pr merge`, en ligne de commande
+  et par l'executeur, refuse donc d'ecrire une ref refusee, et juge, comme
+  le hook de Gitolite, les fichiers que la fusion change dans la ref
+  (base -> commit prepare), pas le diff de la pull request.
 
-C'est un ecart connu, a corriger a part.
+- **Lecture accordee par un droit de ref seul.** Pour `R any`, Gitolite
+  applique toute regle dont la permission contient `R`, quel que soit son
+  refex : avec seulement `RW+ refs/heads/feature/ = alice`, alice lit le
+  depot entier. Le programme audite `maelys-git-gitolite-program/2`, que la
+  migration ecrit, fait de meme, pour un droit de l'utilisateur, d'un de
+  ses groupes ou de `@all`, en litteral comme en regex. Un refus seul, ou
+  `C` seul, ne donne pas la lecture, dans les deux. La lecture ouvre
+  `clone` et `fetch` par `maelys-git shell` (`upload-pack`), et, par
+  l'executeur, `repository_info`, `diff` et `pr_check`.
+- **Ensembles restes en `maelys-git-gitolite-program/1`.** Un repertoire
+  migre avant `/2` est ouvert et decide comme il l'etait, octet pour
+  octet : sa lecture reste plus stricte que Gitolite (un droit de ref seul
+  ne la donne pas). La lecture de Gitolite arrive par une nouvelle
+  migration, jamais par la seule mise a jour de Git Core. Une seule
+  exception, fermee : `/1` n'applique les refus qu'a `push`, et un `merge`
+  ou un `update-ref` qu'un refus concerne (refus de sa ref, nom VREF de
+  l'un de ses chemins, limite VREF de l'utilisateur ou de l'un de ses
+  groupes, depassee ou non) est refuse avant evaluation, erreur de
+  politique (`POLICY_FAILED`, recu `deny_error` de type `semantics`) qui
+  demande de migrer de nouveau ; ce que `/1` en decidait n'est jamais
+  accorde. Un manifeste qui tient `/1` et `/2` a la fois est refuse a
+  l'ouverture ; le recu nomme la version de l'ensemble (`grants.program`).
 
 `authorize push` en ligne de commande decide les attributions de ref quand
 il recoit le type de mise a jour, `--update-kind
