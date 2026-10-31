@@ -200,7 +200,8 @@ Les empreintes existantes ne sont pas à réécrire dans ce chantier :
 - [`pull_request.c`](../src/repository/pull_request.c) produit des objets
   commit via `git hash-object` ; conserver le format Git.
 - `gitolite.c` hache le texte de la politique qu'il génère (SHA-256 du
-  manifeste écrit) ; ce flux n'est pas du JSON.
+  texte de politique, inscrit dans le manifeste) ; ce flux n'est pas du
+  JSON.
 
 ## Conditions maintenues
 

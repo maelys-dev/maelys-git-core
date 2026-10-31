@@ -165,9 +165,15 @@ into the compiled policy. It also covers the common `NAMESPACE/CREATOR/..*`
 wild-repo shape and the deny VREFs `NAME`, `COUNT`, `COUNT/NEWFILES`, and
 `MAX_NEWBIN_SIZE`. `RW+` remains distinct for force and delete operations.
 `--apply` atomically writes a valid Datalog manifest only when every source
-line has a semantics-preserving mapping. Includes, `subconf`, other
-repository patterns, positive VREFs, unknown VREFs, a refex that names
-`/USER/`, a top-level `|`, a `^`, and any syntax outside the subset remain
+line has a mapping, with two assumed departures from Gitolite, both stricter
+and neither a refusal: a ref deny that applies wins over every grant of its
+repository whatever their order, where Gitolite decides by the first rule
+that applies (the result reports it as a remark on every repository that
+holds both write grants and ref denies), and a bare-literal grant matches
+the exact ref only, where Gitolite reads a prefix (a bare-literal deny keeps
+its prefix reading). Includes, `subconf`, other repository patterns,
+positive VREFs, unknown VREFs, a refex that names `/USER/`, a top-level `|`,
+a `^` outside a character class, and any syntax outside the subset remain
 explicit violations. Every incompatible source line is reported rather than
 silently weakened.
 

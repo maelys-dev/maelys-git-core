@@ -101,8 +101,11 @@ whether `authorize` or the denial of another command, carries
 policy included. A `pr_merge` refused by its gates, or because the pull request
 is empty or not mergeable, is not a decision: its `status: "denied"` payload
 keeps `code` and `message`. `pr_check` and `pr_merge` results carry
-`applied_changes`, the change the merge applies, base to prepared commit, or
-`null` when nothing is applied. An optional
+`applied_changes`, the change the prepared merge would apply, base to
+prepared commit, as summarized from the prepared result; `pr_check` carries it
+without applying anything, and it is `null` when there is no prepared merge
+to summarize (an empty or not mergeable pull request). It describes the
+prepared change, never proves a write. An optional
 `pr_id` creates forge-neutral `refs/maelys/pulls/<id>/head` and `merged`
 references in the same atomic Git reference transaction as the target branch.
 For a fork PR, `source_repository` and `source_ref` are supplied together.

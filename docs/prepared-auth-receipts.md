@@ -375,8 +375,10 @@ le régénère dans son propre commit, jamais dans celui d'une fonctionnalité.
 - **Surfaces** : la CLI, l'agent `stdio`, l'agent Cloud et le hook produisent
   le même reçu canonique pour la même requête.
 - **Pushes** : petit, moyen, et refus en cours de transaction ; le reçu
-  décisif est le bon et le nombre de reçus écrits correspond au nombre
-  d'autorisations.
+  décisif est le bon. Avec `--receipts`, le hook écrit une seule ligne par
+  push qui a produit une décision : le premier refus avec son explication,
+  ou l'autorisation finale d'un push accepté ; un push peut déclencher
+  plusieurs autorisations, il n'en reste qu'un reçu.
 - **Benchmark** : temps total, coût par autorisation, faits dérivés, fresh
   contre prepared, rapporté hors CTest. Aucun seuil temporel dans CTest.
 
