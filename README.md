@@ -73,7 +73,7 @@ archive and `maelys` dispatcher are not built here. maelys-json is the one
 JSON library: it reads every external document and writes the CLI data, the
 agent messages, the journal's deduplication form and the generated
 configuration. It is pinned to the published release recorded in
-`cmake/dependencies.cmake` (`v0.3.0`); its source checkout can be selected
+`cmake/dependencies.cmake` (`v0.3.1`); its source checkout can be selected
 with `-DMAELYS_JSON_SOURCE_DIR=/absolute/path/to/maelys-json`.
 
 ## Policy model
@@ -90,8 +90,14 @@ commit_email/1 commit_signed/1 commit_signature_status/1
 commit_signer_fingerprint/1 commit_signer_identity/1 commit_signature_trusted/1
 changed_count/1 added_count/1
 modified_count/1 deleted_count/1 renamed_count/1 max_new_blob_size/1
-has_binary/1
+has_binary/1 total_new_blob_size/1 commit_count/1 merge_commit_count/1
+change_blob_size/1 old_mode/1 new_mode/1 change_binary/1 change_symlink/1
+change_submodule/1 change_lfs_pointer/1
 ```
+
+A request decided on a snapshot of grants also receives the slice of that
+snapshot that concerns it, the `slice_*` facts the audited Gitolite program
+reads.
 
 For a valid ref, `ref_prefix/1` holds each of its first sixteen prefixes
 that end with `/`, shortest first and never the ref itself, and
@@ -106,9 +112,12 @@ compiled program says at open time; a policy that reads neither pays nothing
 for them.
 
 The domain also declares policy facts for direct and group grants, admins,
-protected refs and protected paths, and those the Gitolite migration writes:
-`gitolite_access/3`, `gitolite_ref_access/4`, their `group_` forms and
-`owner_namespace_access/2`. Policies derive `allow(Request)` and/or
+protected refs and protected paths, and those of the compiled encoding of a
+Gitolite configuration: `gitolite_access/3`, `gitolite_ref_access/4`, their
+`group_` forms and `owner_namespace_access/2`. The migration itself writes
+the audited program `maelys-git-gitolite-program/2`, whose text never depends
+on the configuration, beside the grants as data (`grants.json`,
+`maelys-git-grants/1` or `/2`). Policies derive `allow(Request)` and/or
 `deny(Request)`. An explicit deny wins across the complete policy set. With no
 matching allow, the decision is denied by default. Evaluation errors also deny
 the operation.
@@ -301,7 +310,7 @@ document throughout execution. maelys-json writes the results, each within
 the 65,536-byte line, and the durable deduplication form v2 of each command.
 Cloud validates bounded polls before processing their commands. The
 supervisor validates and correlates result envelopes before persistence. The
-SSH shell and receive hook write only their receipts with maelys-json. See the [protocol contract](protocol/README.md) for framing and limits.
+SSH shell and receive hook write their receipts with it too. See the [protocol contract](protocol/README.md) for framing and limits.
 
 Supported executor commands are:
 
@@ -361,6 +370,7 @@ build/maelys-git-agent provision \
   --token /etc/maelys-git/agent.token \
   --database /var/lib/maelys-git/agent.sqlite3 \
   --manifest /etc/maelys-git/manifest.json \
+  --grants /etc/maelys-git/grants.json \
   --root /srv/git \
   --executor /usr/local/bin/maelys-git-executor \
   --format json
@@ -373,19 +383,30 @@ build/maelys-git-agent provision \
   --token /etc/maelys-git/agent.token \
   --database /var/lib/maelys-git/agent.sqlite3 \
   --manifest /etc/maelys-git/manifest.json \
+  --grants /etc/maelys-git/grants.json \
   --root /srv/git \
   --executor /usr/local/bin/maelys-git-executor \
   --apply --format json
 build/maelys-git-agent run --config /etc/maelys-git/agent.json
 ```
 
-The v1 agent configuration is a flat JSON object with exactly 14 required
-scalar fields. maelys-json parses at most 65,536 bytes, including whitespace,
-with depth 1 and 29 tokens (root, keys and values). Duplicate decoded keys,
+The v1 agent configuration is a flat JSON object with 14 required scalar
+fields and one optional, `grants_path`. maelys-json parses at most 65,536
+bytes, including whitespace, with depth 1 and 31 tokens (root, keys and
+values). Duplicate decoded keys,
 unknown or missing fields, invalid UTF-8, U+0000, BOM and trailing data are
 rejected. `version` must be the integer 1; both timeout fields must be integers
 from 1,000 through 120,000 milliseconds, without fractions or exponents.
 Paths and strings retain their field-specific validation and size limits.
+
+A manifest whose policies read a snapshot of grants, as the one
+`maelys-git migrate gitolite` writes beside its audited program, is opened
+with `--grants FILE` by `authorize`, `validate`, `pr merge`, the shell, the
+hook and the executor; `agent provision --grants FILE` records it as
+`grants_path`. The agent keeps every snapshot its executors read;
+`maelys-git-agent grants-store prune --config FILE` plans their purge and
+removes with `--apply` (`--keep`, `--older-than`). `maelys-git-hook
+pre-receive --receipts FILE` appends one decision receipt per push.
 
 The configuration must be a regular file owned by the agent or root, without
 group/world write permission or a final symlink. The loader opens it once,
@@ -421,9 +442,15 @@ as a direct child of this repository's object directory, and reconstructs its
 object-directory environment for the duration of inspection only.
 Standalone Git commands run in new process groups. An executor started by the
 agent retains its Git children in the group owned by the supervisor; that
-group is cleaned up before any terminal result. The deadline covers waiting
-for exit even after stdout closes. Executable paths at this
-boundary must be absolute.
+group is cleaned up before any terminal result. Children start with no signal
+blocked and every signal at its default action, whatever the service that
+started Git Core blocks or ignores. A deadline sends the group SIGTERM, then
+SIGKILL after a 100 ms grace. Git Core reaps the children it starts, nothing
+else may, and a group is signaled before its leader is reaped: the executor's
+subtree inherits a life descriptor, and once the executor's end is observed
+the group gets SIGTERM, then SIGKILL as soon as that descriptor reports EOF
+or after the grace. The deadline covers waiting for exit even after stdout
+closes. Executable paths at this boundary must be absolute.
 Internal Git helpers have private stdout/stderr pipes. Diagnostics are drained
 concurrently, retained as a bounded printable prefix and included in structured
 failures, so child output cannot corrupt a CLI JSON envelope.

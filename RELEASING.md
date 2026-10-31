@@ -23,9 +23,10 @@ maelys-release).
 
 ## Mechanism of this repository
 
-No release has been published and no mechanism exists yet: this repository
-has no remote and no `maelys-release.conf`. The conventions above are adopted
-first so that the first release starts from them. When the repository gains a
-remote in the `maelys-dev` organisation, the intended path is the socle's own
+No release has been published and no mechanism exists yet: the only tag,
+`v0.1.0`, is local and unpublished, and there is no `maelys-release.conf`.
+The repository lives at `https://github.com/maelys-dev/maelys-git-core`, where
+its pull requests and CI run. The conventions above are adopted first so that
+the first release starts from them. The intended path is the socle's own
 workflows (`maelys-release adopt` with a `maelys-release.conf` declaring
 `[check]` legs and `[dependencies] apart`), replacing this section.

@@ -85,7 +85,7 @@ son reçu inchangé : l'empreinte du texte reste dans le reçu.
 | [`src/agent/agent.c`](../src/agent/agent.c), `maelys_git_agent_serve` | **Migré** : cadrage borné par comptage d’octets ; le parseur reçoit la longueur exacte, NUL compris. | 65 536 octets de JSON, hors un LF ou CRLF final obligatoire. Ligne malformée complète : erreur puis poursuite ; dépassement ou ligne non terminée : erreur et arrêt du flux. |
 | [`src/agent/cloud.c`](../src/agent/cloud.c), `poll_commands` / `process_command` | **Migré** : parse maelys-json du corps HTTP exact, 65 536 octets, profondeur 34 et 32 768 tokens ; schéma du lot et domaine numérique contrôlés avant la boucle. | 32 commandes au plus, curseur inférieur à 1 024 octets. La forme de déduplication v2 de chaque commande est écrite depuis ce document ; chaque commande possède ensuite son document, vérifie son destinataire et suit ses propres validations. Le document du lot garde le curseur vivant jusqu’à sa persistance. |
 | [`src/agent/supervisor.c`](../src/agent/supervisor.c), `mg_supervisor_execute`, puis persistance dans `cloud.c` | **Migré** : une réponse JSONL, 65 536 octets de JSON hors LF/CRLF, profondeur 32 et 32 768 tokens ; parse maelys-json et validation de l’enveloppe. | Corrélation obligatoire de `message_id`, `agent_id` et `command`, protocole/type exacts, statut `ok`/`denied`/`failed`, payload objet. Le statut validé est transmis sans relecture. Une réponse invalide devient un échec local corrélé ; son contenu n’est pas persisté. Les résultats du journal sont revalidés avant remise en file. |
-| [`src/policy/policy.c`](../src/policy/policy.c), `collect_manifest_atoms` / chargement du jeu | Manifeste externe ; prélecture limitée à 1 Mio avec **yyjson**, puis nouvelle ouverture par `maelys_datalog_manifest_load_ex`. | Traiter cette frontière avec maelys-datalog : le chargeur effectif et la collecte des atomes doivent consommer le même contenu validé. Une prévalidation maelys-json suivie d'une réouverture indépendante ne suffit pas. Conserver la sélection `enabled` et les contrôles de chemins et d'intégrité. |
+| [`src/policy/policy.c`](../src/policy/policy.c), chargement du jeu | **Retiré** : la prélecture yyjson (`collect_manifest_atoms`) n'existe plus ; le manifeste est lu par le chargeur de maelys-datalog seul, qui en rend les diagnostics structurés. | La sélection `enabled` et les contrôles de chemins et d'intégrité sont conservés. |
 
 La validation du payload par commande se trouve dans
 [`src/agent/executor.c`](../src/agent/executor.c). Ces lecteurs sont désormais
@@ -199,7 +199,9 @@ Les empreintes existantes ne sont pas à réécrire dans ce chantier :
   de HEAD selon son propre format ; ce flux n'est pas du JSON.
 - [`pull_request.c`](../src/repository/pull_request.c) produit des objets
   commit via `git hash-object` ; conserver le format Git.
-- `gitolite.c` hache le texte de politique, comme indiqué plus haut.
+- `gitolite.c` hache le texte de la politique qu'il génère (SHA-256 du
+  texte de politique, inscrit dans le manifeste) ; ce flux n'est pas du
+  JSON.
 
 ## Conditions maintenues
 
@@ -227,6 +229,6 @@ Les empreintes existantes ne sont pas à réécrire dans ce chantier :
   et la forme de déduplication v1, avec un adaptateur qui relisait les mêmes
   octets validés. La coexistence était déclarée durable.
 - **2026-10-18 (GIT-C05).** Coexistence révoquée : Jansson retiré, toutes
-  les écritures passent à maelys-json `v0.3.0`, la forme de déduplication
+  les écritures passent à maelys-json `v0.3.0` (`v0.3.1` épinglé depuis), la forme de déduplication
   passe en v2 avec migration du journal, et l'exécuteur borne ses résultats à
   la ligne du protocole.

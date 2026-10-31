@@ -1,6 +1,7 @@
 # MAELYS-GIT-PREPARED-AUTH-RECEIPTS-v1
 
-Statut : proposée, amendée le 2026-09-05.
+Statut : livrée (cycle GIT-C02) ; texte amendé le 2026-09-05, état revu le
+2026-10-31.
 
 État d'implémentation au 2026-09-05 : `matchedPolicy: null` est déjà livré dans
 `src/cli/admin.c` et `schemas/authorize.json`. Le constructeur de faits unique,
@@ -12,12 +13,15 @@ exposition sont livrés par le cycle GIT-C02 : les sections 6 et 7 décrivent le
 contrat implémenté.
 Les chemins historiques cités plus bas décrivent l'état lors de la rédaction.
 Le découpage JSON est désormais fixé module par module dans
-[Frontières JSON](json-boundaries.md) : coexistence durable de maelys-json et
-Jansson, sans projet de remplacement général.
+[Frontières JSON](json-boundaries.md) : une seule bibliothèque, maelys-json ;
+Jansson, yyjson et le préparse des manifestes ont été retirés depuis (cycle
+GIT-C05). Les mentions de Jansson plus bas décrivent l'état lors de la
+rédaction.
 
 Cette directive remplace la première ébauche du même nom. Elle intègre les
-vérifications faites dans les dépôts réels et fixe la frontière JSON entre
-Jansson, maelys-json et le noyau de politique.
+vérifications faites dans les dépôts réels et fixait la frontière JSON entre
+Jansson, maelys-json et le noyau de politique, depuis réduite à maelys-json
+seul.
 
 ## 1. État vérifié des dépendances
 
@@ -71,9 +75,8 @@ qualification à prendre dans maelys-datalog, pas une dépendance.
 
 - Évaluation incrémentale et re-saturation.
 - Toute modification de l'interaction avec `git cat-file --batch`.
-- Migration des lecteurs JSON externes, menée séparément selon la section 10.
-  Jansson reste utilisé pour les arbres internes et les enveloppes ; son
-  remplacement général est exclu du découpage retenu.
+- Migration des lecteurs JSON externes, menée séparément selon la section 10
+  (historique : Jansson a depuis été retiré, maelys-json lit et écrit tout).
 - Signature cryptographique du reçu. Le reçu est conçu pour être signable,
   mais aucune signature n'est produite ici.
 
@@ -336,7 +339,7 @@ le régénère dans son propre commit, jamais dans celui d'une fonctionnalité.
    `maelys::json`, tag
    `v0.1.3` : version `0.1.3` et commit résolu
    `0e60ec313388957739968a69c6a78c323b9dd67d` dans
-   `cmake/dependencies.cmake`.
+   `cmake/dependencies.cmake` (depuis `v0.3.1`).
 2. Qualifier les tests existants du writer sur la révision retenue : tri
    UTF-16 et préfixes partagés, dépassement d'octets, de profondeur et de
    nœuds, clés dupliquées à l'écriture.
@@ -349,8 +352,8 @@ le régénère dans son propre commit, jamais dans celui d'une fonctionnalité.
 1. Préserver le correctif déjà livré `matchedPolicy: null`, schéma et contrat
    inclus.
 2. Préserver l'absence de Jansson dans les cibles CLI communes au shell et au
-   hook. La sérialisation des reçus utilise maelys-json et ne doit pas
-   introduire Jansson dans `src/hooks/pre_receive.c`.
+   hook (sans objet depuis son retrait : la sérialisation des reçus utilise
+   maelys-json, comme tout le dépôt).
 
 ## 9. Validation
 
@@ -364,22 +367,29 @@ le régénère dans son propre commit, jamais dans celui d'une fonctionnalité.
   séquentielle.
 - **Cas de décision** : allow, deny explicite, deny par défaut, deny d'erreur
   fail-closed, why-false tronqué par chacune des quatre bornes.
-- **Troncature** : un reçu forcé au-delà de 16 Kio descend l'échelle jusqu'au
-  premier niveau qui tient, et jamais au-delà ; deux sérialisations donnent
-  les mêmes octets ; aucun octet n'est produit en cas d'échec.
+- **Bornes** : un reçu tient en 8 192 octets (`MAELYS_GIT_RECEIPT_MAX_BYTES`,
+  §6.4) ; ce qui dépasse n'est pas produit, il n'y a pas d'échelle de
+  troncature ; l'explication exposée est bornée à part (statut `truncated`) ;
+  deux sérialisations donnent les mêmes octets ; aucun octet n'est produit en
+  cas d'échec.
 - **Surfaces** : la CLI, l'agent `stdio`, l'agent Cloud et le hook produisent
   le même reçu canonique pour la même requête.
 - **Pushes** : petit, moyen, et refus en cours de transaction ; le reçu
-  décisif est le bon et `receiptCount` correspond au nombre d'autorisations.
+  décisif est le bon. Avec `--receipts`, le hook écrit une seule ligne par
+  push qui a produit une décision : le premier refus avec son explication,
+  ou l'autorisation finale d'un push accepté ; un push peut déclencher
+  plusieurs autorisations, il n'en reste qu'un reçu.
 - **Benchmark** : temps total, coût par autorisation, faits dérivés, fresh
   contre prepared, rapporté hors CTest. Aucun seuil temporel dans CTest.
 
 ## 10. Frontière JSON et coexistence
 
 Le découpage normatif et l'inventaire du code sont dans
-[Frontières JSON : maelys-json et Jansson](json-boundaries.md). Ils remplacent
-le projet antérieur de migration complète : les deux bibliothèques répondent
-à des modèles différents.
+[Frontières JSON : une seule bibliothèque, maelys-json](json-boundaries.md).
+Depuis le cycle GIT-C05, maelys-json est la seule bibliothèque JSON du
+dépôt : Jansson, yyjson et le préparse des manifestes ont été retirés. Le
+reste de cette section est l'état lors de la rédaction, qui remplaçait alors
+le projet de migration complète.
 
 maelys-json prend en charge les lectures JSON aux frontières de confiance
 (configuration, requêtes, lots Cloud, réponses de l'exécuteur, manifestes en

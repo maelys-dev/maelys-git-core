@@ -1,6 +1,6 @@
 # Matrice concurrentielle : Maelys Git Core, Gitolite et Forgejo
 
-Etat verifie le 17 octobre 2026. La comparaison porte sur le code present
+Etat verifie le 31 octobre 2026. La comparaison porte sur le code present
 et teste dans ce depot. Elle ne credite pas a Maelys Git Core les fonctions
 prevues pour une future forge Cloudflare.
 
@@ -33,13 +33,13 @@ Git Core vise un noyau local de securite pilotable par une forge separee.
 | Autorisation | Quotas dans le temps (par heure, par jour) | **Absent** : aucune memoire d'un push a l'autre ; mecanisme cadre, compteur declare par la politique et reserve atomiquement | **Extensible** : VREF personnalise | Non verifie | P2 : apres le recu de decision |
 | Autorisation | Quotas sur une transaction multi-ref | **Complet** : commits, chemins, octets et inspection cumules sur tout le receive | **Partiel** : `COUNT` et autres VREF sont principalement evalues par mise a jour de ref | **Partiel** : quotas et limites integres, sans domaine Datalog transactionnel equivalent | Avantage Maelys |
 | Autorisation | Extension de la politique | **Complet** : regles Datalog versionnees et inspecteurs C bornes | **Complet** : vaste ecosysteme VREF, triggers et commandes | **Partiel** : hooks et code de la forge, moins adaptes aux politiques locales declaratives | P1 : bibliotheque de politiques |
-| Audit | Explication et preuve d'une decision | **Partiel** : explications Why-true et Why-false du moteur, empreinte du jeu de politiques et de la session ; recu compact versionne specifie (cycle GIT-C02), non implemente | **Partiel** : test et diagnostic de regles, sans preuve declarative equivalente | **Partiel** : motifs fonctionnels et journaux, sans preuve de politique equivalente | P1 : decision receipt |
+| Audit | Explication et preuve d'une decision | **Complet** dans son perimetre : recu de decision canonique, versionne et verifiable (cycle GIT-C02), rendu par la CLI, l'agent, l'executeur et le hook (`--receipts`), explications Why-true et Why-false du moteur, empreinte du jeu de politiques et des droits, erreurs de politique structurees (cycle GIT-C04) ; recu non signe | **Partiel** : test et diagnostic de regles, sans preuve declarative equivalente | **Partiel** : motifs fonctionnels et journaux, sans preuve de politique equivalente | P2 : signature du recu |
 | Cles | Cles utilisateur et deploy keys | **Complet** : compilation atomique, validation, portee depot, lecture seule, expiration et revocation | **Complet** pour les cles utilisateur ; deploy keys specialisees a construire par convention/extension | **Complet** | P1 : rotation et attestation |
 | Depots | Creation dynamique | **Partiel avance** : segments/depth/leaf injectes en Datalog et migration de `NAMESPACE/CREATOR/..*`; pas de moteur regex general | **Complet** : wild repos, regex, `CREATOR` et permissions dynamiques | **Complet** : UI/API et push-to-create configurable | P1 : autres patrons choisis |
 | Depots | Inventaire, inspection, renommage, archive, suppression recuperable et restauration | **Complet** : plan/apply et preconditions CAS | **Partiel** : administration centree configuration ; operations de cycle de vie souvent externes | **Complet** via la forge, avec modele plus riche | Acquis pour le local |
 | Depots | Mirroring | **Partiel avance** : miroir local idempotent, refs atomiques, HEAD et preconditions ; pas de redirection/scheduling distribue | **Complet** : maitres/copies, synchronisation et redirection avec limites documentees | **Complet** : miroirs de depot | P1 : orchestration distante |
 | Administration | Delegation d'administration | **Partiel** : faits `delegate_namespace` bornes au namespace ; pas encore de publication transactionnelle de sous-politiques | **Complet** : `subconf` et `VREF/NAME` | **Complet** : organisations, equipes et permissions | P1 |
-| Migration | Import de configuration Gitolite | **Partiel avance** : groupes imbriques, depots exacts, `C/R/RW/RW+`, wild `CREATOR`, full refs exactes, prefixes litteraux et refex regex, VREF `NAME/COUNT/MAX_NEWBIN_SIZE`; refus ferme du reste | Sans objet | Sans objet | P1 : includes et subconf |
+| Migration | Import de configuration Gitolite | **Partiel avance** : groupes imbriques et `@all`, depots exacts, `C/R/RW/RW+`, wild `CREATOR`, full refs exactes, prefixes litteraux et refex regex, VREF `NAME/COUNT/COUNT/NEWFILES/MAX_NEWBIN_SIZE`, lecture par un droit de ref, refus contre `merge` et `update-ref` ; refus ferme du reste | Sans objet | Sans objet | P1 : includes et subconf |
 | API | CLI normalise et decouvrable par un agent | **Complet** : enveloppe `agent-cli/v2`, catalogues JSON et plan/apply | **Partiel** : CLI et commandes SSH scriptables, sans contrat homogene equivalent | **Complet** : CLI, API HTTP et interface Web | Avantage Maelys pour l'automatisation locale |
 | API | Agent distant durable | **Complet** dans son perimetre : HTTPS long-poll, journal SQLite, idempotence et outbox | **Absent** comme protocole integre | **Complet** autrement via API, webhooks et services de la forge | P1 : annulation et observabilite |
 | Pull requests | Analyse de conflit et preparation FF/merge/squash | **Complet** dans un meme depot ou entre forks, deterministe et sans mutation du depot cible pendant le plan | **Absent** | **Complet** | Acquis pour le noyau PR |
@@ -61,9 +61,10 @@ Git Core vise un noyau local de securite pilotable par une forge separee.
 
 Maelys Git Core a deja depasse le modele ACL classique sur les points ou son
 architecture Datalog apporte une vraie difference : composition de faits,
-renommages, inspection d'objets, quotas globaux au receive et preconditions de
-politique. Il couvre maintenant le socle des groupes imbriques, refs exactes,
-wild repos avec `CREATOR`, VREF usuels et miroirs locaux. Gitolite reste devant
+renommages, inspection d'objets, quotas globaux au receive, preconditions de
+politique et recu de decision. Il couvre maintenant le socle des groupes
+imbriques, refs exactes, prefixes litteraux et refex regex, wild repos avec
+`CREATOR`, VREF usuels et miroirs locaux. Gitolite reste devant
 pour l'ordre des regles, `subconf`, la delegation publiee, la redirection de
 miroirs et l'ecosysteme d'extensions historiques.
 
@@ -136,7 +137,7 @@ refex ecrit apres `RW ` :
 | `(?:a)` | colonne 2 : `a group, a ')', a ']' or a '}' outside the subset` |
 
 Une regex de l'instantane est compilee une fois, a sa lecture, dans les
-budgets de D3 : 4 096 etats par motif, 4 096 pour les motifs distincts d'un
+budgets fixes du lecteur : 4 096 etats par motif, 4 096 pour les motifs distincts d'un
 depot, 1 048 576 pour l'instantane. Elle est cherchee sans allocation, une
 fois par ref et par motif : les requetes d'un push qui portent une meme ref
 ne la cherchent pas de nouveau.
@@ -161,9 +162,10 @@ faits de politique qu'apres avoir lie le sujet, le depot et la ref de la
 requete : ce qu'un predicat derive contient depend de la requete, jamais de
 la taille de la configuration. Mesure en SMALL et en LARGE : 128 lignes `RW`
 sur un depot (128 faits), 120 prefixes `RW+` de sujets distincts (borne des
-256 atomes de politique), 47 refus nus (borne des regles ; 56 avant que
-`merge` et `update-ref` ne recoivent les refus, et une configuration de plus
-reste admise en droits comme donnees, ou ces refus sont des faits). Un prefixe en fait
+256 atomes de politique), 47 refus nus (borne des regles ; 61 avant que la
+lecture par un droit de ref et les refus contre `merge` et `update-ref` ne
+prennent leurs regles, et une configuration de plus reste admise en droits
+comme donnees, ou ces refus sont des faits). Un prefixe en fait
 coute un fait et un atome ; quand ces budgets refusent la politique, la
 migration la regenere avec ses prefixes en regles et la garde si elle tient :
 une configuration admise par la forme en regles reste admise.
@@ -236,7 +238,7 @@ et a un oracle calibre sur lui.
   migration ecrit, fait de meme, pour un droit de l'utilisateur, d'un de
   ses groupes ou de `@all`, en litteral comme en regex. Un refus seul, ou
   `C` seul, ne donne pas la lecture, dans les deux. La lecture ouvre
-  `clone` et `fetch` par `maelys-git shell` (`upload-pack`), et, par
+  `clone` et `fetch` par `maelys-git-shell` (`upload-pack`), et, par
   l'executeur, `repository_info`, `diff` et `pr_check`.
 - **Ensembles restes en `maelys-git-gitolite-program/1`.** Un repertoire
   migre avant `/2` est ouvert et decide comme il l'etait, octet pour
@@ -280,9 +282,9 @@ pull requests et la CI, pour ne plus dependre d'une forge tierce. Cela ne
 change pas cette frontiere : l'etat des PR et l'execution de la CI seront des
 services separes, construits sur ce noyau, sur un runtime de confinement
 d'execution et sur l'acquisition d'images ; ni l'un ni l'autre n'entre dans
-la bibliotheque C. Le noyau leur doit trois choses qu'il n'a pas encore : un
-recu de decision verifiable, des evenements de push horodates et identifies,
-et Git en HTTP.
+la bibliotheque C. Le noyau leur doit deux choses qu'il n'a pas encore : des
+evenements de push horodates et identifies, et Git en HTTP ; le recu de
+decision verifiable, lui, existe (cycle GIT-C02).
 
 ## Ordre recommande
 
@@ -294,14 +296,14 @@ et Git en HTTP.
    evenements de push et de PR, execution confinee, statuts rendus au service
    de PR comme gates. Service separe ; le noyau n'y gagne que des evenements
    et des gates.
-3. **P1 - rendre les decisions transportables** : recu versionne (cycle
-   GIT-C02, specifie), precede d'erreurs de politique structurees (cycle
-   GIT-C04, specifie) ; propagation de l'annulation dans les processus Git.
+3. **P1 - rendre les decisions transportables** : le recu versionne (cycle
+   GIT-C02) et les erreurs de politique structurees (cycle GIT-C04) sont
+   livres ; reste la propagation de l'annulation dans les processus Git.
 4. **P1 - terminer la parite Gitolite selectionnee** : publication
-   transactionnelle des sous-politiques deleguees, includes confines, budget
-   de regles des prefixes (cycle GIT-C03) et orchestration distante des
-   miroirs. Continuer a refuser toute construction dont la semantique ne peut
-   pas etre preservee.
+   transactionnelle des sous-politiques deleguees, includes confines et
+   orchestration distante des miroirs (le budget de regles des prefixes,
+   cycle GIT-C03, est livre : un fait par droit). Continuer a refuser toute
+   construction dont la semantique ne peut pas etre preservee.
 5. **P1 - definir le contrat de forge** : API de comptes/equipes, etat PR,
    webhooks sortants et smart HTTP Git, sans introduire ces responsabilites
    dans la bibliotheque C.
@@ -324,6 +326,15 @@ et Git en HTTP.
   seule transaction Git.
 - Une PR de fork est inspectee dans une quarantaine jetable ; son identite, son
   OID de branche et ses budgets sont reverifies avant promotion.
+- Chaque decision produit un recu canonique, borne et verifiable ; une erreur
+  de politique est structuree (nature, budget depasse) et refuse l'operation.
+- `pr merge` applique sur l'empreinte des droits revue au plan et juge le
+  changement qu'il applique, base vers commit prepare.
+- Les enfants demarrent sans signal bloque et toutes dispositions par
+  defaut ; Git Core recolte seul ses enfants (SIGCHLD ignore ou
+  `SA_NOCLDWAIT` refuse l'executeur) ; un groupe est signale avant la
+  recolte de son chef, et le groupe d'un executeur termine est tue des que
+  son descripteur de vie ne tient plus a personne, sinon apres la grace.
 
 ## Pistes Maelys Datalog reportees
 
@@ -337,9 +348,9 @@ ameliorations les plus rentables restent :
 Fait depuis : une session reutilisable par politique, dont l'EDB est remplace
 a chaque requete sans recompiler les regles (cycle GIT-C01) ; des diagnostics
 de capacite qui nomment le budget depasse, au chargement comme sur un lot
-d'entree refuse, fournis par maelys-datalog 0.23.1, que Git Core exposera au
-cycle GIT-C04. Le recu de decision se construit dans Git Core sur les vues
-d'explication du moteur (cycle GIT-C02).
+d'entree refuse, fournis par maelys-datalog (0.26.0 epingle) et exposes par
+Git Core depuis le cycle GIT-C04. Le recu de decision est construit dans Git
+Core sur les vues d'explication du moteur (cycle GIT-C02).
 
 Le hook receive streame deja les enregistrements Git. Un solveur Datalog
 streaming n'est pas necessaire pour la correction : sessions reutilisables et
@@ -348,13 +359,15 @@ deterministes.
 
 ## Sources officielles
 
-- Gitolite : [vue d'ensemble](https://gitolite.com/gitolite/overview.html),
+- Gitolite 3.6.15 (8 aout 2026, la version de la calibration) :
+  [vue d'ensemble](https://gitolite.com/gitolite/overview.html),
   [VREF, partie 1](https://gitolite.com/gitolite/vref.html),
   [VREF, partie 2](https://gitolite.com/gitolite/vref-2.html),
   [depots dynamiques](https://gitolite.com/gitolite/wild.html),
   [delegation](https://gitolite.com/gitolite/deleg.html) et
   [mirroring](https://gitolite.com/gitolite/mirroring.html).
-- Forgejo v16 : [guide utilisateur](https://forgejo.org/docs/latest/user/),
+- Forgejo v17 (v17.0.1 du 26 octobre 2026 ; v15 en LTS) :
+  [guide utilisateur](https://forgejo.org/docs/latest/user/),
   [protection des branches et tags](https://forgejo.org/docs/latest/user/repository/protection/),
   [guide administrateur](https://forgejo.org/docs/latest/admin/),
   [Actions](https://forgejo.org/docs/latest/user/actions/overview/) et

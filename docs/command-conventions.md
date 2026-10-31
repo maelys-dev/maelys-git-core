@@ -37,6 +37,7 @@ La valeur d'une option reste une valeur même lorsqu'elle commence par `--` ;
 | `absolute-path` | `MAELYS_CLI_ABSOLUTE_PATH` | non vide et commençant par `/` |
 | `unsigned` | `MAELYS_CLI_UNSIGNED` | décimal dans `[minimum, maximum]` ; un signe est refusé |
 | `size` | `MAELYS_CLI_SIZE` | octets avec suffixe optionnel `K`, `M`, `G`, `T` |
+| `duration` | `MAELYS_CLI_DURATION` | durée avec unité, dans `[minimum, maximum]` (`grants-store prune --older-than`, `90d` par défaut) |
 | `choice` | `MAELYS_CLI_CHOICE` | une des valeurs énumérées (`--style ff\|merge\|squash`) |
 | `hex` | `MAELYS_CLI_HEX`, `MAELYS_CLI_HEX_OR` | hexadécimal minuscule de longueur fixe (SHA-256 : 64 ; OID : 40 ou 64) |
 
@@ -49,7 +50,10 @@ Les dépendances (`requires`), exclusions (`conflictsWith`) et groupes
 tout-ou-rien (`group`, contrainte `all-or-none`) sont déclarés dans le
 catalogue et vérifiés avant l'exécution du gestionnaire. Chaque transaction
 place `--apply` et ses préconditions revues dans le groupe `apply` : un plan ne
-porte jamais de précondition, un apply n'en manque jamais.
+porte jamais de précondition, un apply n'en manque jamais. Une précondition
+qui ne vaut que pour une forme du plan est déclarée dépendante de l'option
+qui choisit cette forme (`depends_on`), comme `pr merge
+--expected-grants-fingerprint` et `--expected-source-identity`.
 
 Une valeur par défaut est déclarée une seule fois, dans `default_text` ; elle
 est validée contre le type au démarrage, exposée par `describe` (`default`) et
@@ -109,7 +113,9 @@ au monde. Une cible d'écriture existante n'est jamais écrasée implicitement.
 contrôle les séquences ANSI du mode texte ; `--format jsonl` est réservé aux
 commandes à enregistrements (aucune dans ce dépôt aujourd'hui). La variable
 `MAELYS_CLI_FORMAT=json|text` fixe le rendu par défaut. `PROGRAMME completion
-bash|zsh|fish` imprime une complétion générée depuis le catalogue.
+bash|zsh|fish` imprime une complétion générée depuis le catalogue. Les
+options globales du cadre, `--lang TAG`, `--progress`, `--verbose`, `--pager`
+et `--field NOM`, sont celles de [la référence](cli.md).
 
 Une réussite JSON va exclusivement sur stdout :
 

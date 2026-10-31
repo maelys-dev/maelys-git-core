@@ -5,6 +5,27 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- The documentation is brought in line with the code: README (maelys-json
+  0.3.1, the request facts and the `slice_*` facts, the audited program `/2`
+  beside the grants as data, `--grants` on every command that opens a
+  manifest, `provision --grants`, `grants-store prune`, `hook pre-receive
+  --receipts`, the 15th optional configuration field and its 31 tokens, the
+  signal defaults, the grace and the life descriptor of the security
+  boundary), the transaction and PR core (what the Gitolite migration
+  covers and refuses today; the exit watcher, the signal defaults, the one
+  escalation, the grace and the life descriptor), the competitive matrix
+  (verified on 31 October 2026: decision receipts and structured policy
+  errors delivered, the prefix-rule budget of GIT-C03 done, maelys-datalog
+  0.26.0, `maelys-git-shell`, Forgejo v17.0.1 and Gitolite 3.6.15 as
+  sources, the hardening frontier completed), the receipts directive
+  (delivered; Jansson, yyjson and the manifest prescan are gone; 8 KiB cap,
+  no truncation ladder), the JSON boundaries, the CLI conventions (the
+  `duration` type, preconditions declared by `depends_on`, the framework's
+  global options), the CLI migration (`-h`), the repository lifecycle
+  (`renameat2` on Linux too), the protocol contract (maelys-json 0.3.1,
+  `applied_changes`), `RELEASING.md` (the remote exists, no release yet) and
+  `LICENSING.md` (every document README links). Earlier entries of this
+  section that later entries supersede now say so.
 - **The agent's successful request no longer pays the executor group's
   100 ms grace when nothing is left in the group.** The executor and
   everything it starts inherit a descriptor they never write, the group's
@@ -50,14 +71,15 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   `semantics`) that asks to migrate again; every other decision of `/1` is
   unchanged. The executor's `update_ref` was already a push and is
   unchanged. The compiled encoding has 81 fixed rules, and room for 47
-  bare-literal denies (56 before).
+  bare-literal denies (61 before the rules this entry and the read by a ref
+  grant add).
 - **Access widened, on a new migration only.** The Gitolite migration
   writes the audited program `maelys-git-gitolite-program/2`, which lets a
   ref grant read its repository, as Gitolite 3.6.15 does: for `R any`, the
   read gitolite-shell asks for upload-pack, Gitolite applies every rule
   whose permission holds `R`, whatever its refex. With only `RW+
   refs/heads/feature/ = alice`, alice now reads the whole repository:
-  `clone` and `fetch` through `maelys-git shell`, and `repository_info`,
+  `clone` and `fetch` through `maelys-git-shell`, and `repository_info`,
   `diff` and `pr_check` through the executor. The grant may be the user's,
   a group's or `@all`'s, literal or regex; a deny alone, or `C` alone,
   reads nothing. Every other decision is unchanged. A set migrated earlier
@@ -98,7 +120,9 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   which pays the group's 100 ms grace, costs about 110 ms under Linux
   before and after; on a macOS host with an Endpoint Security client its
   fastest series drop from 149-153 ms to 140-148 ms.
-  `bench-maelys-git-supervisor`, built on demand, measures it.
+  `bench-maelys-git-supervisor`, built on demand, measures it. (The grace
+  is since paid only while something holds the group's life descriptor,
+  above.)
 - The Cloud agent signals the executor's process group before it reaps
   the executor, never after. It observes the executor's end without
   reaping it (`waitid` with `WNOWAIT`), sends the group SIGTERM, then
@@ -109,7 +133,8 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   unchanged, and the group is escalated once per request: an exchange that
   failed before the executor ended paid the grace twice. A successful
   request that leaves no descendant now waits the 100 ms grace, which the
-  empty group did not. The supervisor alone reaps its executor: under a
+  empty group did not (since removed by the group's life descriptor,
+  above). The supervisor alone reaps its executor: under a
   SIGCHLD disposition the kernel reaps by, ignored or `SA_NOCLDWAIT`,
   inherited from whatever started the agent, no executor starts and the
   request fails, "SIGCHLD is ignored"; an executor reaped by something
@@ -194,7 +219,8 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   one, and Git Core as the oracle read deny-wins; the 11 decisions where
   Gitolite's first match differs are all stricter in Git Core. Reads are
   not compared: a ref grant alone gives read access in Gitolite and not in
-  Git Core, a known difference, stricter, to be corrected apart.
+  Git Core, a known difference, stricter, corrected since by
+  `maelys-git-gitolite-program/2` (above).
 - maelys-http is pinned to 0.1.18 (was 0.1.16), which includes 0.1.17. The
   Cloud agent no longer loses an outbox POST to a TLS 1.3 session ticket.
   With Mbed TLS 4, a ticket the server sent just before the read between a
@@ -270,9 +296,10 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   (`refs/tags/v1x0` was allowed), and `RW refs/tags/v1.0$` granted fewer.
   The entry is reported as `'.' is any character in Gitolite; write '\.'
   for a literal dot` and blocks `--apply`; `\.`, a literal dot in Gitolite
-  too, is now accepted. Other regular-expression syntax is still reported
-  first as `unsupported refex syntax`. A snapshot of grants still reads `.`
-  in a pattern as a literal dot.
+  too, is now accepted. Other regular-expression syntax was still reported
+  first as `unsupported refex syntax`; it has since migrated as `regex`
+  patterns of `maelys-git-grants/2` (above). An exact or prefix pattern of
+  a snapshot still reads `.` as a literal dot.
 - `maelys-git-agent grants-store prune --config FILE` purges the agent's
   store of grants snapshots: a plan by default, `--apply` to remove. It keeps
   the current snapshot, the `--keep` most recently used (16 by default) and
@@ -317,7 +344,7 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
     "rule capacity exceeded"; the engine used to attribute it to the
     expansion of OR. Its code, its location and its capacity do not change.
 - `migrate gitolite` writes the audited Gitolite program,
-  `maelys-git-gitolite-program/1`, whose text no longer depends on the
+  `maelys-git-gitolite-program/1` (`/2` since, above), whose text no longer depends on the
   configuration, and the configuration's grants as `grants.json`,
   `maelys-git-grants/1`. Granting or revoking a right no longer changes the
   policy or its fingerprint; publishing rights is publishing that file, by a
@@ -451,7 +478,8 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   itself is never in the receipt. `maelys_git_receipt_serialize` writes it as
   Maelys Canonical JSON v1 through maelys-json, at most 8 KiB, with its
   SHA-256; `maelys_git_receipt_verify` accepts only that form and the closed
-  shape of version 1 (`maelys_git_receipt.h`, library `maelys_git_receipt`).
+  shape of its version, 1 then, 2 since (above) (`maelys_git_receipt.h`,
+  library `maelys_git_receipt`).
 - `maelys-git authorize` adds `receipt`, the receipt of its decision, and
   `receiptSha256`, the SHA-256 of its canonical bytes; with `--explain`,
   written before `--`, it also renders the engine's explanation and adds it
@@ -505,7 +533,7 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   `code` and `message` and the protocol `maelys-git-agent/1` are unchanged.
   The failure envelopes of the other commands are unchanged.
 - The policy engine is reached through the installed SDK of maelys-datalog
-  v0.22.0 (consumer API 2), `<maelys/datalog.h>` alone, and no longer
+  v0.22.0 (consumer API 2; 0.26.0 since, above), `<maelys/datalog.h>` alone, and no longer
   through structures private to the engine, which 0.10.0 removed. The
   `maelys_git` domain declares predicates only; a policy's constants are
   local to it; one session per
@@ -524,8 +552,9 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   short name completed by `refs/heads/`, a final `$` as equality. A deny on a
   bare literal now covers the names that start with it, as Gitolite does and
   more than the exact fact it replaced; a grant on a bare literal stays exact.
-  Regular-expression syntax is refused with `unsupported refex syntax`; the
-  generated policy is loaded by the engine before it is published.
+  Regular-expression syntax is refused with `unsupported refex syntax`
+  (migrated since as `regex` patterns, above); the generated policy is
+  loaded by the engine before it is published.
 - SHA-256 comes from the public digest of the maelys-cli core instead of a
   header private to the engine repository.
 - maelys-datalog pinned at v0.21.0 (from v0.4.0). 0.21.0 answers `OK` and
@@ -609,7 +638,6 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
   client or ABI 1: the release moves maelys-http's own pins, and it now pins
   maelys-system v0.11.0, the version this repository builds it against, so
   the two no longer disagree.
-
 - The five Maelys dependencies are pinned to the commits of published tags,
   never to a branch commit that a history rewrite can erase: maelys-cli
   v0.5.29 (from 0.5.11), maelys-json v0.2.0 (from v0.1.3, ABI 2; nothing
