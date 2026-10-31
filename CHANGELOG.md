@@ -5,6 +5,18 @@ format follows Keep a Changelog; versions follow Semantic Versioning.
 
 ## Unreleased
 
+- **The agent's successful request no longer pays the executor group's
+  100 ms grace when nothing is left in the group.** The executor and
+  everything it starts inherit a descriptor they never write, the group's
+  life descriptor; once the executor's end is observed, unreaped, the
+  supervisor sends SIGTERM to the group, then SIGKILL as soon as that
+  descriptor reports EOF, nobody holding it any more, or after the grace
+  when something still does. The order of #27 is unchanged, signal before
+  reap, and `term-order` still proves it; a wait that timed out or failed
+  keeps the full escalation, and ECHILD still sends nothing. Measured on
+  macOS, Release, `bench-maelys-git-supervisor`: `health` 136-165 ms before, 24-44 ms
+  after, the same as a supervisor that sends SIGKILL alone, three
+  alternations each.
 - **Security: pr merge authorizes the change it applies.** Its paths, their
   attributes and its summary came from the pull request's diff, merge base
   -> head. A merge that follows a rename of the base writes a path that diff

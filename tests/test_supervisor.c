@@ -113,20 +113,27 @@ static int executor_mode(const char *executable, const char *marker) {
     /* Taken before the fork: once the leader has exited, getppid() would
      * name the process that adopted the descendant. */
     term_order_leader = getpid();
+    /* The descendant says when it is prepared, dispositions set and
+     * descriptors closed; the executor answers and ends only then, so that
+     * the signals that follow its end find the descendant as the scenario
+     * says, whatever the host's scheduling. */
+    int ready[2];
+    if (pipe(ready) != 0) return 2;
     pid_t descendant = fork();
     if (descendant < 0) return 2;
     if (descendant == 0) {
+        (void)close(ready[0]);
         if (ends_with(marker, "/term-order")) {
             /* Handles the group's SIGTERM instead of ignoring it, to record
              * whether the leader, its parent, was already reaped by then;
-             * then lives on, for the SIGKILL that must follow. Its stdout
-             * closes only once the handler is in place: the supervisor
-             * takes that EOF as the executor's end and signals the group. */
+             * then lives on, for the SIGKILL that must follow. */
             (void)snprintf(term_order_marker, sizeof(term_order_marker), "%s", marker);
             struct sigaction record = {.sa_handler = record_term_order};
             (void)sigemptyset(&record.sa_mask);
             if (sigaction(SIGTERM, &record, NULL) != 0) _exit(2);
             (void)close(STDOUT_FILENO);
+            (void)!write(ready[1], "r", 1u);
+            (void)close(ready[1]);
             pause_ms(700);
             FILE *stream = fopen(marker, "ab");
             if (stream) {
@@ -135,10 +142,15 @@ static int executor_mode(const char *executable, const char *marker) {
             }
             _exit(0);
         }
-        if (ends_with(marker, "/success-descendant")) {
-            (void)close(STDOUT_FILENO);
+        if (ends_with(marker, "/success-descendant") || ends_with(marker, "/life-closed")) {
             (void)signal(SIGTERM, SIG_IGN);
+            /* Lets go of the life descriptor it inherited: nothing then
+             * holds it, and the group's SIGKILL is not to wait the grace. */
+            if (ends_with(marker, "/life-closed")) (void)close(3);
+            (void)close(STDOUT_FILENO);
         }
+        (void)!write(ready[1], "r", 1u);
+        (void)close(ready[1]);
         pause_ms(700);
         FILE *stream = fopen(marker, "wb");
         if (stream) {
@@ -147,9 +159,24 @@ static int executor_mode(const char *executable, const char *marker) {
         }
         _exit(0);
     }
-    if (ends_with(marker, "/success-descendant") || ends_with(marker, "/term-order")) {
+    (void)close(ready[1]);
+    char acknowledged = 0;
+    while (read(ready[0], &acknowledged, 1u) < 0 && errno == EINTR) {}
+    (void)close(ready[0]);
+    if (acknowledged != 'r') return 2;
+    if (ends_with(marker, "/success-descendant") || ends_with(marker, "/life-closed") ||
+        ends_with(marker, "/term-order")) {
         (void)fputs(valid_result, stdout);
         (void)fputc('\n', stdout);
+        (void)fflush(stdout);
+        /* When this executor ends, for the test to measure what follows. */
+        char exit_path[4300];
+        (void)snprintf(exit_path, sizeof(exit_path), "%s.exit", marker);
+        FILE *exit_record = fopen(exit_path, "wb");
+        if (exit_record) {
+            (void)fprintf(exit_record, "%lld\n", (long long)mg_monotonic_ms());
+            (void)fclose(exit_record);
+        }
         return 0;
     }
     pause_ms(5000);
@@ -316,18 +343,22 @@ int main(int argc, char **argv) {
     if (result == MAELYS_GIT_OK)
         return fail("executor that exited before reading was reported as success");
 
-    const char *cases[] = {"stdout-closed", "nested", "success-descendant"};
+    const char *cases[] = {"stdout-closed", "nested", "success-descendant", "life-closed"};
     for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/%s", directory, cases[i]);
-        config.request_timeout_ms = i == 2u ? 2000u : 200u;
+        config.request_timeout_ms = i >= 2u ? 2000u : 200u;
         response = NULL;
         int64_t started = mg_monotonic_ms();
+        memset(&error, 0, sizeof(error));
         result = mg_supervisor_execute(&config, &command, "{}", NULL, &response, &succeeded, &error);
+        int64_t case_elapsed = mg_monotonic_ms() - started;
         free(response);
-        if (result != (i == 2u ? MAELYS_GIT_OK : MAELYS_GIT_ERR_LIMIT))
-            return fail("closed stdout or nested subprocess bypassed supervision");
-        if (mg_monotonic_ms() - started > 1500)
-            return fail("wait after stdout EOF ignored the deadline");
+        if (result != (i >= 2u ? MAELYS_GIT_OK : MAELYS_GIT_ERR_LIMIT) || case_elapsed > 1500) {
+            fprintf(stderr, "test_supervisor: %s: result %d after %lld ms, %s\n", cases[i], (int)result,
+                    (long long)case_elapsed, error.message);
+            return fail(case_elapsed > 1500 ? "wait after stdout EOF ignored the deadline"
+                                            : "closed stdout or nested subprocess bypassed supervision");
+        }
         pause_ms(900);
         if (access(config.manifest_path, F_OK) == 0)
             return fail("descendant survived a terminal executor result");
@@ -377,6 +408,48 @@ int main(int argc, char **argv) {
         return fail("the group was signaled after its leader was reaped, or a descendant survived");
     }
     if (unlink(config.manifest_path) != 0) return fail("cannot remove the term-order record");
+    char term_order_exit[4300];
+    (void)snprintf(term_order_exit, sizeof(term_order_exit), "%s.exit", config.manifest_path);
+    if (unlink(term_order_exit) != 0) return fail("cannot remove the term-order exit record");
+    /* Both descendants ignore SIGTERM and take the SIGKILL. Measured from
+     * the executor's end, which it records, to the request's return: the
+     * descendant that holds the life descriptor is given the grace first,
+     * the one that let go of it is not. Three pairs; the shortest of each
+     * side counts, so a host that stalls a spawn does not fail this alone. */
+    int64_t shortest_held = INT64_MAX, shortest_released = INT64_MAX;
+    for (int pair = 0; pair < 3; ++pair) {
+        for (int held = 1; held >= 0; --held) {
+            (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/%s", directory,
+                           held ? "success-descendant" : "life-closed");
+            /* A budget for a host that stalls a spawn for seconds: the
+             * measure below starts at the executor's end, not here. */
+            config.request_timeout_ms = 5000u;
+            response = NULL;
+            memset(&error, 0, sizeof(error));
+            result = mg_supervisor_execute(&config, &command, "{}", NULL, &response, &succeeded, &error);
+            int64_t returned = mg_monotonic_ms();
+            free(response);
+            if (result != MAELYS_GIT_OK) {
+                fprintf(stderr, "test_supervisor: %s: result %d, %s\n", cases[held ? 2 : 3], (int)result,
+                        error.message);
+                return fail("a descendant case failed on the second run");
+            }
+            char exit_path[4300], exit_text[64];
+            (void)snprintf(exit_path, sizeof(exit_path), "%s.exit", config.manifest_path);
+            if (!read_text(exit_path, exit_text, sizeof(exit_text)) || unlink(exit_path) != 0)
+                return fail("the executor did not record its end");
+            int64_t after_exit = returned - (int64_t)strtoll(exit_text, NULL, 10);
+            if (held && after_exit < shortest_held) shortest_held = after_exit;
+            if (!held && after_exit < shortest_released) shortest_released = after_exit;
+            pause_ms(900);
+            if (access(config.manifest_path, F_OK) == 0)
+                return fail("descendant survived a terminal executor result");
+        }
+    }
+    fprintf(stderr, "test_supervisor: after the executor's end, life descriptor held %lld ms, released %lld ms\n",
+            (long long)shortest_held, (long long)shortest_released);
+    if (shortest_held < 90) return fail("a group still held was not given the grace");
+    if (shortest_released >= 90) return fail("a group that nobody holds any more was given the grace");
 
     (void)snprintf(config.manifest_path, sizeof(config.manifest_path), "%s/reply", directory);
     config.request_timeout_ms = 5000u;
