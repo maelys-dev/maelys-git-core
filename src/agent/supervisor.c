@@ -100,6 +100,13 @@ static int write_all_until(int fd, const void *bytes, size_t length,
     return ok;
 }
 
+/* The descriptor the executor and everything it starts inherit, and hold
+ * without knowing it: its EOF says that no member of the group holds it any
+ * more. The executor's own pipes are 0 and 1. */
+#define MG_EXECUTOR_LIFE_FD 3
+/* The grace of mg_terminate_process_group between SIGTERM and SIGKILL. */
+#define MG_EXECUTOR_GRACE_MS 100
+
 /* Waits until DEADLINE for the executor's end without reaping it. */
 static mg_wait_result_t observe_executor(pid_t child, int64_t deadline) {
 #if defined(MG_SUPERVISOR_WAIT_FAULT)
@@ -112,6 +119,29 @@ static mg_wait_result_t observe_executor(pid_t child, int64_t deadline) {
     }
 #endif
     return mg_wait_child_until(child, deadline, MG_WAIT_OBSERVE, NULL);
+}
+
+/* The leader's end has been observed and it is not reaped: SIGTERM to the
+ * group, then SIGKILL, at once when the life descriptor reports EOF, nobody
+ * holding it any more, else after the grace. A group that has nobody left
+ * to signal (ESRCH) is done. */
+static void end_group_after_leader(pid_t leader, int life) {
+    if (kill(-leader, SIGTERM) != 0 && errno == ESRCH) return;
+    int64_t until = mg_monotonic_ms();
+    if (until >= 0) until += MG_EXECUTOR_GRACE_MS;
+    for (;;) {
+        int timeout = 0;
+        if (!remaining_timeout(until, &timeout) || timeout == 0) break;
+        struct pollfd descriptor = {.fd = life, .events = POLLIN | POLLHUP};
+        int ready = poll(&descriptor, 1u, timeout);
+        if (ready < 0 && errno == EINTR) continue;
+        if (ready <= 0) break;
+        char drained[64];
+        ssize_t count = read(life, drained, sizeof(drained));
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) break;
+    }
+    (void)kill(-leader, SIGKILL);
 }
 
 /* One executor for COMMAND, on the kept snapshot GRANTS names (none when its
@@ -137,11 +167,21 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
     }
     int input_pipe[2] = {-1, -1};
     int output_pipe[2] = {-1, -1};
-    if (!open_request_channel(input_pipe) || !mg_pipe_cloexec(output_pipe)) {
+    int life_pipe[2] = {-1, -1};
+    if (!open_request_channel(input_pipe) || !mg_pipe_cloexec(output_pipe) ||
+        !mg_pipe_cloexec(life_pipe)) {
         close_fd(&input_pipe[0]); close_fd(&input_pipe[1]);
         close_fd(&output_pipe[0]); close_fd(&output_pipe[1]);
+        close_fd(&life_pipe[0]); close_fd(&life_pipe[1]);
         mg_error_set(error, MAELYS_GIT_ERR_IO, errno, "cannot create executor pipes");
         return MAELYS_GIT_ERR_IO;
+    }
+    /* A dup2 onto its own number keeps close-on-exec: the end to hand over
+     * must not already be the number the executor sees it as. */
+    if (life_pipe[1] == MG_EXECUTOR_LIFE_FD) {
+        int moved = fcntl(life_pipe[1], F_DUPFD_CLOEXEC, MG_EXECUTOR_LIFE_FD + 1);
+        close_fd(&life_pipe[1]);
+        life_pipe[1] = moved;
     }
     posix_spawn_file_actions_t actions;
     int action_result = posix_spawn_file_actions_init(&actions);
@@ -160,10 +200,15 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
         action_result = posix_spawn_file_actions_addclose(&actions, output_pipe[0]);
     if (action_result == 0)
         action_result = posix_spawn_file_actions_addclose(&actions, output_pipe[1]);
-    if (action_result != 0) {
+    /* Last, after the closes above: one of them may name this number. */
+    if (action_result == 0 && life_pipe[1] >= 0)
+        action_result = posix_spawn_file_actions_adddup2(
+            &actions, life_pipe[1], MG_EXECUTOR_LIFE_FD);
+    if (action_result != 0 || life_pipe[1] < 0) {
         if (actions_initialized) (void)posix_spawn_file_actions_destroy(&actions);
         close_fd(&input_pipe[0]); close_fd(&input_pipe[1]);
         close_fd(&output_pipe[0]); close_fd(&output_pipe[1]);
+        close_fd(&life_pipe[0]); close_fd(&life_pipe[1]);
         mg_error_set(error, MAELYS_GIT_ERR_PROCESS, action_result,
                      "cannot configure isolated executor descriptors");
         return MAELYS_GIT_ERR_PROCESS;
@@ -187,8 +232,9 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
     (void)posix_spawn_file_actions_destroy(&actions);
     close_fd(&input_pipe[0]);
     close_fd(&output_pipe[1]);
+    close_fd(&life_pipe[1]);
     if (spawn_result != MAELYS_GIT_OK) {
-        close_fd(&input_pipe[1]); close_fd(&output_pipe[0]);
+        close_fd(&input_pipe[1]); close_fd(&output_pipe[0]); close_fd(&life_pipe[0]);
         return spawn_result;
     }
     int64_t deadline = mg_monotonic_ms();
@@ -246,8 +292,15 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
     /* No descendant may keep mutating repositories after a terminal result,
      * even if the executor returned successfully or closed stdout early. The
      * leader is not reaped yet, so the group's number can name no stranger,
-     * and a descendant that ignores SIGTERM still takes the SIGKILL. */
-    if (!lost && !escalated) mg_terminate_process_group(child);
+     * and a descendant that ignores SIGTERM still takes the SIGKILL. Once the
+     * leader's end is observed, the grace is paid only while something still
+     * holds the life descriptor: a group left empty costs nothing. A wait
+     * that timed out or failed keeps the full escalation. */
+    if (!lost && !escalated) {
+        if (ended == MG_WAIT_EXITED) end_group_after_leader(child, life_pipe[0]);
+        else mg_terminate_process_group(child);
+    }
+    close_fd(&life_pipe[0]);
     int status = 0;
     pid_t waited = 0;
     if (!lost) {
