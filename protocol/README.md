@@ -12,7 +12,7 @@ and source quotas are signed 64-bit integer lexemes: fractions and exponents
 (including `1.0` and `1e0`) are refused. Counts stored as `size_t` must also fit
 that platform's range; field-specific positive or nonnegative bounds still apply.
 
-The command reader uses maelys-json `v0.1.3`, profile `RFC8259`, with explicit
+The command reader uses maelys-json `v0.3.1`, profile `RFC8259`, with explicit
 limits of 65,536 JSON bytes (including whitespace), 32 levels of container
 nesting, and 32,768 tokens including keys and containers. The token budget is
 derived from the byte ceiling, not the library's default of 8,192. The reader
@@ -100,7 +100,9 @@ whether `authorize` or the denial of another command, carries
 `matched_policy`, `receipt` and `receipt_sha256`, a `pr_merge` refused by that
 policy included. A `pr_merge` refused by its gates, or because the pull request
 is empty or not mergeable, is not a decision: its `status: "denied"` payload
-keeps `code` and `message`. An optional
+keeps `code` and `message`. `pr_check` and `pr_merge` results carry
+`applied_changes`, the change the merge applies, base to prepared commit, or
+`null` when nothing is applied. An optional
 `pr_id` creates forge-neutral `refs/maelys/pulls/<id>/head` and `merged`
 references in the same atomic Git reference transaction as the target branch.
 For a fork PR, `source_repository` and `source_ref` are supplied together.

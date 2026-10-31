@@ -40,6 +40,7 @@ of this repository is not defined (see `RELEASING.md`).
 `README.md` links `docs/cli.md` (generated), `docs/cli-contract.json`
 (generated), `docs/command-conventions.md`, `docs/agent-cli.md`,
 `docs/cli-migration.md`, `docs/gitolite-forgejo-gap.md`,
-`docs/repository-lifecycle.md` and `docs/json-boundaries.md`. They stay in
+`docs/repository-lifecycle.md`, `docs/json-boundaries.md`,
+`docs/prepared-auth-receipts.md` and `protocol/README.md`. They stay in
 this repository. The other documents under `docs/` are engineering prose
 that is not engaged publicly.

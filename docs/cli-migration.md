@@ -13,7 +13,7 @@ de commandes et mêmes schémas de `data`. Les différences visibles sont :
 | `describe` : `globalOptions` était un objet | tableau de descripteurs d'options, comme `input.options` |
 | `describe` : `argument.type` limité à `string`, `integer`, `path`, `oid`, `sha256` | `unsigned`, `size`, `choice` (avec `choices`), `hex` (avec `digits`), bornes `minimum`/`maximum`, `default` |
 | `describe` et `version` : `product`, `version` | ajout de `program`, `framework` (version de `libmaelys_cli`) et `cliApi` ; `describe` ajoute `external`, `hidden`, `passthrough` |
-| `help` global seulement | `help COMMAND_ID`, `COMMAND --help`, `-h` |
+| `help` global seulement | `help COMMAND_ID`, `COMMAND --help` (`-h` n'est plus `--help` depuis maelys-cli 0.7.0) |
 | erreur texte `Maelys error [CODE] (commande): message` | `PROGRAMME: [CODE] message` puis `Hint: …` |
 | `--style`, `--from` : chaînes vérifiées par le gestionnaire | choix (`ff\|merge\|squash`, `archive\|trash`) vérifiés avant exécution |
 | `--approvals`, `--required-approvals`, `--max-*` : entiers signés | non signés ; une valeur négative est refusée (`--approvals -1` passait auparavant la barrière d'approbations) |

@@ -155,16 +155,21 @@ command that enforces both the repository restriction and read-only access
 before Datalog or Git execution.
 
 `maelys-git migrate gitolite INPUT OUTPUT` analyzes Gitolite configuration
-without writing by default. The safe subset covers nested groups, exact
-repositories, `C`, `R`, `RW`, `RW+`, exact full-ref `RW`/`RW+` rules and exact
-full-ref denies. It also covers the common `NAMESPACE/CREATOR/..*` wild-repo
-shape and the deny VREFs `NAME`, `COUNT`, `COUNT/NEWFILES`, and
+without writing by default. The safe subset covers nested groups and `@all`,
+exact repositories, `C`, `R`, `RW`, `RW+`, and refexes as Gitolite reads
+them: exact full refs, literal prefixes, short names completed by
+`refs/heads/`, a final `$` as equality, a bare-literal deny as a prefix, and
+regular expressions within the subset of `maelys/cli/regex.h`, which migrate
+as `regex` patterns of the grants snapshot (`maelys-git-grants/2`) and never
+into the compiled policy. It also covers the common `NAMESPACE/CREATOR/..*`
+wild-repo shape and the deny VREFs `NAME`, `COUNT`, `COUNT/NEWFILES`, and
 `MAX_NEWBIN_SIZE`. `RW+` remains distinct for force and delete operations.
 `--apply` atomically writes a valid Datalog manifest only when every source
-line has a semantics-preserving mapping. Includes, `subconf`, regex ref rules,
-other repository patterns, positive VREFs and unknown VREFs remain explicit
-violations. Every incompatible source line is reported rather than silently
-weakened.
+line has a semantics-preserving mapping. Includes, `subconf`, other
+repository patterns, positive VREFs, unknown VREFs, a refex that names
+`/USER/`, a top-level `|`, a `^`, and any syntax outside the subset remain
+explicit violations. Every incompatible source line is reported rather than
+silently weakened.
 
 The output holds three files: `gitolite-migrated.dl`, the audited Gitolite
 program `maelys-git-gitolite-program/2`, whose text is the same for every
@@ -211,11 +216,23 @@ purge syncs the directory and audits the digests it removed as a
 All Git subprocess capture paths have a 120-second execution deadline and
 bounded output. Large tree, diff, commit, and blob-batch streams are spooled to
 temporary files with explicit quotas rather than accumulated in RAM.
-Subprocesses receive only a minimal allowlisted environment and start in their
-own process group; a deadline terminates the whole group so a helper cannot
-leave a descendant running. The network agent applies the same boundary to
-each one-request executor process and uses one monotonic deadline across
-partial response reads.
+Subprocesses receive only a minimal allowlisted environment, start with no
+signal blocked and every signal at its default action, whatever the service
+that started Git Core blocks or ignores, and start in their own process group
+(the Git children of a supervised executor join the executor's group); a
+deadline terminates the whole group, SIGTERM then SIGKILL after a 100 ms
+grace, so a helper cannot leave a descendant running. Exits are waited for on
+the exit itself, kqueue `EVFILT_PROC` on macOS and a pidfd on Linux, with a
+bounded backoff where neither exists. The network agent applies the same
+boundary to each one-request executor process and uses one monotonic deadline
+across partial response reads: one escalation per request, when the exchange
+fails. When the exchange succeeds, the executor's end is observed without
+reaping it, and the group, whose number is still the executor's own, gets
+SIGTERM, then SIGKILL as soon as the life descriptor every member inherited
+reports EOF, nobody holding it any more, or after the grace while something
+still does; the executor is reaped last. A wait that fails otherwise than by
+`ECHILD` fails the request with its error, `executor wait failed: …`, after
+the group was stopped once.
 
 Git Core reaps the processes it starts, and nothing else may. The host must
 not set `SIGCHLD` explicitly to `SIG_IGN` (its default disposition is fine),

@@ -27,7 +27,8 @@ They are read-only plans unless `--apply` is supplied. A plan returns
 `--expected-source-identity`; replacing the source directory between plan and
 apply therefore fails closed.
 
-Rename and restore use a no-replace filesystem rename on macOS. Archive and
+Rename and restore use a no-replace filesystem rename (`renameatx_np` with
+`RENAME_EXCL` on macOS, `renameat2` with `RENAME_NOREPLACE` on Linux). Archive and
 delete first reserve a mode-0700 storage entry and then move the repository
 within the same repository root. Storage is structured as:
 
