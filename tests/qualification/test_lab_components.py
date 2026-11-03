@@ -1,6 +1,6 @@
 """Sensitivity tests of the qualification harness components, with no product
 binary: the counter-examples of the 2b reviews (2B-01 to 2B-04, the hook's expiry,
-843-01, 843-02, its follow-up on 570154a and review B8) must be detected.
+843-01, 843-02, its follow-up on 570154a, reviews B8 and 03) must be detected.
 
     test_lab_components.py OPENSSL
 """
@@ -165,38 +165,59 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
     result = subprocess.run(["sh", str(hook), "committed"], input="0 1 refs/heads/x\n", capture_output=True, text=True)
     check("hook.committed_marker", True, result.returncode == 0 and (markers / "committed").exists())
 
-    # ---- 843-02, its follow-up on 570154a and review B8: cleanup covers
-    # the real scope of a launch, under an authority it can prove. A fake
-    # agent in its own session starts a child that, like the executor,
-    # leads another process group in the same session (setpgrp, no setsid)
-    # and would write a marker late; the agent acknowledges the child's
-    # start by a file holding its pid. Each child has a bounded lifetime
-    # (it exits by itself after its delay) and a safety net closes the
-    # block.
+    # ---- 843-02, its follow-up on 570154a, reviews B8 and 03: cleanup
+    # covers the real scope of a launch, under an authority it can prove,
+    # and signals only identities it can hold. A fake agent in its own
+    # session starts a child that, like the executor, leads another process
+    # group in the same session (setpgrp, no setsid) and would write a
+    # marker late; the agent acknowledges the child's start by a file
+    # holding its pid. Each child has a bounded lifetime (it exits by itself
+    # after its delay) and a safety net closes the block. Where descendants
+    # cannot be pinned (no pidfd: macOS), they are never signalled and the
+    # cleanup waits for them: the expectations say so explicitly.
     import lab_process
     import time as _time
 
+    PIN = lab_process.PINNABLE_DESCENDANTS
+    print(f"      descendants pinnable on this host: {PIN}")
     fake_child = root / "fake-child.py"
     fake_child.write_text("import sys, time\ntime.sleep(float(sys.argv[2]))\nopen(sys.argv[1], 'w').write('late')\n")
     fake_agent = root / "fake-agent.py"
-    fake_agent.write_text("import os, subprocess, sys, time\n"
-                          "child = subprocess.Popen([sys.executable, sys.argv[1], sys.argv[2], sys.argv[5]], preexec_fn=os.setpgrp)\n"
-                          "open(sys.argv[3], 'w').write(str(child.pid))\n"
-                          "if sys.argv[4] == 'alive':\n    time.sleep(30)\n")
+    fake_agent.write_text(
+        "import os, subprocess, sys, time\n"
+        "marker, ack, mode, delay, go = sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]\n"
+        "if mode == 'wait':\n"
+        "    open(ack, 'w').write('ready')\n"
+        "    end = time.monotonic() + 5\n"
+        "    while not os.path.exists(go) and time.monotonic() < end:\n        time.sleep(0.002)\n"
+        "child = subprocess.Popen([sys.executable, sys.argv[1], marker, delay], preexec_fn=os.setpgrp)\n"
+        "open(ack, 'w').write(str(child.pid))\n"
+        "if mode == 'alive':\n    time.sleep(30)\n")
     fake_launches, all_outcomes = [], []
 
     def fake(name, mode, delay=1.0):
         """A fake agent and its child, which writes `<name>.late` after
-        `delay` seconds unless stopped."""
+        `delay` seconds unless stopped. Mode `wait` acknowledges `ready`,
+        then forks the child and exits once `<name>.go` exists."""
         ack = root / f"{name}.ack"
         launch = lab_process.Launch([sys.executable, str(fake_agent), str(fake_child), str(root / f"{name}.late"),
-                                     str(ack), mode, str(delay)])
+                                     str(ack), mode, str(delay), str(root / f"{name}.go")])
         fake_launches.append(launch)
-        S.wait_until(ack.exists, 5)
-        return launch, int(ack.read_text()) if ack.exists() else None
+        # The bound covers a loaded host, not a stalled one: without the
+        # acknowledgement the case cannot be exercised and the test fails
+        # here, explicitly, with the launch still under the safety net.
+        if not S.wait_until(ack.exists, 15):
+            raise AssertionError(f"fake agent {name} ({mode}) gave no acknowledgement within 15 s: "
+                                 f"host overloaded? exited={launch.exited()} returncode={launch.returncode}")
+        text = ack.read_text()
+        return launch, (int(text) if text.isdigit() else None)
+
+    def child_of(name):
+        text = (root / f"{name}.ack").read_text()
+        return int(text) if text.isdigit() else None
 
     bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
-    real_topology = S.topology
+    real_topology, real_signal = S.topology, lab_process.signal_member
     try:
         # The reader (B8-02): our own session id as getsid(2) gives it, never
         # 0; a non-empty malformed line, a short /proc line and an empty
@@ -219,7 +240,9 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         check("reader.proc_parsed", dict(pid=7, ppid=1, pgid=7, sid=7, comm="a b"),
               S.parse_proc_stat("7 (a b) S 1 7 7 0 -1 4194560 0\n"))
 
-        # (a) parent alive, child in another group of the same session.
+        # (a) parent alive, child in another group of the same session. The
+        # agent is signalled on every host; the child only where pinnable,
+        # otherwise it is waited for and ends by itself (its marker says so).
         launch, child = fake("alive", "alive")
         rows = S.topology()
         check("scope.child_acknowledged", True, child is not None and child in rows)
@@ -229,9 +252,11 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         outcome = lab_process.stop_scope(launch, timeout_s=5)
         all_outcomes.append(outcome)
         check("stop.alive_confirmed", True, outcome["confirmed"])
-        check("stop.alive_both_signalled", sorted([launch.pid, child]), outcome["signalled"])
+        check("stop.alive_signalled", sorted([launch.pid, child]) if PIN else [launch.pid], outcome["signalled"])
+        check("stop.alive_refused", [] if PIN else [child], outcome["refused"])
         check("stop.alive_root_reaped", True, launch.reaped and launch.returncode == -9)
         check("stop.alive_child_gone", False, lab_process._alive(child))
+        check("stop.alive_child_marker", not PIN, (root / "alive.late").exists())
 
         # (b) parent exited but not reaped, child re-parented and alive in
         # that session: the search by parent pid is blind (the
@@ -248,7 +273,8 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         outcome = lab_process.stop_scope(launch, timeout_s=5)
         all_outcomes.append(outcome)
         check("stop.orphan_confirmed", True, outcome["confirmed"])
-        check("stop.orphan_child_signalled", [child], outcome["signalled"])
+        check("stop.orphan_child_signalled", [child] if PIN else [], outcome["signalled"])
+        check("stop.orphan_child_refused", [] if PIN else [child], outcome["refused"])
         check("stop.orphan_child_gone", False, lab_process._alive(child))
         check("stop.orphan_parent_reaped_after", True, launch.reaped and launch.returncode == 0)
 
@@ -269,10 +295,49 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         check("lost.child_ends_by_itself", True, S.wait_until(lambda: not lab_process._alive(child), 5))
         check("lost.child_wrote_late", True, (root / "lost.late").exists())
 
+        # (r) the race of review 03-01, with real processes: the table is
+        # read while the agent is alive, then the agent forks its child and
+        # exits before the classification. The status is now read before
+        # the table, so that table cannot conclude; the next one sees the
+        # child. Never a confirmed stop with the child alive.
+        launch, _ = fake("race", "wait")
+        calls = []
+
+        def table_then_fork(pids=None, timeout=30.0):
+            rows = real_topology(timeout=timeout)
+            calls.append(sorted(r["pid"] for r in rows.values() if r.get("sid") == launch.sid))
+            if len(calls) == 1:
+                (root / "race.go").write_text("fork after the reading\n")
+                S.wait_until(lambda: launch.exited() and child_of("race") is not None, 5)
+            return rows
+
+        S.topology = table_then_fork
+        outcome = lab_process.stop_scope(launch, timeout_s=5)
+        S.topology = real_topology
+        all_outcomes.append(outcome)
+        child = child_of("race")
+        check("race.first_table_agent_only", [launch.pid], calls[0] if calls else None)
+        check("race.child_seen_by_a_later_table", True, child is not None and any(child in c for c in calls[1:]))
+        check("race.never_confirmed_with_child_alive", False, outcome["confirmed"] and lab_process._alive(child))
+        check("race.confirmed_once_drained", True, outcome["confirmed"])
+        check("race.child_signalled_or_refused", [child], outcome["signalled"] if PIN else outcome["refused"])
+        check("race.agent_reaped_after", True, launch.reaped)
+
+        # (p) identity held until the signal (03-02): on this host a
+        # descendant is signalled only through a pidfd; without one the
+        # request is refused (None) and the child is untouched. The agent,
+        # our unreaped child, is always signallable.
+        launch, child = fake("pin", "alive", delay=3.0)
+        sent = lab_process.signal_member(child, launch.sid, 0, launch)
+        check("pin.descendant_signal", True if PIN else None, sent)
+        check("pin.descendant_untouched_without_pidfd", True, lab_process._alive(child))
+        check("pin.not_a_member_refused", False, lab_process.signal_member(bystander.pid, launch.sid, 0, launch)
+              if PIN else False)
+        check("pin.agent_signal_zero", True, lab_process.signal_member(launch.pid, launch.sid, 0, launch))
+
         # (c) observation impossible (reader error, malformed table, an
         # unreadable row): no signal, stop not confirmed, the child
-        # untouched; then the real stop.
-        launch, child = fake("unsure", "alive", delay=3.0)
+        # untouched; then the real stop (the same launch `pin` is reused).
         S.topology = lambda pids=None, timeout=30.0: (_ for _ in ()).throw(S.TopologyError("lab: reader failed"))
         outcome = lab_process.stop_scope(launch, timeout_s=1)
         S.topology = real_topology
@@ -295,16 +360,23 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         check("unsure.agent_never_signalled", True, launch.pid not in outcome["signalled"] and not launch.exited())
         check("unsure.child_alive", True, lab_process._alive(child))
 
-        # (d) one deadline for the whole cleanup (B8-03): a slow reader gets
-        # the remaining budget, an empty table arriving after the deadline
-        # is not a success, several slow readings do not add up.
-        budgets = []
+        # (d) one deadline for the whole cleanup (B8-03, 03-03): a slow
+        # reader gets the remaining budget; an empty table after the
+        # deadline is not a success; a non-empty table after the deadline
+        # triggers no signal; several slow readings do not add up; a reap
+        # returning late is not a success either.
+        budgets, requests = [], []
+
+        def recording_signal(pid, sid, sig, launch_):
+            requests.append(pid)
+            return False
 
         def slow_empty(pids=None, timeout=30.0):
             budgets.append(timeout)
             _time.sleep(0.06)
             return {}
 
+        lab_process.signal_member = recording_signal
         S.topology = slow_empty
         outcome = lab_process.stop_scope(launch, timeout_s=0.01)
         S.topology = real_topology
@@ -316,25 +388,49 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
 
         def slow_live(pids=None, timeout=30.0):
             budgets.append(timeout)
+            _time.sleep(min(0.06, max(timeout, 0.06)))
+            return live_table
+
+        budgets.clear()
+        S.topology = slow_live
+        outcome = lab_process.stop_scope(launch, timeout_s=0.01)
+        S.topology = real_topology
+        check("deadline.late_table_no_signal", [], requests)
+        check("deadline.late_table_not_confirmed", False, outcome["confirmed"])
+
+        def slow_live_short(pids=None, timeout=30.0):
+            budgets.append(timeout)
             _time.sleep(min(0.03, timeout))
             return live_table
 
         budgets.clear()
-        real_signal = lab_process.signal_member
-        lab_process.signal_member = lambda pid, sid, sig: False  # observe, never signal
-        S.topology = slow_live
+        S.topology = slow_live_short
         outcome = lab_process.stop_scope(launch, timeout_s=0.1, interval_s=0.01)
+        S.topology = real_topology
         print("      deadline probe:", dict(readings=len(budgets), budgets=[round(b, 3) for b in budgets],
                                           elapsed_ms=outcome["elapsed_ms"], errors=outcome["errors"]))
-        S.topology = real_topology
-        lab_process.signal_member = real_signal
         check("deadline.several_readings_bounded", True, len(budgets) >= 2 and outcome["elapsed_ms"] <= 200
               and not outcome["confirmed"])
         check("deadline.budgets_decrease", True, all(b2 < b1 for b1, b2 in zip(budgets, budgets[1:])))
+        lab_process.signal_member = real_signal
         check("deadline.child_untouched", True, lab_process._alive(child))
         outcome = lab_process.stop_scope(launch, timeout_s=5)
         all_outcomes.append(outcome)
         check("stop.unsure_then_confirmed", True, outcome["confirmed"] and not lab_process._alive(child))
+
+        # A late reap: the scope observed empty in time, the reap returning
+        # after the deadline. Not a success.
+        launch, child = fake("latereap", "exit", delay=0.0)
+        S.wait_until(lambda: launch.exited() and not lab_process._alive(child), 5)
+        empty_table = real_topology()  # read in time: the reading itself is not under test here
+        real_reap = launch.reap
+        launch.reap = lambda timeout=None: (_time.sleep(0.06), real_reap(timeout))[1]
+        S.topology = lambda pids=None, timeout=30.0: empty_table
+        outcome = lab_process.stop_scope(launch, timeout_s=0.03)
+        S.topology = real_topology
+        check("deadline.late_reap_not_confirmed", False, outcome["confirmed"])
+        check("deadline.late_reap_reason", True, any("after the reap" in e for e in outcome["errors"]))
+        check("deadline.late_reap_done", True, launch.reaped)
 
         # (e) several launches: no previous scope is forgotten, a confirmed
         # stop is final.
@@ -346,15 +442,18 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         check("stop.all_children_gone", [False, False], [lab_process._alive(child1), lab_process._alive(child2)])
         check("stop.confirmed_is_final", outcomes[0], lab_process.stop_scope(first, timeout_s=5))
 
-        # No late marker from any stopped child once every delay has passed
-        # (only the child left alone on lost authority wrote its own); the
-        # bystander, in another session, is intact and was never signalled.
+        # Late markers: only the children that were never signalled wrote
+        # theirs (left alone on lost authority; waited for where descendants
+        # cannot be pinned); the bystander, in another session, is intact
+        # and was never signalled.
         _time.sleep(1.3)
-        check("stop.no_late_marker", ["lost.late"], sorted(p.name for p in root.glob("*.late")))
+        expected = ["latereap.late", "lost.late"] if PIN else sorted(
+            ["alive.late", "dead.late", "first.late", "latereap.late", "lost.late", "pin.late", "race.late", "second.late"])
+        check("stop.late_markers", expected, sorted(p.name for p in root.glob("*.late")))
         check("bystander.intact", None, bystander.poll())
         check("bystander.never_signalled", False, any(bystander.pid in o["signalled"] for o in all_outcomes))
     finally:
-        S.topology = real_topology
+        S.topology, lab_process.signal_member = real_topology, real_signal
         for launch in fake_launches:  # safety net: nothing of the test survives it
             if not launch.reaped:
                 lab_process.stop_scope(launch, timeout_s=5)

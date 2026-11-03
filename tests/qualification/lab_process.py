@@ -22,20 +22,38 @@ descendant, whatever its start time; once the agent has been reaped the
 number may be reused and the authority is lost: stop_scope() then refuses
 to signal anything, answers unconfirmed with that reason, and the caller
 keeps the fixture in place. No start time is compared, no number is
-signalled from memory: each target is re-identified by its session id
-right before the signal (through a pidfd on Linux, where available), and
-a pid that no longer names a member is left alone.
+signalled from memory.
+
+Targets (03-02). A signal is sent only to a process whose identity can be
+held until the signal: the agent, our own unreaped child, on every
+platform; a descendant only through a pidfd (Linux), which names the
+process and not its number. Without a pidfd (macOS), a descendant is
+never signalled: its number could change hands between a check and a
+kill. The cleanup then relies on the product itself, whose executor ends
+its group when the agent's life descriptor closes, and waits, bounded, for
+the scope to drain; a descendant still there at the deadline leaves the
+stop unconfirmed with that reason. PINNABLE_DESCENDANTS says which case
+this host is in.
+
+Observation (03-01). A process table is an enumeration, not a snapshot:
+between the reading and the classification the agent may fork and exit,
+and its child would be missing from a table read before the fork. The
+exit status of the agent is therefore read BEFORE each table (waitid
+WNOWAIT), and an empty scope is concluded only from a table read after
+the agent was already seen exited: every child it ever created existed
+before that reading, in its session, and is in the table or has ended.
 
 Outcome. stop_scope() works under one monotonic deadline handed to every
-reading; it signals each member observed at the moment of the sweep, by
-pid, re-observes until the scope is empty, reaps the agent, and answers
-`confirmed` only when that empty observation and the reap both happened
-before the deadline. A reader that fails or that reports a row it could
-not read, a lost authority, a member remaining at the deadline or an
-agent that cannot be reaped leave `confirmed` false with the reason, and
-the caller keeps the original fixture and fails. A descendant that creates
-its own session leaves the scope and is not covered: the Linux laboratory
-proves confinement by cgroup.
+reading and checked after each reading, before each signal and after the
+reap; it signals the targets it may, re-observes until the scope is
+empty, reaps the agent, and answers `confirmed` only when that empty
+observation and the reap both happened before the deadline. A reader that
+fails or that reports a row it could not read, a lost authority, a member
+remaining at the deadline or an agent that cannot be reaped leave
+`confirmed` false with the reason, and the caller keeps the original
+fixture and fails. A descendant that creates its own session leaves the
+scope and is not covered: the Linux laboratory proves confinement by
+cgroup.
 """
 import json
 import os
@@ -50,6 +68,9 @@ from pathlib import Path
 import lab_state as S
 
 LINUX = sys.platform.startswith("linux")
+# Whether a descendant's identity can be held until the signal (a pidfd):
+# without it, descendants are observed and waited for, never signalled.
+PINNABLE_DESCENDANTS = LINUX and hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal")
 
 
 def _alive(pid):
@@ -155,42 +176,55 @@ def session_of(pid):
         return None
 
 
-def signal_member(pid, sid, sig):
-    """Signal pid if, right now, it still carries the session sid: True when
-    signalled, False when it no longer names a member (gone, or the number
-    reused outside the session). On Linux the pidfd pins the identity
-    between the check and the signal; elsewhere the two are consecutive
-    calls, the kernel's own window."""
-    if LINUX and hasattr(os, "pidfd_open"):
+def signal_member(pid, sid, sig, launch):
+    """Signal pid if its identity can be held until the signal and it still
+    carries the session sid: True when signalled, False when it no longer
+    names a member (gone, or the number reused outside the session), None
+    when refused because the identity cannot be held. The agent (launch) is
+    our unreaped child: its number is pinned, kill(2) is exact. A descendant
+    is signalled through a pidfd only, which names the process and not its
+    number; the check of its session then names the same process or a
+    later one whose session cannot be sid while the leader is held."""
+    if pid == launch.pid:
+        if launch.reaped:
+            return None
         try:
-            fd = os.pidfd_open(pid)
-        except OSError:
-            return False
-        try:
-            if session_of(pid) != sid:
-                return False
-            signal.pidfd_send_signal(fd, sig)
+            os.kill(pid, sig)
             return True
         except ProcessLookupError:
             return False
-        finally:
-            os.close(fd)
+    if not PINNABLE_DESCENDANTS:
+        return None
     try:
-        if os.getsid(pid) != sid:
+        fd = os.pidfd_open(pid)
+    except OSError:
+        return False
+    try:
+        if session_of(pid) != sid:
             return False
-        os.kill(pid, sig)
+        signal.pidfd_send_signal(fd, sig)
         return True
     except ProcessLookupError:
         return False
+    finally:
+        os.close(fd)
 
 
-def members(launch, rows):
+def members(launch, rows, leader_exited):
     """The members of the launch's session in an observed table, and the
-    rows whose session could not be read: (members, unreadable). The agent
-    itself, once exited, is left to the reap."""
+    rows whose session could not be read: (members, unreadable).
+    leader_exited is the agent's status read BEFORE the table (03-01): an
+    agent seen exited before the reading is left to the reap, an agent
+    alive at that moment stays a member even if the table shows it gone."""
     found, unreadable = [], []
-    leader_exited = launch.exited()
+    seen_leader = False
     for row in rows.values():
+        if row["pid"] == launch.pid:
+            seen_leader = True
+            if leader_exited:
+                continue
+            found.append(row)
+            continue
         if row["pid"] == os.getpid():
             continue
         if row.get("sid") is None:
@@ -199,63 +233,85 @@ def members(launch, rows):
             continue
         if row["sid"] != launch.sid:
             continue
-        if row["pid"] == launch.pid and leader_exited:
-            continue
         found.append(row)
+    if not leader_exited and not seen_leader:
+        # Alive before the reading, absent from it: the table is not a
+        # proof of anything about its children; keep it a member.
+        found.append(dict(pid=launch.pid, ppid=None, pgid=None, sid=launch.sid, comm=None, sid_error="gone"))
     return found, unreadable
 
 
 def stop_scope(launch, timeout_s=10.0, interval_s=0.05, sig=signal.SIGKILL):
     """Stop every process of the launch's scope under one deadline, reap the
-    launched process, and return {'confirmed', 'sid', 'signalled', 'sweeps',
-    'remaining', 'unreadable', 'errors', 'elapsed_ms', 'launch'}. A stop
-    already confirmed is returned as it was: the scope is final."""
+    launched process, and return {'confirmed', 'sid', 'signalled',
+    'refused', 'sweeps', 'remaining', 'unreadable', 'errors', 'elapsed_ms',
+    'launch'}. A stop already confirmed is returned as it was: the scope is
+    final."""
     if launch.stop is not None and launch.stop["confirmed"]:
         return launch.stop
     t0 = time.monotonic()
     deadline = t0 + timeout_s
-    signalled, errors, sweeps = [], [], 0
+    signalled, refused, errors, sweeps = [], [], [], 0
     remaining, unreadable = [], []
     confirmed = False
+
+    def expired(stage):
+        if time.monotonic() > deadline:
+            errors.append(f"deadline expired {stage}")
+            return True
+        return False
+
     if launch.reaped:
         errors.append(f"authority lost: launch {launch.pid} was reaped before the sweep, its session id may be reused")
     else:
         while True:
-            budget = deadline - time.monotonic()
-            if budget <= 0:
-                errors.append("deadline expired before an empty observation")
+            if expired("before a reading"):
                 break
+            leader_exited = launch.exited()  # before the table (03-01)
             try:
-                rows = S.topology(timeout=budget)
+                rows = S.topology(timeout=deadline - time.monotonic())
             except S.TopologyError as error:
                 errors.append(f"topology unreadable: {error}")
                 break
             sweeps += 1
-            remaining, unreadable = members(launch, rows)
+            remaining, unreadable = members(launch, rows, leader_exited)
             if unreadable:
                 errors.append(f"{len(unreadable)} row(s) unreadable: no conclusion about them")
                 break
+            if expired("after a reading"):
+                break
             if not remaining:
-                if time.monotonic() <= deadline:
-                    confirmed = True
-                else:
-                    errors.append("deadline expired during the last observation")
+                confirmed = True
                 break
             for row in remaining:
+                if expired("before a signal"):
+                    break
                 try:
-                    if signal_member(row["pid"], launch.sid, sig):
-                        signalled.append(row["pid"])
+                    sent = signal_member(row["pid"], launch.sid, sig, launch)
                 except PermissionError as error:
                     errors.append(f"pid {row['pid']}: {error!r}")
-            time.sleep(max(0.0, min(interval_s, deadline - time.monotonic())))
+                    continue
+                if sent:
+                    signalled.append(row["pid"])
+                elif sent is None and row["pid"] not in refused:
+                    refused.append(row["pid"])
+            else:
+                time.sleep(max(0.0, min(interval_s, deadline - time.monotonic())))
+                continue
+            break
         if confirmed:
             try:
                 launch.reap(timeout=max(0.0, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
                 errors.append(f"launch {launch.pid} not reaped before the deadline")
                 confirmed = False
-    outcome = dict(confirmed=confirmed, sid=launch.sid, signalled=sorted(set(signalled)), sweeps=sweeps,
-                   remaining=remaining, unreadable=unreadable, errors=errors,
+            if confirmed and expired("after the reap"):
+                confirmed = False
+    if refused and not confirmed:
+        errors.append(f"{len(refused)} descendant(s) not signalled: identity cannot be held until the signal "
+                      "on this host (no pidfd); waited for the scope to drain")
+    outcome = dict(confirmed=confirmed, sid=launch.sid, signalled=sorted(set(signalled)), refused=sorted(refused),
+                   sweeps=sweeps, remaining=remaining, unreadable=unreadable, errors=errors,
                    elapsed_ms=int((time.monotonic() - t0) * 1000), launch=launch.record())
     launch.stop = outcome
     return outcome
