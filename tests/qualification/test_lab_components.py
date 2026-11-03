@@ -183,38 +183,63 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
     fake_child = root / "fake-child.py"
     fake_child.write_text("import sys, time\ntime.sleep(float(sys.argv[2]))\nopen(sys.argv[1], 'w').write('late')\n")
     fake_agent = root / "fake-agent.py"
+    # Acknowledgements are published complete, by atomic replacement.
     fake_agent.write_text(
         "import os, subprocess, sys, time\n"
         "marker, ack, mode, delay, go = sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]\n"
+        "def publish(text):\n    open(ack + '.tmp', 'w').write(text)\n    os.replace(ack + '.tmp', ack)\n"
         "if mode == 'wait':\n"
-        "    open(ack, 'w').write('ready')\n"
+        "    publish('ready')\n"
         "    end = time.monotonic() + 5\n"
         "    while not os.path.exists(go) and time.monotonic() < end:\n        time.sleep(0.002)\n"
         "child = subprocess.Popen([sys.executable, sys.argv[1], marker, delay], preexec_fn=os.setpgrp)\n"
-        "open(ack, 'w').write(str(child.pid))\n"
+        "publish(str(child.pid))\n"
         "if mode == 'alive':\n    time.sleep(30)\n")
+    # A worker in the executor's place (two generations, C0-01): it
+    # publishes its pid, waits for `<marker>.go`, starts the leaf (the fake
+    # child, in its own group) and exits at once.
+    fake_worker = root / "fake-worker.py"
+    fake_worker.write_text(
+        "import os, subprocess, sys, time\n"
+        "marker, delay = sys.argv[1], sys.argv[2]\n"
+        "open(marker + '.worker.tmp', 'w').write(str(os.getpid()))\n"
+        "os.replace(marker + '.worker.tmp', marker + '.worker')\n"
+        "end = time.monotonic() + 5\n"
+        "while not os.path.exists(marker + '.go') and time.monotonic() < end:\n    time.sleep(0.002)\n"
+        f"subprocess.Popen([sys.executable, {str(fake_child)!r}, marker, delay])\n")
     fake_launches, all_outcomes = [], []
 
-    def fake(name, mode, delay=1.0):
+    def published(path, expected):
+        """The complete content of an acknowledgement, or None: `expected`
+        is a literal, or `int` for a pid."""
+        if not path.exists():
+            return None
+        text = path.read_text()
+        if expected is int:
+            return int(text) if text.isdigit() else None
+        return text if text == expected else None
+
+    def fake(name, mode, delay=1.0, child_script=None):
         """A fake agent and its child, which writes `<name>.late` after
         `delay` seconds unless stopped. Mode `wait` acknowledges `ready`,
-        then forks the child and exits once `<name>.go` exists."""
+        then forks the child and exits once `<name>.go` exists. Returns the
+        launch and the child's pid (None in mode `wait`, see child_of)."""
         ack = root / f"{name}.ack"
-        launch = lab_process.Launch([sys.executable, str(fake_agent), str(fake_child), str(root / f"{name}.late"),
-                                     str(ack), mode, str(delay), str(root / f"{name}.go")])
+        launch = lab_process.Launch([sys.executable, str(fake_agent), str(child_script or fake_child),
+                                     str(root / f"{name}.late"), str(ack), mode, str(delay), str(root / f"{name}.go")])
         fake_launches.append(launch)
         # The bound covers a loaded host, not a stalled one: without the
-        # acknowledgement the case cannot be exercised and the test fails
-        # here, explicitly, with the launch still under the safety net.
-        if not S.wait_until(ack.exists, 15):
-            raise AssertionError(f"fake agent {name} ({mode}) gave no acknowledgement within 15 s: "
-                                 f"host overloaded? exited={launch.exited()} returncode={launch.returncode}")
-        text = ack.read_text()
-        return launch, (int(text) if text.isdigit() else None)
+        # complete acknowledgement the case cannot be exercised and the test
+        # fails here, explicitly, with the launch still under the safety net.
+        expected = "ready" if mode == "wait" else int
+        if S.wait_until(lambda: published(ack, expected) is not None, 15) is None:
+            raise AssertionError(f"fake agent {name} ({mode}) gave no complete acknowledgement within 15 s: "
+                                 f"content={ack.read_text() if ack.exists() else None!r} host overloaded? "
+                                 f"exited={launch.exited()} returncode={launch.returncode}")
+        return launch, (None if mode == "wait" else published(ack, int))
 
     def child_of(name):
-        text = (root / f"{name}.ack").read_text()
-        return int(text) if text.isdigit() else None
+        return published(root / f"{name}.ack", int)
 
     bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
     real_topology, real_signal = S.topology, lab_process.signal_member
@@ -225,19 +250,20 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         rows = S.topology()
         check("topology.own_sid_by_getsid", os.getsid(0), rows[os.getpid()]["sid"])
         check("topology.own_sid_not_zero", True, rows[os.getpid()]["sid"] > 0)
-        for name, text in (("short_line", "100002 1 100002\n"), ("not_a_number", "x 1 1 comm\n"), ("empty", "\n\n")):
+        for name, text in (("short_line", "100002 1 100002 S\n"), ("not_a_number", "x 1 1 S comm\n"), ("empty", "\n\n")):
             try:
                 S.parse_ps_table(text)
                 check(f"reader.ps_{name}_refused", "TopologyError", "accepted")
             except S.TopologyError:
                 check(f"reader.ps_{name}_refused", "TopologyError", "TopologyError")
-        check("reader.ps_blank_lines_skipped", [7], list(S.parse_ps_table("\n7 1 7 comm\n\n")))
+        check("reader.ps_blank_lines_skipped", [7], list(S.parse_ps_table("\n7 1 7 Ss comm\n\n")))
+        check("reader.ps_zombie_state", "Z", S.parse_ps_table("7 1 7 Z+ <defunct>\n")[7]["state"])
         try:
             S.parse_proc_stat("7 (comm) S 1\n")
             check("reader.proc_short_refused", "TopologyError", "accepted")
         except S.TopologyError:
             check("reader.proc_short_refused", "TopologyError", "TopologyError")
-        check("reader.proc_parsed", dict(pid=7, ppid=1, pgid=7, sid=7, comm="a b"),
+        check("reader.proc_parsed", dict(pid=7, ppid=1, pgid=7, sid=7, state="S", comm="a b"),
               S.parse_proc_stat("7 (a b) S 1 7 7 0 -1 4194560 0\n"))
 
         # (a) parent alive, child in another group of the same session. The
@@ -323,6 +349,59 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         check("race.child_signalled_or_refused", [child], outcome["signalled"] if PIN else outcome["refused"])
         check("race.agent_reaped_after", True, launch.reaped)
 
+        # (g) the two-generation race of review C0-01, with real processes:
+        # the agent has exited (unreaped); the worker is listed by `ps`,
+        # then forks the leaf and exits before its session is read, so its
+        # row is `gone` and the leaf is in no row. Such a table is
+        # indeterminate: never a confirmed stop with the leaf alive.
+        launch, worker = fake("gen2", "exit", child_script=fake_worker)
+        marker = root / "gen2.late"
+        check("gen2.agent_exited_unreaped", True, S.wait_until(launch.exited, 5) and not launch.reaped)
+        check("gen2.worker_published", worker, S.wait_until(lambda: published(Path(str(marker) + ".worker"), int), 5))
+        real_run, phases = S.subprocess.run, []
+
+        def ps_then_worker_forks(*args, **kwargs):
+            result = real_run(*args, **kwargs)
+            listed = worker in S.parse_ps_table(result.stdout)
+            phases.append(listed)
+            if len(phases) == 1:
+                (root / "gen2.late.go").write_text("fork after the listing\n")
+                S.wait_until(lambda: not lab_process._alive(worker) and published(Path(str(marker) + ".leaf"), int)
+                             is not None, 5)
+            return result
+
+        leaf_ack = Path(str(marker) + ".leaf")
+        fake_child.write_text("import os, sys, time\nopen(sys.argv[1] + '.leaf.tmp', 'w').write(str(os.getpid()))\n"
+                              "os.replace(sys.argv[1] + '.leaf.tmp', sys.argv[1] + '.leaf')\n"
+                              "time.sleep(float(sys.argv[2]))\nopen(sys.argv[1], 'w').write('late')\n")
+        if lab_process.LINUX:
+            # The interposition point is the ps call; on Linux the reading is
+            # /proc. Impose the ordering through the table instead: a table
+            # listing the worker as gone, then real ones.
+            def linux_first_table(pids=None, timeout=30.0):
+                rows = real_topology(pids, timeout)
+                phases.append(worker in rows)
+                if len(phases) == 1:
+                    (root / "gen2.late.go").write_text("fork after the listing\n")
+                    S.wait_until(lambda: not lab_process._alive(worker) and published(leaf_ack, int) is not None, 5)
+                    rows[worker] = dict(pid=worker, ppid=None, pgid=None, sid=None, comm=None, sid_error="gone")
+                return rows
+            S.topology = linux_first_table
+        else:
+            S.subprocess.run = ps_then_worker_forks
+        outcome = lab_process.stop_scope(launch, timeout_s=5)
+        S.topology, S.subprocess.run = real_topology, real_run
+        all_outcomes.append(outcome)
+        leaf = published(leaf_ack, int)
+        check("gen2.worker_listed_first", True, bool(phases) and phases[0])
+        check("gen2.leaf_started", True, leaf is not None)
+        check("gen2.first_table_indeterminate", True, outcome["indeterminate"] >= 1)
+        check("gen2.never_confirmed_with_leaf_alive", False, outcome["confirmed"] and lab_process._alive(leaf))
+        check("gen2.confirmed_once_drained", True, outcome["confirmed"] and not lab_process._alive(leaf))
+        check("gen2.leaf_signalled_or_refused", [leaf], outcome["signalled"] if PIN else outcome["refused"])
+        check("gen2.sweeps_more_than_one", True, outcome["sweeps"] >= 2)
+        fake_child.write_text("import sys, time\ntime.sleep(float(sys.argv[2]))\nopen(sys.argv[1], 'w').write('late')\n")
+
         # (p) identity held until the signal (03-02): on this host a
         # descendant is signalled only through a pidfd; without one the
         # request is refused (None) and the child is untouched. The agent,
@@ -344,7 +423,7 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         check("unsure.reader_failed_not_confirmed", False, outcome["confirmed"])
         check("unsure.reader_failed_no_signal", [], outcome["signalled"])
         check("unsure.reader_failed_reason", True, any("topology unreadable" in e for e in outcome["errors"]))
-        S.topology = lambda pids=None, timeout=30.0: S.parse_ps_table("100002 1 100002\n")
+        S.topology = lambda pids=None, timeout=30.0: S.parse_ps_table("100002 1 100002 S\n")
         outcome = lab_process.stop_scope(launch, timeout_s=1)
         S.topology = real_topology
         check("unsure.malformed_not_confirmed", False, outcome["confirmed"])
@@ -422,7 +501,9 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         # after the deadline. Not a success.
         launch, child = fake("latereap", "exit", delay=0.0)
         S.wait_until(lambda: launch.exited() and not lab_process._alive(child), 5)
-        empty_table = real_topology()  # read in time: the reading itself is not under test here
+        # A table read in time and complete (no disappearance from a busy
+        # host): the reading itself is not under test here, the reap is.
+        empty_table = {pid: row for pid, row in real_topology().items() if row.get("sid") is not None}
         real_reap = launch.reap
         launch.reap = lambda timeout=None: (_time.sleep(0.06), real_reap(timeout))[1]
         S.topology = lambda pids=None, timeout=30.0: empty_table
@@ -448,12 +529,13 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         # and was never signalled.
         _time.sleep(1.3)
         expected = ["latereap.late", "lost.late"] if PIN else sorted(
-            ["alive.late", "dead.late", "first.late", "latereap.late", "lost.late", "pin.late", "race.late", "second.late"])
+            ["alive.late", "dead.late", "first.late", "gen2.late", "latereap.late", "lost.late", "pin.late", "race.late",
+             "second.late"])
         check("stop.late_markers", expected, sorted(p.name for p in root.glob("*.late")))
         check("bystander.intact", None, bystander.poll())
         check("bystander.never_signalled", False, any(bystander.pid in o["signalled"] for o in all_outcomes))
     finally:
-        S.topology, lab_process.signal_member = real_topology, real_signal
+        S.topology, lab_process.signal_member, S.subprocess.run = real_topology, real_signal, subprocess.run
         for launch in fake_launches:  # safety net: nothing of the test survives it
             if not launch.reaped:
                 lab_process.stop_scope(launch, timeout_s=5)

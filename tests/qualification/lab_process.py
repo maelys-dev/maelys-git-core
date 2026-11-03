@@ -29,19 +29,30 @@ held until the signal: the agent, our own unreaped child, on every
 platform; a descendant only through a pidfd (Linux), which names the
 process and not its number. Without a pidfd (macOS), a descendant is
 never signalled: its number could change hands between a check and a
-kill. The cleanup then relies on the product itself, whose executor ends
-its group when the agent's life descriptor closes, and waits, bounded, for
-the scope to drain; a descendant still there at the deadline leaves the
+kill. The cleanup then only waits, bounded, for the scope to drain by the
+descendants' own ends (the product gives no guarantee here: the life
+descriptor between agent and executor is read by the agent, a dead agent
+escalates nothing); a descendant still there at the deadline leaves the
 stop unconfirmed with that reason. PINNABLE_DESCENDANTS says which case
 this host is in.
 
-Observation (03-01). A process table is an enumeration, not a snapshot:
-between the reading and the classification the agent may fork and exit,
-and its child would be missing from a table read before the fork. The
-exit status of the agent is therefore read BEFORE each table (waitid
-WNOWAIT), and an empty scope is concluded only from a table read after
-the agent was already seen exited: every child it ever created existed
-before that reading, in its session, and is in the table or has ended.
+Observation (03-01, C0-01). A process table is read in two phases, a
+listing then one reading per pid, so it is not a snapshot. Two rules make
+an empty observation conclusive. The agent's exit status is read BEFORE
+each table (waitid WNOWAIT) and an empty scope is concluded only from a
+table read after the agent was seen exited, so the agent itself forks
+nothing after the listing. And a table in which any listed process
+disappeared before its reading is indeterminate: that process may have
+been a member that forked after the listing, and its child, born after
+the listing, is in no row. Every member alive at the listing is then in
+the table, seen or gone; a member born later descends from one that was,
+seen or gone; so a table with no member and no disappearance, read after
+the agent's exit, proves the scope empty, provided the listing is one
+snapshot (sysctl on macOS; readdir on Linux, complete while pids do not
+wrap). A zombie listed as such had exited before the listing and creates
+nothing: it is neither; and a disappeared process whose group leader is
+read in another session was not a member, a group never spanning
+sessions. An indeterminate table is read again under the same deadline.
 
 Outcome. stop_scope() works under one monotonic deadline handed to every
 reading and checked after each reading, before each signal and after the
@@ -211,13 +222,32 @@ def signal_member(pid, sid, sig, launch):
 
 
 def members(launch, rows, leader_exited):
-    """The members of the launch's session in an observed table, and the
-    rows whose session could not be read: (members, unreadable).
+    """The members of the launch's session in an observed table, the rows
+    whose session could not be read, and the processes that disappeared
+    between the listing and their reading: (members, unreadable, gone).
     leader_exited is the agent's status read BEFORE the table (03-01): an
     agent seen exited before the reading is left to the reap, an agent
-    alive at that moment stays a member even if the table shows it gone."""
-    found, unreadable = [], []
+    alive at that moment stays a member even if the table shows it gone.
+    A disappearance other than the agent's makes the table indeterminate
+    (C0-01) unless the process provably was not in the session: a process
+    group never spans sessions, so a disappeared process whose group leader
+    is read with another session was in that other session (the reader's
+    own `ps`, or any busy unrelated process); one in the agent's group, one
+    whose group leader is a member, gone, a zombie or absent, stays a
+    disappearance the caller never concludes an empty scope from. A zombie
+    had exited before the listing: it creates nothing, it is neither a
+    member nor a disappearance (an unrelated zombie may live for ever)."""
+    found, unreadable, gone = [], [], []
     seen_leader = False
+
+    def possibly_member(row):
+        if row.get("pgid") in (None, launch.sid):
+            return True
+        leader = rows.get(row["pgid"])
+        if leader is None or leader.get("sid") is None:
+            return True  # group leader unknown: the group's session is unknown
+        return leader["sid"] == launch.sid
+
     for row in rows.values():
         if row["pid"] == launch.pid:
             seen_leader = True
@@ -227,8 +257,13 @@ def members(launch, rows, leader_exited):
             continue
         if row["pid"] == os.getpid():
             continue
+        if row.get("state") == "Z" or row.get("sid_error") == "zombie":
+            continue
         if row.get("sid") is None:
-            if row.get("sid_error") != "gone":
+            if row.get("sid_error") == "gone":
+                if possibly_member(row):
+                    gone.append(row)
+            else:
                 unreadable.append(row)
             continue
         if row["sid"] != launch.sid:
@@ -238,21 +273,21 @@ def members(launch, rows, leader_exited):
         # Alive before the reading, absent from it: the table is not a
         # proof of anything about its children; keep it a member.
         found.append(dict(pid=launch.pid, ppid=None, pgid=None, sid=launch.sid, comm=None, sid_error="gone"))
-    return found, unreadable
+    return found, unreadable, gone
 
 
 def stop_scope(launch, timeout_s=10.0, interval_s=0.05, sig=signal.SIGKILL):
     """Stop every process of the launch's scope under one deadline, reap the
     launched process, and return {'confirmed', 'sid', 'signalled',
-    'refused', 'sweeps', 'remaining', 'unreadable', 'errors', 'elapsed_ms',
-    'launch'}. A stop already confirmed is returned as it was: the scope is
-    final."""
+    'refused', 'sweeps', 'indeterminate', 'remaining', 'unreadable', 'gone',
+    'errors', 'elapsed_ms', 'launch'}. A stop already confirmed is returned
+    as it was: the scope is final."""
     if launch.stop is not None and launch.stop["confirmed"]:
         return launch.stop
     t0 = time.monotonic()
     deadline = t0 + timeout_s
-    signalled, refused, errors, sweeps = [], [], [], 0
-    remaining, unreadable = [], []
+    signalled, refused, errors, sweeps, indeterminate = [], [], [], 0, 0
+    remaining, unreadable, gone = [], [], []
     confirmed = False
 
     def expired(stage):
@@ -274,13 +309,15 @@ def stop_scope(launch, timeout_s=10.0, interval_s=0.05, sig=signal.SIGKILL):
                 errors.append(f"topology unreadable: {error}")
                 break
             sweeps += 1
-            remaining, unreadable = members(launch, rows, leader_exited)
+            remaining, unreadable, gone = members(launch, rows, leader_exited)
             if unreadable:
                 errors.append(f"{len(unreadable)} row(s) unreadable: no conclusion about them")
                 break
             if expired("after a reading"):
                 break
-            if not remaining:
+            if gone:
+                indeterminate += 1  # a listed process vanished before its reading: read again
+            elif not remaining:
                 confirmed = True
                 break
             for row in remaining:
@@ -310,9 +347,12 @@ def stop_scope(launch, timeout_s=10.0, interval_s=0.05, sig=signal.SIGKILL):
     if refused and not confirmed:
         errors.append(f"{len(refused)} descendant(s) not signalled: identity cannot be held until the signal "
                       "on this host (no pidfd); waited for the scope to drain")
+    if gone and not confirmed:
+        errors.append(f"last table indeterminate: {len(gone)} listed process(es) disappeared before their reading")
     outcome = dict(confirmed=confirmed, sid=launch.sid, signalled=sorted(set(signalled)), refused=sorted(refused),
-                   sweeps=sweeps, remaining=remaining, unreadable=unreadable, errors=errors,
-                   elapsed_ms=int((time.monotonic() - t0) * 1000), launch=launch.record())
+                   sweeps=sweeps, indeterminate=indeterminate, remaining=remaining, unreadable=unreadable,
+                   gone=gone, errors=errors, elapsed_ms=int((time.monotonic() - t0) * 1000),
+                   launch=launch.record())
     launch.stop = outcome
     return outcome
 

@@ -248,33 +248,37 @@ class TopologyError(OSError):
 
 
 def parse_proc_stat(text):
-    """pid, ppid, pgid, sid and comm of one /proc/<pid>/stat; raises
-    TopologyError on a malformed line."""
+    """pid, ppid, pgid, sid, state (one letter, `Z` for a zombie) and comm
+    of one /proc/<pid>/stat; raises TopologyError on a malformed line."""
     try:
         comm = text[text.index("(") + 1:text.rindex(")")]
         fields = text[text.rindex(")") + 2:].split()
         return dict(pid=int(text.split(None, 1)[0]), ppid=int(fields[1]), pgid=int(fields[2]), sid=int(fields[3]),
-                    comm=comm)
+                    state=fields[0][:1], comm=comm)
     except (ValueError, IndexError) as error:
         raise TopologyError(f"malformed stat line {text[:80]!r}: {error!r}") from error
 
 
+PS_COLUMNS = "pid=,ppid=,pgid=,stat=,comm="
+
+
 def parse_ps_table(text):
-    """Rows pid, ppid, pgid, comm of a `ps -axo pid=,ppid=,pgid=,comm=`
-    output (no session: see topology). Only really empty lines are
-    skipped; any other malformed line raises TopologyError, an empty table
-    too, because an empty table would prove an absence."""
+    """Rows pid, ppid, pgid, state (the first letter of `stat`, `Z` for a
+    zombie) and comm of a `ps -axo PS_COLUMNS` output (no session: see
+    topology). Only really empty lines are skipped; any other malformed
+    line raises TopologyError, an empty table too, because an empty table
+    would prove an absence."""
     rows = {}
     for line in text.splitlines():
         if not line.strip():
             continue
-        parts = line.split(None, 3)
+        parts = line.split(None, 4)
         try:
-            if len(parts) < 4:
-                raise ValueError("fewer than four fields")
+            if len(parts) < 5:
+                raise ValueError("fewer than five fields")
             pid = int(parts[0])
-            rows[pid] = dict(pid=pid, ppid=int(parts[1]), pgid=int(parts[2]), sid=None,
-                             comm=os.path.basename(parts[3]))
+            rows[pid] = dict(pid=pid, ppid=int(parts[1]), pgid=int(parts[2]), sid=None, state=parts[3][:1],
+                             comm=os.path.basename(parts[4]))
         except ValueError as error:
             raise TopologyError(f"malformed ps line {line[:80]!r}: {error!r}") from error
     if not rows:
@@ -286,12 +290,19 @@ def topology(pids=None, timeout=30.0):
     """PID, PPID, PGID, SID and command of the given pids (or all): /proc on
     Linux; on macOS `ps` for pid, ppid, pgid and comm, and getsid(2) for the
     session, because `ps -o sess` prints 0 for every process on the verified
-    Mac (review of 570154a). A row whose session cannot be read carries
-    sid=None and says why in `sid_error`: `gone` (the process disappeared
-    between the two readings), `denied` or `malformed`; a reader that fails,
+    Mac (review of 570154a). The reading is two-phase, a listing then one
+    reading per pid, so a process can disappear between them: its row is
+    kept with sid=None and `sid_error` `gone`, never dropped (review C0-01:
+    a dropped disappearance would let a table pass for complete). A process
+    listed as a zombie (`state` `Z`) had exited before the listing: it can
+    create nothing, its session is not read (`sid_error` `zombie` on macOS,
+    where getsid refuses a zombie). `denied` and `malformed` say why else a
+    session is missing; a reader that fails,
     a malformed line or the deadline `timeout` (seconds) raise TopologyError
-    instead of returning an empty table. The invariants are compared, never
-    literal pids."""
+    instead of returning an empty table. The listing is one kernel snapshot
+    on macOS (sysctl through ps); on Linux it is a readdir of /proc, taken
+    as complete while pids do not wrap during it. The invariants are
+    compared, never literal pids."""
     deadline = time.monotonic() + timeout
     rows = {}
     if LINUX:
@@ -309,10 +320,8 @@ def topology(pids=None, timeout=30.0):
                 raise TopologyError("deadline expired while reading /proc")
             try:
                 rows[pid] = parse_proc_stat((proc / "stat").read_text())
-            except FileNotFoundError:
-                continue  # gone between the listing and the reading
-            except ProcessLookupError:
-                continue
+            except (FileNotFoundError, ProcessLookupError):
+                rows[pid] = dict(pid=pid, ppid=None, pgid=None, sid=None, comm=None, sid_error="gone")
             except TopologyError as error:
                 rows[pid] = dict(pid=pid, ppid=None, pgid=None, sid=None, comm=None, sid_error="malformed",
                                  error=str(error))
@@ -321,7 +330,7 @@ def topology(pids=None, timeout=30.0):
                                  error=repr(error))
     else:
         try:
-            ps = subprocess.run(["ps", "-axo", "pid=,ppid=,pgid=,comm="], capture_output=True, text=True,
+            ps = subprocess.run(["ps", "-axo", PS_COLUMNS], capture_output=True, text=True,
                                 timeout=max(0.0, deadline - time.monotonic()))
         except (OSError, subprocess.TimeoutExpired) as error:
             raise TopologyError(f"ps failed: {error!r}") from error
@@ -329,6 +338,10 @@ def topology(pids=None, timeout=30.0):
             raise TopologyError(f"ps exited {ps.returncode}: {ps.stderr.strip()}")
         for pid, row in parse_ps_table(ps.stdout).items():
             if pids and pid not in pids:
+                continue
+            if row["state"] == "Z":
+                row["sid_error"] = "zombie"
+                rows[pid] = row
                 continue
             try:
                 row["sid"] = os.getsid(pid)
