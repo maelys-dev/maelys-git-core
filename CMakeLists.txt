@@ -610,6 +610,19 @@ if(MAELYS_GIT_BUILD_TESTS)
                 $<TARGET_FILE:maelys-git-agent> $<TARGET_FILE:maelys-git-executor>
                 ${MAELYS_GIT_TEST_MANIFEST} ${MAELYS_OPENSSL_PROGRAM} $<TARGET_FILE:maelys-git>)
         set_tests_properties(maelys-git-cloud-transport PROPERTIES TIMEOUT 60)
+        # GIT-C10 qualification harness, nominal scenario: the lab Cloud server,
+        # the state assertions and the real supervision topology, end to end.
+        add_test(NAME maelys-git-qualification-nominal
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/qualification/scenario_nominal.py
+                $<TARGET_FILE:maelys-git-agent> $<TARGET_FILE:maelys-git-executor> $<TARGET_FILE:maelys-git>
+                ${MAELYS_OPENSSL_PROGRAM} ${CMAKE_CURRENT_BINARY_DIR}/qualification-nominal)
+        set_tests_properties(maelys-git-qualification-nominal PROPERTIES TIMEOUT 180)
+        # The harness components alone, with the counter-examples of their
+        # review: no product binary is involved.
+        add_test(NAME maelys-git-qualification-components
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/qualification/test_lab_components.py
+                ${MAELYS_OPENSSL_PROGRAM})
+        set_tests_properties(maelys-git-qualification-components PROPERTIES TIMEOUT 120)
     endif()
 
     add_test(NAME maelys-git-cli-integration
