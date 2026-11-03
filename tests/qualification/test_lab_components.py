@@ -93,6 +93,17 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
             INSERT INTO audit(event_id,kind,payload,created_at_ms) VALUES('poll:cmd:1','command_rejected','{}',1);
         """)
     check("correlation.audit_kinds_exact_no_match_for_prefix", [], S.audit_kinds(db, "cmd"))
+    # 843-01: a command id may contain ":" (protocol.c); the event id is
+    # compared whole against family:message_id, never split on ":".
+    with sqlite3.connect(db) as c:
+        c.execute("INSERT INTO audit(event_id,kind,payload,created_at_ms) VALUES('command:cmd:part','command_complete','{}',1)")
+        c.execute("INSERT INTO audit(event_id,kind,payload,created_at_ms) VALUES('grants:cmd:part','grants_snapshot','{}',1)")
+        c.execute("INSERT INTO audit(event_id,kind,payload,created_at_ms) VALUES('attempt:cmd:part:2','command_attempt','{}',1)")
+    check("correlation.colon_id_not_attributed_to_prefix", [], S.audit_kinds(db, "cmd"))
+    check("correlation.colon_id_found_whole", ["command_complete", "grants_snapshot"], S.audit_kinds(db, "cmd:part"))
+    check("correlation.suffixed_family_only_when_declared", ["command_complete", "grants_snapshot", "command_attempt"],
+          S.audit_kinds(db, "cmd:part") if False else [r["kind"] for r in S.audit_entries(db, "cmd:part", suffixed=("attempt",))])
+    check("correlation.suffixed_family_not_truncating_id", [], [r["kind"] for r in S.audit_entries(db, "cmd", suffixed=("attempt",))])
     check("correlation.audit_kinds_exact_for_extra", ["grants_snapshot", "command_complete"], S.audit_kinds(db, "cmd-extra"))
     check("correlation.outbox_exact", [], S.outbox(db, "cmd"))
     check("correlation.outbox_extra", ["cmd-extra"], [row["id"] for row in S.outbox(db, "cmd-extra")])
@@ -153,6 +164,30 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
     check("hook.resumed_allows", 0, result.returncode)
     result = subprocess.run(["sh", str(hook), "committed"], input="0 1 refs/heads/x\n", capture_output=True, text=True)
     check("hook.committed_marker", True, result.returncode == 0 and (markers / "committed").exists())
+
+    # ---- 843-02: cleanup covers the real fixture scope. A fake agent in its
+    # own session starts a child that, like the executor, leads another
+    # process group and would write a marker late; stop_tree() must stop
+    # both, confirm it, and no late marker may appear.
+    import lab_process
+    marker = root / "late-marker"
+    fake_child = root / "fake-child.py"
+    fake_child.write_text("import sys, time\ntime.sleep(1.0)\nopen(sys.argv[1], 'w').write('late')\n")
+    fake_agent = root / "fake-agent.py"
+    fake_agent.write_text("import subprocess, sys, time\n"
+                          "subprocess.Popen([sys.executable, sys.argv[1], sys.argv[2]], start_new_session=True)\n"
+                          "time.sleep(30)\n")
+    agent = subprocess.Popen([sys.executable, str(fake_agent), str(fake_child), str(marker)], start_new_session=True)
+    import time as _time
+    _time.sleep(0.4)
+    tree_before = S.descendants(agent.pid)
+    check("cleanup.child_in_another_group_before", True, bool(tree_before) and all(r["pgid"] != os.getpgid(agent.pid) for r in tree_before))
+    outcome = lab_process.stop_tree(agent, timeout_s=5)
+    check("cleanup.confirmed", True, outcome["confirmed"])
+    check("cleanup.two_groups_signalled", True, len(outcome["signalled_groups"]) >= 2)
+    check("cleanup.root_reaped", True, agent.returncode is not None)
+    _time.sleep(1.5)
+    check("cleanup.no_late_marker", False, marker.exists())
 
 if failures:
     print(f"{len(failures)} component check(s) failed: {failures}")

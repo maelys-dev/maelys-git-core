@@ -33,6 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lab_hook  # noqa: E402
+import lab_process  # noqa: E402
 import lab_state as S  # noqa: E402
 from lab_cloud_server import LabCloudServer, command  # noqa: E402
 
@@ -84,6 +85,25 @@ agent_runs = 0
 failed_exception = None
 server = None
 proc = None
+cleanups = []         # one record per agent launch that had to be stopped
+
+
+def launch_agent(config_path, timeout_s=120):
+    """Every launch of the agent goes through here (review 843-02): its own
+    session, a bounded wait, and on timeout the whole fixture tree (agent,
+    executor in its own group, Git, hook) stopped and reaped by stop_tree()."""
+    global proc
+    proc = subprocess.Popen([AGENT, "run", "--config", str(config_path), "--once", "--format", "json",
+                             "--non-interactive"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            env=ENV, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=timeout_s)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        cleanups.append(lab_process.stop_tree(proc, timeout_s=10))
+        out, err = proc.communicate(timeout=10)
+        timed_out = True
+    return proc.returncode, out, err, timed_out
 with tempfile.TemporaryDirectory(prefix="gitc10-lab-") as temporary:
     root = Path(temporary).resolve()
     try:
@@ -133,13 +153,19 @@ with tempfile.TemporaryDirectory(prefix="gitc10-lab-") as temporary:
             path.write_text(text or "")
             outputs.append(path)
 
+        class Launched:
+            def __init__(self, returncode, timed_out):
+                self.returncode, self.timed_out = returncode, timed_out
+
         def cycle():
             global agent_runs
             agent_runs += 1
-            result = run(AGENT, "run", "--config", config_path, "--once", "--format", "json", "--non-interactive", ok=False)
-            keep_output(f"agent-{agent_runs}.stdout", result.stdout)
-            keep_output(f"agent-{agent_runs}.stderr", result.stderr)
-            return result
+            returncode, out, err, timed_out = launch_agent(config_path)
+            keep_output(f"agent-{agent_runs}.stdout", out)
+            keep_output(f"agent-{agent_runs}.stderr", err)
+            if timed_out:
+                A.record(f"agent.run_{agent_runs}_timed_out", False, True, ok=False)
+            return Launched(returncode, timed_out)
 
         # 1. health: queued, served, executed, recorded, then posted and acked.
         server.enqueue(command("lab-health", "health"))
@@ -175,6 +201,8 @@ with tempfile.TemporaryDirectory(prefix="gitc10-lab-") as temporary:
             (markers / "resume").write_text("go\n")
 
         agent_runs += 1
+        # The watcher needs the agent's pid: start the process first, then
+        # the observer, then wait as every launch does.
         proc = subprocess.Popen([AGENT, "run", "--config", str(config_path), "--once", "--format", "json",
                                  "--non-interactive"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                 env=ENV, start_new_session=True)
@@ -183,9 +211,9 @@ with tempfile.TemporaryDirectory(prefix="gitc10-lab-") as temporary:
         try:
             out, err = proc.communicate(timeout=120)
         except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            out, err = proc.communicate()
-            survey["error"] = survey.get("error") or "agent did not finish within 120 s; its session was killed"
+            cleanups.append(lab_process.stop_tree(proc, timeout_s=10))
+            out, err = proc.communicate(timeout=10)
+            survey["error"] = survey.get("error") or "agent did not finish within 120 s; the fixture tree was stopped"
         watcher.join(timeout=5)
         keep_output(f"agent-{agent_runs}.stdout", out)
         keep_output(f"agent-{agent_runs}.stderr", err)
@@ -233,13 +261,20 @@ with tempfile.TemporaryDirectory(prefix="gitc10-lab-") as temporary:
         A.check("inventory.tables", ["audit", "commands", "metadata", "outbox"], sorted(inventory))
     except BaseException as error:  # noqa: BLE001 — recorded, evidence preserved, re-raised below
         failed_exception = error
-        if proc is not None and proc.poll() is None:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except OSError:
-                pass
         A.record("scenario.exception", None, repr(error), ok=False)
     finally:
+        # Before any copy or removal of the fixture: the whole tree of the
+        # last launch stopped and reaped, confirmed (review 843-02). On the
+        # nominal path the agent has exited and reaped its executor; the
+        # stop then finds nothing and confirms at once.
+        stop_confirmed = True
+        if proc is not None:
+            outcome = lab_process.stop_tree(proc, timeout_s=10)
+            cleanups.append(outcome)
+            stop_confirmed = outcome["confirmed"]
+            if not outcome["confirmed"]:
+                A.record("cleanup.fixture_stop_confirmed", True, outcome, ok=False)
+        (EVIDENCE / "cleanups.json").write_text(json.dumps(cleanups, indent=2, default=str))
         # Outputs are produced and closed before the secret is searched.
         if server is not None:
             with server.lock:
@@ -251,8 +286,10 @@ with tempfile.TemporaryDirectory(prefix="gitc10-lab-") as temporary:
         else:
             secret = None
         if failed_exception is not None or A.failed:
-            # Preserve what the temporary directory holds before it goes.
-            keep = EVIDENCE / "failure"
+            # Preserve what the temporary directory holds before it goes: a
+            # coherent copy only after a confirmed stop; otherwise the copy is
+            # marked unconfirmed and the failure state is explicit.
+            keep = EVIDENCE / ("failure" if stop_confirmed else "failure-unconfirmed-stop")
             keep.mkdir(exist_ok=True)
             for name in ("example.git", "markers", "agent.sqlite3", "agent.sqlite3-wal", "agent.sqlite3-shm"):
                 source = root / name

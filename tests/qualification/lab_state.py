@@ -101,23 +101,34 @@ def attempt(database, message_id):
     return result
 
 
-# The audit event_id contract of the journal (store.c): "<family>:<message_id>"
-# for the families below, "attempt:<message_id>:<n>" in C, "poll:<cursor>:<n>"
-# for rejections, which name no command. Correlation is exact on the
-# message_id component: "cmd" never matches "cmd-extra" (review 2B-02).
-AUDIT_FAMILIES = ("command", "receipt", "explanation", "grants", "attempt", "uncertain", "resolved", "record_failed")
+# The audit event_id contract of the journal at B (store.c): the full id is
+# "<family>:<message_id>" for the families below; "poll:<cursor>:<n>" names no
+# command. A message_id may itself contain ":" (protocol.c), so the event id
+# is compared whole against the id built from the contract, never split
+# (reviews 2B-02, 843-01). A family of C that appends a declared suffix is
+# matched as "<family>:<message_id>:<suffix without colon>", the family given
+# by the caller; nothing of C's future grammar is assumed by default.
+AUDIT_FAMILIES = ("command", "receipt", "explanation", "grants")
+SUFFIXED_FAMILIES = ()  # e.g. ("attempt",) once C declares "attempt:<message_id>:<n>"
 
 
-def audit_entries(database, message_id):
-    """The audit rows correlated exactly to message_id, in sequence order."""
+def audit_entries(database, message_id, families=AUDIT_FAMILIES, suffixed=SUFFIXED_FAMILIES):
+    """The audit rows correlated exactly to message_id, in sequence order:
+    event_id == family + ":" + message_id, or, for a suffixed family,
+    event_id == family + ":" + message_id + ":" + a suffix without colon."""
+    exact = {f"{family}:{message_id}" for family in families}
+    prefixes = [f"{family}:{message_id}:" for family in suffixed]
     rows = _all(database, "SELECT sequence,event_id,kind,payload,created_at_ms FROM audit ORDER BY sequence")
     matched = []
     for row in rows:
-        parts = row["event_id"].split(":")
-        if row["event_id"] == message_id:
+        event_id = row["event_id"]
+        if event_id in exact:
             matched.append(row)
-        elif len(parts) >= 2 and parts[0] in AUDIT_FAMILIES and parts[1] == message_id:
-            matched.append(row)
+            continue
+        for prefix in prefixes:
+            if event_id.startswith(prefix) and ":" not in event_id[len(prefix):]:
+                matched.append(row)
+                break
     return matched
 
 
