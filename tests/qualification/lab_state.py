@@ -4,7 +4,7 @@ Pure readers over the agent journal (SQLite, read-only, short transactions,
 no lock held), Git repositories, the grants store, processes and command
 envelopes; and a recorder that writes one JSON line per assertion into
 assertions.jsonl: {"assertion", "expected", "observed", "ok"}. Standard
-library only. Process readers use /proc on Linux and `ps` on macOS; what a
+library only. Process readers use /proc on Linux, `ps` and getsid(2) on macOS; what a
 platform cannot observe is recorded as "not_applicable", never as passed.
 """
 import json
@@ -242,12 +242,27 @@ def store_entries(store):
 
 
 # ---- processes --------------------------------------------------------------
+class TopologyError(OSError):
+    """The process table could not be read: it says nothing about any
+    process, and in particular proves no stop."""
+
+
 def topology(pids=None):
-    """PID, PPID, PGID, SID and command of the given pids (or all) — /proc on
-    Linux, ps on macOS. The invariants are compared, never literal pids."""
+    """PID, PPID, PGID, SID and command of the given pids (or all): /proc on
+    Linux; on macOS `ps` for pid, ppid, pgid and comm, and getsid(2) for the
+    session, because `ps -o sess` prints 0 for every process on the verified
+    Mac (review of 570154a). A row whose session cannot be read carries
+    sid=None and says why in `sid_error`: `gone` (the process disappeared
+    between the two readings) or `denied`. A reader that fails raises
+    TopologyError instead of returning an empty table. The invariants are
+    compared, never literal pids."""
     rows = {}
     if LINUX:
-        for proc in Path("/proc").iterdir():
+        try:
+            entries = list(Path("/proc").iterdir())
+        except OSError as error:
+            raise TopologyError(f"/proc unreadable: {error!r}") from error
+        for proc in entries:
             if not proc.name.isdigit():
                 continue
             pid = int(proc.name)
@@ -258,19 +273,33 @@ def topology(pids=None):
                 comm = stat[stat.index("(") + 1:stat.rindex(")")]
                 fields = stat[stat.rindex(")") + 2:].split()
                 rows[pid] = dict(pid=pid, ppid=int(fields[1]), pgid=int(fields[2]), sid=int(fields[3]), comm=comm)
-            except (OSError, ValueError):
-                continue
+            except FileNotFoundError:
+                continue  # gone between the listing and the reading
+            except (OSError, ValueError) as error:
+                rows[pid] = dict(pid=pid, ppid=None, pgid=None, sid=None, comm=None, sid_error="denied",
+                                 error=repr(error))
     else:
-        out = subprocess.run(["ps", "-axo", "pid=,ppid=,pgid=,sess=,comm="], capture_output=True, text=True).stdout
-        for line in out.splitlines():
-            parts = line.split(None, 4)
-            if len(parts) < 5:
+        try:
+            ps = subprocess.run(["ps", "-axo", "pid=,ppid=,pgid=,comm="], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise TopologyError(f"ps failed: {error!r}") from error
+        if ps.returncode != 0:
+            raise TopologyError(f"ps exited {ps.returncode}: {ps.stderr.strip()}")
+        for line in ps.stdout.splitlines():
+            parts = line.split(None, 3)
+            if len(parts) < 4:
                 continue
             pid = int(parts[0])
             if pids and pid not in pids:
                 continue
-            rows[pid] = dict(pid=pid, ppid=int(parts[1]), pgid=int(parts[2]), sid=int(parts[3]),
-                             comm=os.path.basename(parts[4]))
+            row = dict(pid=pid, ppid=int(parts[1]), pgid=int(parts[2]), sid=None, comm=os.path.basename(parts[3]))
+            try:
+                row["sid"] = os.getsid(pid)
+            except ProcessLookupError:
+                row["sid_error"] = "gone"
+            except PermissionError:
+                row["sid_error"] = "denied"
+            rows[pid] = row
     return rows
 
 

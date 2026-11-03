@@ -16,8 +16,11 @@ Each run writes into a fresh directory EVIDENCE_ROOT/<utc timestamp>-<pid>/
 working-tree patch digest when dirty, binary digests), assertions.jsonl,
 topology.json, the agent's captured outputs, the server's request journal,
 summary.json; on failure the synthetic repository and the journal are
-copied there too. The lab secret is searched, at the end, in that closed
-set of outputs. Exit 0 when every assertion holds, 1 otherwise.
+copied there too, after the stop of every launch has been confirmed
+(lab_process). When a stop is not confirmed, no copy is presented as
+coherent: the original fixture directory is kept in place and its path is
+recorded in fixture-kept.json. The lab secret is searched, at the end, in
+that closed set of outputs. Exit 0 when every assertion holds, 1 otherwise.
 """
 import hashlib
 import json
@@ -84,28 +87,57 @@ outputs = []          # the closed set of files the secret is searched in, at th
 agent_runs = 0
 failed_exception = None
 server = None
-proc = None
-cleanups = []         # one record per agent launch that had to be stopped
+launches = []         # every launch of the agent, kept until its stop is confirmed
+cleanups = []         # one stop record per launch (and per stop on timeout)
+
+
+def start_agent(config_path):
+    """Every launch of the agent goes through here (review 843-02): its own
+    session, whose id is the scope stop_scope() will clean, kept in
+    `launches` before any wait that could reap the agent."""
+    launch = lab_process.Launch([AGENT, "run", "--config", str(config_path), "--once", "--format", "json",
+                                 "--non-interactive"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                env=ENV)
+    launches.append(launch)
+    return launch
 
 
 def launch_agent(config_path, timeout_s=120):
-    """Every launch of the agent goes through here (review 843-02): its own
-    session, a bounded wait, and on timeout the whole fixture tree (agent,
-    executor in its own group, Git, hook) stopped and reaped by stop_tree()."""
-    global proc
-    proc = subprocess.Popen([AGENT, "run", "--config", str(config_path), "--once", "--format", "json",
-                             "--non-interactive"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                            env=ENV, start_new_session=True)
+    """Start the agent and wait, bounded; on timeout the whole scope (agent,
+    executor in its own group, Git, hook) is stopped by stop_scope()."""
+    launch = start_agent(config_path)
     try:
-        out, err = proc.communicate(timeout=timeout_s)
+        out, err = launch.communicate(timeout=timeout_s)
         timed_out = False
     except subprocess.TimeoutExpired:
-        cleanups.append(lab_process.stop_tree(proc, timeout_s=10))
-        out, err = proc.communicate(timeout=10)
+        cleanups.append(lab_process.stop_scope(launch, timeout_s=10))
+        out, err = launch.communicate(timeout=10)
         timed_out = True
-    return proc.returncode, out, err, timed_out
-with tempfile.TemporaryDirectory(prefix="gitc10-lab-") as temporary:
-    root = Path(temporary).resolve()
+    return launch.returncode, out, err, timed_out
+
+
+FIXTURE_NAMES = ("example.git", "markers", "agent.sqlite3", "agent.sqlite3-wal", "agent.sqlite3-shm")
+
+
+class Fixture:
+    """The fixture directory: unlike TemporaryDirectory, removed on exit only
+    once the finalization has confirmed the stop of every launch; kept in
+    place otherwise, including when the finalization itself does not run."""
+
+    def __init__(self):
+        self.path = Path(tempfile.mkdtemp(prefix="gitc10-lab-")).resolve()
+        self.keep = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        if not self.keep:
+            shutil.rmtree(self.path, ignore_errors=True)
+
+
+with Fixture() as fixture:
+    root = fixture.path
     try:
         cert, key = root / "cert.pem", root / "key.pem"
         run(OPENSSL, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=localhost",
@@ -194,7 +226,8 @@ with tempfile.TemporaryDirectory(prefix="gitc10-lab-") as temporary:
                 survey["error"] = "prepared marker never appeared"
                 return
             rows = S.topology()
-            survey.update(agent=rows.get(proc.pid), tree=S.descendants(proc.pid, rows),
+            survey.update(agent=rows.get(launch.pid), tree=S.descendants(launch.pid, rows),
+                          session=[row for row in rows.values() if row.get("sid") == launch.sid],
                           prepared_updates=(markers / "prepared.updates").read_text(),
                           refs_during=dict(main=S.ref(bare, "refs/heads/main")),
                           locks_during=S.lock_files(bare))
@@ -203,22 +236,20 @@ with tempfile.TemporaryDirectory(prefix="gitc10-lab-") as temporary:
         agent_runs += 1
         # The watcher needs the agent's pid: start the process first, then
         # the observer, then wait as every launch does.
-        proc = subprocess.Popen([AGENT, "run", "--config", str(config_path), "--once", "--format", "json",
-                                 "--non-interactive"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                env=ENV, start_new_session=True)
+        launch = start_agent(config_path)
         watcher = threading.Thread(target=observe, daemon=True)
         watcher.start()
         try:
-            out, err = proc.communicate(timeout=120)
+            out, err = launch.communicate(timeout=120)
         except subprocess.TimeoutExpired:
-            cleanups.append(lab_process.stop_tree(proc, timeout_s=10))
-            out, err = proc.communicate(timeout=10)
-            survey["error"] = survey.get("error") or "agent did not finish within 120 s; the fixture tree was stopped"
+            cleanups.append(lab_process.stop_scope(launch, timeout_s=10))
+            out, err = launch.communicate(timeout=10)
+            survey["error"] = survey.get("error") or "agent did not finish within 120 s; its scope was stopped"
         watcher.join(timeout=5)
         keep_output(f"agent-{agent_runs}.stdout", out)
         keep_output(f"agent-{agent_runs}.stderr", err)
         (EVIDENCE / "topology.json").write_text(json.dumps(survey, indent=2, default=str))
-        A.check("update.agent_exit", 0, proc.returncode)
+        A.check("update.agent_exit", 0, launch.returncode)
         A.check("update.prepared_marker_seen", True, "tree" in survey)
         A.check("update.hook_wait_not_expired", False, (markers / "prepared.expired").exists())
         if "tree" in survey:
@@ -263,18 +294,18 @@ with tempfile.TemporaryDirectory(prefix="gitc10-lab-") as temporary:
         failed_exception = error
         A.record("scenario.exception", None, repr(error), ok=False)
     finally:
-        # Before any copy or removal of the fixture: the whole tree of the
-        # last launch stopped and reaped, confirmed (review 843-02). On the
-        # nominal path the agent has exited and reaped its executor; the
-        # stop then finds nothing and confirms at once.
+        # Before any copy or removal of the fixture: the scope of every
+        # launch stopped and reaped, confirmed (review 843-02). On the
+        # nominal path each agent has exited and reaped its executor; the
+        # stop then observes an empty scope and confirms at once.
         stop_confirmed = True
-        if proc is not None:
-            outcome = lab_process.stop_tree(proc, timeout_s=10)
+        for outcome in lab_process.stop_all(launches, timeout_s=10):
             cleanups.append(outcome)
-            stop_confirmed = outcome["confirmed"]
             if not outcome["confirmed"]:
+                stop_confirmed = False
                 A.record("cleanup.fixture_stop_confirmed", True, outcome, ok=False)
         (EVIDENCE / "cleanups.json").write_text(json.dumps(cleanups, indent=2, default=str))
+        outputs.append(EVIDENCE / "cleanups.json")
         # Outputs are produced and closed before the secret is searched.
         if server is not None:
             with server.lock:
@@ -285,24 +316,23 @@ with tempfile.TemporaryDirectory(prefix="gitc10-lab-") as temporary:
             server.stop()
         else:
             secret = None
-        if failed_exception is not None or A.failed:
-            # Preserve what the temporary directory holds before it goes: a
-            # coherent copy only after a confirmed stop; otherwise the copy is
-            # marked unconfirmed and the failure state is explicit.
-            keep = EVIDENCE / ("failure" if stop_confirmed else "failure-unconfirmed-stop")
-            keep.mkdir(exist_ok=True)
-            for name in ("example.git", "markers", "agent.sqlite3", "agent.sqlite3-wal", "agent.sqlite3-shm"):
-                source = root / name
-                if source.is_dir():
-                    shutil.copytree(source, keep / name, dirs_exist_ok=True)
-                elif source.is_file():
-                    shutil.copy2(source, keep / name)
+        # A coherent copy on failure only after every stop is confirmed;
+        # otherwise writers may remain and the original stays in place (it
+        # holds the lab token, a lab secret), the scenario failing on the
+        # record above.
+        outcome = lab_process.preserve_fixture(root, EVIDENCE, stop_confirmed,
+                                               failed_exception is not None or A.failed, FIXTURE_NAMES, cleanups)
+        if outcome["kept"] is not None:
+            A.record("cleanup.fixture_kept_in_place", None, str(root), ok=False)
+            outputs.append(EVIDENCE / "fixture-kept.json")
+        fixture.keep = outcome["kept"] is not None
         if secret:
             hits = S.secret_absent(secret, outputs + [EVIDENCE / "topology.json", EVIDENCE / "assertions.jsonl"]
                                    if (EVIDENCE / "topology.json").exists() else outputs)
             A.check("secret.absent_from_outputs", [], hits)
 
 summary = A.summary()
-(EVIDENCE / "summary.json").write_text(json.dumps(dict(scenario="nominal", platform=sys.platform, **summary), indent=2))
+(EVIDENCE / "summary.json").write_text(json.dumps(dict(
+    scenario="nominal", platform=sys.platform, fixture_kept=None if stop_confirmed else str(root), **summary), indent=2))
 print(json.dumps(dict(evidence=str(EVIDENCE), **summary)))
 sys.exit(1 if summary["failed"] or failed_exception is not None else 0)
