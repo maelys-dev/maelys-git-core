@@ -1,38 +1,41 @@
-"""Process-scope cleanup for the qualification harness (review 843-02 and
-its follow-up on 570154a).
+"""Process-scope cleanup for the qualification harness (review 843-02, its
+follow-up on 570154a and review B8 of b8bdb60).
 
 Scope of a launch. Every agent the harness starts gets its own session
 (start_new_session, forced here): the agent is the leader of a session whose
 id is its own pid, fixed by the kernel before exec, so the scope of a launch
-is known at the launch, before any wait that could reap the agent. The real
-executor becomes the leader of another process group (POSIX_SPAWN_SETPGROUP,
-src/common/process.c) but stays in that session, as do Git and the lab hook.
-A search by session therefore finds an executor re-parented after the
-agent's death, which a search by parent pid cannot: that is the
-counter-example of 570154a.
+is known at the launch, before any wait. The real executor becomes the
+leader of another process group (POSIX_SPAWN_SETPGROUP, src/common/process.c)
+but stays in that session, as do Git and the lab hook, and so does anything
+they start after the agent's death. A search by session therefore finds an
+executor re-parented after the agent's exit, which a search by parent pid
+cannot: that is the counter-example of 570154a.
 
-Identity. A session id names a session only while a member carries it; a
-remembered number reserves nothing. A process is taken as a member of a
-launch's scope when it is observed with that session id AND it started no
-later than the moment the agent was reaped (a process reusing the number
-afterwards would have to start after that moment and call setsid with
-exactly that pid). Session ids come from getsid(2) (on this macOS `ps -o
-sess` prints 0 for every process); start times from /proc/<pid>/stat on
-Linux, compared on CLOCK_BOOTTIME, and from `ps -o lstart` on macOS,
-compared on the wall clock at the second: a process reusing the number
-within the second of the reap is the residual ambiguity.
+Authority (B8-01). A session is joined by inheritance only, and its id is a
+pid that the kernel does not reuse while the leader exists, a zombie
+included. The harness therefore keeps its authority over the scope by not
+reaping the agent before the sweep: Launch.finish() reads the outputs and
+the exit status without reaping (waitid WNOWAIT), and stop_scope() reaps
+the agent only after it has observed the session empty of any other member.
+While that holds, every process observed with the session id is a
+descendant, whatever its start time; once the agent has been reaped the
+number may be reused and the authority is lost: stop_scope() then refuses
+to signal anything, answers unconfirmed with that reason, and the caller
+keeps the fixture in place. No start time is compared, no number is
+signalled from memory: each target is re-identified by its session id
+right before the signal (through a pidfd on Linux, where available), and
+a pid that no longer names a member is left alone.
 
-Outcome. stop_scope() signals each process group observed in the scope at
-the moment of the sweep, repeats until the scope is observed empty or the
-bounded deadline (monotonic clock) passes, reaps the launched process and
-returns a record whose `confirmed` is true only after that empty
-observation with the root reaped. A failing topology reader, a member whose
-start time cannot be read or lies after the reap (identity uncertain: never
-signalled), a member remaining at the deadline, or a root that cannot be
-reaped leave `confirmed` false with the reason, and the caller keeps the
-original fixture in place and fails. A descendant that creates its own
-session leaves the scope and is not covered: the Linux laboratory proves
-confinement by cgroup.
+Outcome. stop_scope() works under one monotonic deadline handed to every
+reading; it signals each member observed at the moment of the sweep, by
+pid, re-observes until the scope is empty, reaps the agent, and answers
+`confirmed` only when that empty observation and the reap both happened
+before the deadline. A reader that fails or that reports a row it could
+not read, a lost authority, a member remaining at the deadline or an
+agent that cannot be reaped leave `confirmed` false with the reason, and
+the caller keeps the original fixture and fails. A descendant that creates
+its own session leaves the scope and is not covered: the Linux laboratory
+proves confinement by cgroup.
 """
 import json
 import os
@@ -40,35 +43,13 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 import lab_state as S
 
 LINUX = sys.platform.startswith("linux")
-
-
-def boundary_clock():
-    """Seconds on the clock process start times are compared with."""
-    if LINUX:
-        return time.clock_gettime(time.CLOCK_BOOTTIME)
-    return time.time()
-
-
-def started_at(pid):
-    """Start of pid on boundary_clock(), or None when it cannot be read."""
-    try:
-        if LINUX:
-            with open(f"/proc/{pid}/stat") as stat_file:
-                stat = stat_file.read()
-            fields = stat[stat.rindex(")") + 2:].split()
-            return int(fields[19]) / os.sysconf("SC_CLK_TCK")
-        out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=10)
-        if out.returncode != 0 or not out.stdout.strip():
-            return None
-        return time.mktime(time.strptime(out.stdout.strip(), "%a %b %d %H:%M:%S %Y"))
-    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
-        return None
 
 
 def _alive(pid):
@@ -83,137 +64,206 @@ def _alive(pid):
 
 class Launch:
     """One process started in its own session, with its scope fixed at the
-    launch: the session id is the pid. Waiting goes through this object so
-    that the moment of the reap is recorded on boundary_clock()."""
+    launch: the session id is the pid. The outputs and the exit status are
+    read without reaping (finish); the reap is explicit (reap), done by
+    stop_scope() after the sweep, because the reap ends the authority."""
 
     def __init__(self, args, **popen):
         popen["start_new_session"] = True
         self.process = subprocess.Popen(args, **popen)
         self.pid = self.process.pid
         self.sid = self.pid
-        self.launched_at = boundary_clock()
+        self.launched_at = time.monotonic()
+        self.exit = None        # (code, signal) once exited, read without reaping
         self.reaped_at = None
+        self.stop = None        # the record of the stop, once done
+        self.output = {}
+        self._readers = []
+        for name in ("stdout", "stderr"):
+            stream = getattr(self.process, name)
+            if stream is not None:
+                reader = threading.Thread(target=self._read, args=(name, stream), daemon=True)
+                reader.start()
+                self._readers.append(reader)
+
+    def _read(self, name, stream):
         try:
-            self.sid_observed = os.getsid(self.pid)
-        except ProcessLookupError:
-            self.sid_observed = None  # already exited: the scope holds by construction
-        if self.sid_observed not in (None, self.sid):
-            raise RuntimeError(f"launch {self.pid}: session {self.sid_observed} observed, {self.sid} expected")
+            self.output[name] = stream.read()
+        except (OSError, ValueError):
+            self.output[name] = None
+
+    @property
+    def reaped(self):
+        return self.process.returncode is not None
+
+    def exited(self):
+        """Whether the process has exited, read without reaping it."""
+        if self.exit is None and not self.reaped:
+            info = os.waitid(os.P_PID, self.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            if info is not None:
+                if info.si_code == os.CLD_EXITED:
+                    self.exit = (info.si_status, None)
+                else:
+                    self.exit = (None, info.si_status)
+        return self.exit is not None or self.reaped
 
     @property
     def returncode(self):
-        return self.process.returncode
+        if self.reaped:
+            return self.process.returncode
+        if self.exit is None:
+            return None
+        code, sig = self.exit
+        return code if sig is None else -sig
 
-    def _reaped(self):
-        if self.process.returncode is not None and self.reaped_at is None:
-            self.reaped_at = boundary_clock()
+    def finish(self, timeout):
+        """Read the outputs to EOF and wait for the exit, bounded, without
+        reaping; returns (stdout, stderr). Raises subprocess.TimeoutExpired
+        when the process, or a survivor holding its outputs, outlasts it."""
+        deadline = time.monotonic() + timeout
+        for reader in self._readers:
+            reader.join(max(0.0, deadline - time.monotonic()))
+        while not self.exited():
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(self.process.args, timeout)
+            time.sleep(0.02)
+        if any(reader.is_alive() for reader in self._readers):
+            raise subprocess.TimeoutExpired(self.process.args, timeout)
+        return self.output.get("stdout"), self.output.get("stderr")
 
-    def poll(self):
-        code = self.process.poll()
-        self._reaped()
-        return code
-
-    def wait(self, timeout=None):
+    def reap(self, timeout=None):
+        """Wait for and reap the process: the end of the authority."""
         try:
             return self.process.wait(timeout=timeout)
         finally:
-            self._reaped()
-
-    def communicate(self, input=None, timeout=None):
-        try:
-            return self.process.communicate(input=input, timeout=timeout)
-        finally:
-            self._reaped()
+            if self.reaped and self.reaped_at is None:
+                self.reaped_at = time.monotonic()
 
     def record(self):
-        return dict(pid=self.pid, sid=self.sid, sid_observed=self.sid_observed, launched_at=self.launched_at,
-                    reaped_at=self.reaped_at, returncode=self.returncode)
+        return dict(pid=self.pid, sid=self.sid, exited=self.exit is not None, reaped=self.reaped,
+                    returncode=self.returncode, launched_at=self.launched_at, reaped_at=self.reaped_at)
 
 
-def members(sid, boundary, rows=None):
-    """Observed members of a session: (targets, uncertain, unreadable).
-    targets started no later than boundary; uncertain are observed in the
-    session but their identity is not established (start time unreadable or
-    after the boundary); unreadable are rows whose session could not be read
-    (`denied`): nothing can be concluded about them."""
-    rows = S.topology() if rows is None else rows
-    targets, uncertain, unreadable = [], [], []
+def session_of(pid):
+    """The session id of pid read now, or None when it cannot be read."""
+    try:
+        if LINUX:
+            with open(f"/proc/{pid}/stat") as stat_file:
+                return S.parse_proc_stat(stat_file.read())["sid"]
+        return os.getsid(pid)
+    except (OSError, S.TopologyError):
+        return None
+
+
+def signal_member(pid, sid, sig):
+    """Signal pid if, right now, it still carries the session sid: True when
+    signalled, False when it no longer names a member (gone, or the number
+    reused outside the session). On Linux the pidfd pins the identity
+    between the check and the signal; elsewhere the two are consecutive
+    calls, the kernel's own window."""
+    if LINUX and hasattr(os, "pidfd_open"):
+        try:
+            fd = os.pidfd_open(pid)
+        except OSError:
+            return False
+        try:
+            if session_of(pid) != sid:
+                return False
+            signal.pidfd_send_signal(fd, sig)
+            return True
+        except ProcessLookupError:
+            return False
+        finally:
+            os.close(fd)
+    try:
+        if os.getsid(pid) != sid:
+            return False
+        os.kill(pid, sig)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def members(launch, rows):
+    """The members of the launch's session in an observed table, and the
+    rows whose session could not be read: (members, unreadable). The agent
+    itself, once exited, is left to the reap."""
+    found, unreadable = [], []
+    leader_exited = launch.exited()
     for row in rows.values():
         if row["pid"] == os.getpid():
             continue
         if row.get("sid") is None:
-            if row.get("sid_error") == "denied":
+            if row.get("sid_error") != "gone":
                 unreadable.append(row)
-            continue  # gone between the two readings
-        if row["sid"] != sid:
             continue
-        started = started_at(row["pid"])
-        if started is None:
-            if _alive(row["pid"]):
-                uncertain.append(dict(row, started=None, reason="start time unreadable"))
-        elif started > boundary:
-            uncertain.append(dict(row, started=started, reason="started after the reap"))
-        else:
-            targets.append(dict(row, started=started))
-    return targets, uncertain, unreadable
+        if row["sid"] != launch.sid:
+            continue
+        if row["pid"] == launch.pid and leader_exited:
+            continue
+        found.append(row)
+    return found, unreadable
 
 
 def stop_scope(launch, timeout_s=10.0, interval_s=0.05, sig=signal.SIGKILL):
-    """Stop every process of the launch's scope, reap the launched process,
-    and return {'confirmed', 'sid', 'signalled_groups', 'sweeps', 'remaining',
-    'uncertain', 'unreadable', 'errors', 'elapsed_ms', 'launch'}."""
+    """Stop every process of the launch's scope under one deadline, reap the
+    launched process, and return {'confirmed', 'sid', 'signalled', 'sweeps',
+    'remaining', 'unreadable', 'errors', 'elapsed_ms', 'launch'}. A stop
+    already confirmed is returned as it was: the scope is final."""
+    if launch.stop is not None and launch.stop["confirmed"]:
+        return launch.stop
     t0 = time.monotonic()
     deadline = t0 + timeout_s
-    signalled, errors, sweeps = set(), [], 0
-    targets, uncertain, unreadable = [], [], []
-    own_group = os.getpgid(0)
+    signalled, errors, sweeps = [], [], 0
+    remaining, unreadable = [], []
     confirmed = False
-    while True:
-        launch.poll()
-        boundary = launch.reaped_at if launch.reaped_at is not None else boundary_clock()
-        try:
-            targets, uncertain, unreadable = members(launch.sid, boundary)
-        except S.TopologyError as error:
-            errors.append(f"topology unreadable: {error!r}")
-            break
-        sweeps += 1
-        if not targets and not uncertain and not unreadable:
-            confirmed = True
-            break
-        for pgid in sorted({row["pgid"] for row in targets}):
-            if pgid <= 1 or pgid == own_group:
-                errors.append(f"group {pgid} refused: never init's nor our own")
-                continue
+    if launch.reaped:
+        errors.append(f"authority lost: launch {launch.pid} was reaped before the sweep, its session id may be reused")
+    else:
+        while True:
+            budget = deadline - time.monotonic()
+            if budget <= 0:
+                errors.append("deadline expired before an empty observation")
+                break
             try:
-                os.killpg(pgid, sig)
-                signalled.add(pgid)
-            except ProcessLookupError:
-                pass
-            except PermissionError as error:
-                errors.append(f"group {pgid}: {error!r}")
-        if time.monotonic() >= deadline:
-            break
-        if launch.returncode is None:
+                rows = S.topology(timeout=budget)
+            except S.TopologyError as error:
+                errors.append(f"topology unreadable: {error}")
+                break
+            sweeps += 1
+            remaining, unreadable = members(launch, rows)
+            if unreadable:
+                errors.append(f"{len(unreadable)} row(s) unreadable: no conclusion about them")
+                break
+            if not remaining:
+                if time.monotonic() <= deadline:
+                    confirmed = True
+                else:
+                    errors.append("deadline expired during the last observation")
+                break
+            for row in remaining:
+                try:
+                    if signal_member(row["pid"], launch.sid, sig):
+                        signalled.append(row["pid"])
+                except PermissionError as error:
+                    errors.append(f"pid {row['pid']}: {error!r}")
+            time.sleep(max(0.0, min(interval_s, deadline - time.monotonic())))
+        if confirmed:
             try:
-                launch.wait(timeout=interval_s)
+                launch.reap(timeout=max(0.0, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
-                pass
-        else:
-            time.sleep(interval_s)
-    if launch.returncode is None:
-        try:
-            launch.wait(timeout=max(interval_s, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired:
-            errors.append(f"launch {launch.pid} not reaped")
-            confirmed = False
-    return dict(confirmed=confirmed, sid=launch.sid, signalled_groups=sorted(signalled), sweeps=sweeps,
-                remaining=targets, uncertain=uncertain, unreadable=unreadable, errors=errors,
-                elapsed_ms=int((time.monotonic() - t0) * 1000), launch=launch.record())
+                errors.append(f"launch {launch.pid} not reaped before the deadline")
+                confirmed = False
+    outcome = dict(confirmed=confirmed, sid=launch.sid, signalled=sorted(set(signalled)), sweeps=sweeps,
+                   remaining=remaining, unreadable=unreadable, errors=errors,
+                   elapsed_ms=int((time.monotonic() - t0) * 1000), launch=launch.record())
+    launch.stop = outcome
+    return outcome
 
 
 def stop_all(launches, **options):
     """Stop every launch, in order, whatever the outcome of the previous
-    one; a scope already empty confirms at once."""
+    one; a launch whose stop is already confirmed keeps that record."""
     return [stop_scope(launch, **options) for launch in launches]
 
 

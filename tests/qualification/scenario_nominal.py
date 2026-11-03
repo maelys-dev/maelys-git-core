@@ -103,15 +103,17 @@ def start_agent(config_path):
 
 
 def launch_agent(config_path, timeout_s=120):
-    """Start the agent and wait, bounded; on timeout the whole scope (agent,
-    executor in its own group, Git, hook) is stopped by stop_scope()."""
+    """Start the agent and wait, bounded, without reaping it (the reap ends
+    the cleanup's authority: stop_scope() does it after its sweep); on
+    timeout the whole scope (agent, executor in its own group, Git, hook)
+    is stopped by stop_scope()."""
     launch = start_agent(config_path)
     try:
-        out, err = launch.communicate(timeout=timeout_s)
+        out, err = launch.finish(timeout_s)
         timed_out = False
     except subprocess.TimeoutExpired:
         cleanups.append(lab_process.stop_scope(launch, timeout_s=10))
-        out, err = launch.communicate(timeout=10)
+        out, err = launch.output.get("stdout"), launch.output.get("stderr")
         timed_out = True
     return launch.returncode, out, err, timed_out
 
@@ -240,10 +242,10 @@ with Fixture() as fixture:
         watcher = threading.Thread(target=observe, daemon=True)
         watcher.start()
         try:
-            out, err = launch.communicate(timeout=120)
+            out, err = launch.finish(120)
         except subprocess.TimeoutExpired:
             cleanups.append(lab_process.stop_scope(launch, timeout_s=10))
-            out, err = launch.communicate(timeout=10)
+            out, err = launch.output.get("stdout"), launch.output.get("stderr")
             survey["error"] = survey.get("error") or "agent did not finish within 120 s; its scope was stopped"
         watcher.join(timeout=5)
         keep_output(f"agent-{agent_runs}.stdout", out)
@@ -295,9 +297,11 @@ with Fixture() as fixture:
         A.record("scenario.exception", None, repr(error), ok=False)
     finally:
         # Before any copy or removal of the fixture: the scope of every
-        # launch stopped and reaped, confirmed (review 843-02). On the
-        # nominal path each agent has exited and reaped its executor; the
-        # stop then observes an empty scope and confirms at once.
+        # launch stopped, confirmed, then the agent reaped (review 843-02,
+        # B8-01: the agents are held unreaped until here so that their
+        # session ids cannot have been reused). On the nominal path each
+        # agent has exited and reaped its executor; the stop then observes
+        # an empty scope and confirms at once.
         stop_confirmed = True
         for outcome in lab_process.stop_all(launches, timeout_s=10):
             cleanups.append(outcome)
