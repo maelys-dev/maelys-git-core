@@ -227,7 +227,7 @@ with Fixture() as fixture:
             if not S.wait_until(lambda: (markers / "prepared").exists(), 30):
                 survey["error"] = "prepared marker never appeared"
                 return
-            rows = S.topology()
+            rows = S.topology(comm=True)
             survey.update(agent=rows.get(launch.pid), tree=S.descendants(launch.pid, rows),
                           session=[row for row in rows.values() if row.get("sid") == launch.sid],
                           prepared_updates=(markers / "prepared.updates").read_text(),

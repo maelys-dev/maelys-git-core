@@ -36,23 +36,27 @@ escalates nothing); a descendant still there at the deadline leaves the
 stop unconfirmed with that reason. PINNABLE_DESCENDANTS says which case
 this host is in.
 
-Observation (03-01, C0-01). A process table is read in two phases, a
-listing then one reading per pid, so it is not a snapshot. Two rules make
-an empty observation conclusive. The agent's exit status is read BEFORE
-each table (waitid WNOWAIT) and an empty scope is concluded only from a
-table read after the agent was seen exited, so the agent itself forks
-nothing after the listing. And a table in which any listed process
-disappeared before its reading is indeterminate: that process may have
-been a member that forked after the listing, and its child, born after
-the listing, is in no row. Every member alive at the listing is then in
-the table, seen or gone; a member born later descends from one that was,
-seen or gone; so a table with no member and no disappearance, read after
-the agent's exit, proves the scope empty, provided the listing is one
-snapshot (sysctl on macOS; readdir on Linux, complete while pids do not
-wrap). A zombie listed as such had exited before the listing and creates
-nothing: it is neither; and a disappeared process whose group leader is
-read in another session was not a member, a group never spanning
-sessions. An indeterminate table is read again under the same deadline.
+Observation (03-01, C0-01, D310-01). No process table is a snapshot: a
+listing, then one reading per pid. Three rules make an empty observation
+a proof. The agent's exit status is read BEFORE each table (waitid
+WNOWAIT) and an empty scope is concluded only from a table read after
+the agent was seen exited, so the agent itself forks nothing after the
+listing. The listing is proven complete, no process born during it: on
+Linux /proc is listed between two readings of ns_last_pid, which must be
+equal; on macOS one proc_listallpids snapshot, taken under the kernel's
+process-list lock, must have a row for every pid. And every row
+that may have been a member and may have forked after the listing (a
+member zombie by its reading, a process gone or zombie by its reading
+whose group is not proven in another session) makes the table
+indeterminate, except a zombie an earlier table of the sweep already saw
+as a zombie, same pid and same start: dead before this listing, it forked
+nothing after it. Every member alive at the listing is then in the table,
+read alive (a member), or zombie or gone (indeterminate); a member born
+after the listing descends from one that was; so a complete table with
+no member and no indeterminate row, read after the agent's exit, proves
+the scope empty. An incomplete or indeterminate table is a diagnostic
+(`observed_empty`), read again under the same deadline, and never a
+confirmation.
 
 Outcome. stop_scope() works under one monotonic deadline handed to every
 reading and checked after each reading, before each signal and after the
@@ -221,32 +225,39 @@ def signal_member(pid, sid, sig, launch):
         os.close(fd)
 
 
-def members(launch, rows, leader_exited):
-    """The members of the launch's session in an observed table, the rows
-    whose session could not be read, and the processes that disappeared
-    between the listing and their reading: (members, unreadable, gone).
-    leader_exited is the agent's status read BEFORE the table (03-01): an
-    agent seen exited before the reading is left to the reap, an agent
-    alive at that moment stays a member even if the table shows it gone.
-    A disappearance other than the agent's makes the table indeterminate
-    (C0-01) unless the process provably was not in the session: a process
-    group never spans sessions, so a disappeared process whose group leader
-    is read with another session was in that other session (the reader's
-    own `ps`, or any busy unrelated process); one in the agent's group, one
-    whose group leader is a member, gone, a zombie or absent, stays a
-    disappearance the caller never concludes an empty scope from. A zombie
-    had exited before the listing: it creates nothing, it is neither a
-    member nor a disappearance (an unrelated zombie may live for ever)."""
-    found, unreadable, gone = [], [], []
+def members(launch, rows, leader_exited, known_zombies=frozenset()):
+    """Classify an observed Table for the launch's session: (members,
+    unreadable, indeterminate, zombies). members carry the session id and
+    are alive: targets. unreadable rows (`denied`, `malformed`) say
+    nothing. indeterminate rows are processes that may have been members
+    and may have forked after the listing without their child having a
+    row: a member seen as a zombie (Linux reads the session of a zombie),
+    a process gone or zombie by its reading whose group is the agent's, or
+    whose group leader is a member, unknown, gone, zombie or absent. Two
+    kinds are set aside as provably harmless: a gone or zombie process
+    whose group leader is read alive in another session was in that
+    session, as its children are, a process group never spanning sessions
+    (the reader's own child, any busy unrelated process, a foreign zombie
+    that lives for ever); and a zombie already observed as a zombie, same
+    pid and same start, by an earlier table of this sweep (known_zombies),
+    which was dead before this listing and forked nothing after it: a
+    successor of the pid starts later, so pid and start name one process.
+    zombies is the set of (pid, start) seen as zombies in this table, for
+    the next one. leader_exited is the agent's status read BEFORE the table
+    (03-01): an agent seen exited before the reading is left to the reap,
+    an agent alive at that moment stays a member even if the table shows
+    it gone."""
+    found, unreadable, indeterminate = [], [], []
+    zombies = set()
     seen_leader = False
 
-    def possibly_member(row):
-        if row.get("pgid") in (None, launch.sid):
-            return True
-        leader = rows.get(row["pgid"])
-        if leader is None or leader.get("sid") is None:
-            return True  # group leader unknown: the group's session is unknown
-        return leader["sid"] == launch.sid
+    def other_session(row):
+        """Proven in another session by its group leader."""
+        pgid = row.get("pgid")
+        if pgid in (None, launch.sid):
+            return False
+        leader = rows.get(pgid)
+        return leader is not None and leader.get("sid") not in (None, launch.sid)
 
     for row in rows.values():
         if row["pid"] == launch.pid:
@@ -257,38 +268,53 @@ def members(launch, rows, leader_exited):
             continue
         if row["pid"] == os.getpid():
             continue
-        if row.get("state") == "Z" or row.get("sid_error") == "zombie":
-            continue
+        zombie = row.get("state") == "Z" or row.get("sid_error") == "zombie"
+        if zombie and row.get("start") is not None:
+            zombies.add((row["pid"], row["start"]))
         if row.get("sid") is None:
-            if row.get("sid_error") == "gone":
-                if possibly_member(row):
-                    gone.append(row)
+            if row.get("sid_error") in ("gone", "zombie"):
+                if not other_session(row) and not (zombie and (row["pid"], row.get("start")) in known_zombies):
+                    indeterminate.append(row)
             else:
                 unreadable.append(row)
             continue
         if row["sid"] != launch.sid:
             continue
-        found.append(row)
+        if zombie:
+            if (row["pid"], row.get("start")) not in known_zombies:
+                indeterminate.append(dict(row, sid_error="zombie"))
+        else:
+            found.append(row)
     if not leader_exited and not seen_leader:
         # Alive before the reading, absent from it: the table is not a
         # proof of anything about its children; keep it a member.
         found.append(dict(pid=launch.pid, ppid=None, pgid=None, sid=launch.sid, comm=None, sid_error="gone"))
-    return found, unreadable, gone
+    return found, unreadable, indeterminate, zombies
 
 
 def stop_scope(launch, timeout_s=10.0, interval_s=0.05, sig=signal.SIGKILL):
     """Stop every process of the launch's scope under one deadline, reap the
-    launched process, and return {'confirmed', 'sid', 'signalled',
-    'refused', 'sweeps', 'indeterminate', 'remaining', 'unreadable', 'gone',
-    'errors', 'elapsed_ms', 'launch'}. A stop already confirmed is returned
-    as it was: the scope is final."""
+    launched process, and return {'confirmed', 'observed_empty', 'sid',
+    'signalled', 'refused', 'sweeps', 'incomplete_listings',
+    'indeterminate_tables', 'remaining', 'unreadable', 'indeterminate',
+    'errors', 'elapsed_ms', 'launch'}.
+
+    `observed_empty` says that some table showed no member: a diagnostic.
+    `confirmed` is the proof that nothing of the scope remains, on which
+    alone a fixture may be removed or copied as coherent: the agent seen
+    exited before a table whose listing is proven complete (no process
+    born during it), with no member, no indeterminate and no unreadable
+    row, before the deadline, the agent then reaped before the deadline.
+    A stop already confirmed is returned as it was: the scope is final."""
     if launch.stop is not None and launch.stop["confirmed"]:
         return launch.stop
     t0 = time.monotonic()
     deadline = t0 + timeout_s
-    signalled, refused, errors, sweeps, indeterminate = [], [], [], 0, 0
-    remaining, unreadable, gone = [], [], []
-    confirmed = False
+    signalled, refused, errors, sweeps = [], [], [], 0
+    incomplete_listings, indeterminate_tables = 0, 0
+    remaining, unreadable, indeterminate = [], [], []
+    known_zombies = set()  # (pid, start) observed as zombies by earlier tables of this sweep
+    confirmed, observed_empty = False, False
 
     def expired(stage):
         if time.monotonic() > deadline:
@@ -309,17 +335,23 @@ def stop_scope(launch, timeout_s=10.0, interval_s=0.05, sig=signal.SIGKILL):
                 errors.append(f"topology unreadable: {error}")
                 break
             sweeps += 1
-            remaining, unreadable, gone = members(launch, rows, leader_exited)
+            remaining, unreadable, indeterminate, zombies = members(launch, rows, leader_exited, known_zombies)
+            known_zombies |= zombies
             if unreadable:
                 errors.append(f"{len(unreadable)} row(s) unreadable: no conclusion about them")
                 break
             if expired("after a reading"):
                 break
-            if gone:
-                indeterminate += 1  # a listed process vanished before its reading: read again
-            elif not remaining:
-                confirmed = True
-                break
+            if not remaining:
+                observed_empty = True
+                if not getattr(rows, "complete", False):
+                    incomplete_listings += 1  # a birth during the listing: read again
+                elif indeterminate:
+                    indeterminate_tables += 1  # a possible member vanished before its reading: read again
+                elif leader_exited:
+                    confirmed = True
+                    break
+                # else: the agent was alive before the reading; read again.
             for row in remaining:
                 if expired("before a signal"):
                     break
@@ -347,12 +379,14 @@ def stop_scope(launch, timeout_s=10.0, interval_s=0.05, sig=signal.SIGKILL):
     if refused and not confirmed:
         errors.append(f"{len(refused)} descendant(s) not signalled: identity cannot be held until the signal "
                       "on this host (no pidfd); waited for the scope to drain")
-    if gone and not confirmed:
-        errors.append(f"last table indeterminate: {len(gone)} listed process(es) disappeared before their reading")
-    outcome = dict(confirmed=confirmed, sid=launch.sid, signalled=sorted(set(signalled)), refused=sorted(refused),
-                   sweeps=sweeps, indeterminate=indeterminate, remaining=remaining, unreadable=unreadable,
-                   gone=gone, errors=errors, elapsed_ms=int((time.monotonic() - t0) * 1000),
-                   launch=launch.record())
+    if not confirmed and observed_empty and not errors:
+        errors.append("no member observed, but no table proved complete and determinate before the deadline "
+                      f"({incomplete_listings} incomplete listing(s), {indeterminate_tables} indeterminate table(s))")
+    outcome = dict(confirmed=confirmed, observed_empty=observed_empty, sid=launch.sid,
+                   signalled=sorted(set(signalled)), refused=sorted(refused), sweeps=sweeps,
+                   incomplete_listings=incomplete_listings, indeterminate_tables=indeterminate_tables,
+                   remaining=remaining, unreadable=unreadable, indeterminate=indeterminate, errors=errors,
+                   elapsed_ms=int((time.monotonic() - t0) * 1000), launch=launch.record())
     launch.stop = outcome
     return outcome
 
