@@ -8,11 +8,11 @@ and `maelys-git-qualification-components` when the Cloud agent is built.
 | File | Role |
 | --- | --- |
 | `lab_cloud_server.py` | the Cloud consumer the agent polls and posts to: TLS, scripted command queue, failure modes per channel (`normal`, `mute`, `slow`, `dedup`, `reject`, `drop_ack` = accepted then reply lost, `drop_before` = cut before acceptance, `denied`, `redirect`, `raw`), token rotation, event protocol 1/2, request journal, loopback control endpoint |
-| `lab_state.py` | read-only state assertions: journal (states, attempt columns when present, audit kinds, outbox, metadata, logical inventory), Git (ref, reflog chain with marker position, lock files, validity, ref format), grants store, process topology as a `Table` that says whether its listing is proven complete, no process born during it (`/proc` between two equal readings of `ns_last_pid` on Linux; one `KERN_PROC_ALL` sysctl, its record layout checked on our own record, plus one `proc_listallpids` snapshot under the kernel's list lock on macOS, every pid of the snapshot having a row; sessions by `getsid(2)` there, since `ps -o sess` prints 0); a reader that fails, a malformed non-empty line or an empty table raise, a row that cannot be read says so (`gone`, `zombie`, `denied`, `malformed`): an empty table never proves an absence; one deadline bounds the reading), envelopes, secret search by value; a JSON-lines recorder |
-| `lab_process.py` | the scope of a launch and its cleanup under a provable authority: `Launch` starts the agent in its own session, whose id is the pid, and reads its outputs and exit status without reaping it (`waitid` `WNOWAIT`), because a session is joined by inheritance only and its id stays reserved while the leader exists, zombie included; `stop_scope()` works under one monotonic deadline handed to every reading and checked after each reading, before each signal and after the reap; it separates `observed_empty`, a diagnostic, from `confirmed`, the proof on which alone a fixture is removed or copied: the agent seen exited before a table whose listing is proven complete, with no member and no indeterminate row (a member zombie by its reading, a process gone or zombie by its reading whose group is not proven in another session); any other empty observation is read again; it signals the agent, its own pinned child, on every host, and a descendant only through a pidfd (Linux), never a bare number (macOS: the descendant is only waited for, the product guaranteeing nothing here, and the stop fails explicitly if it is still there at the deadline); it re-observes until the scope is empty, then reaps the agent and answers `confirmed` only when both happened before the deadline; an agent reaped before the sweep is a lost authority: nothing is signalled, the stop is unconfirmed, the fixture is kept; a failing reader, an unreadable row, a remaining member or an unreaped agent leave it unconfirmed with the reason |
+| `lab_state.py` | read-only state assertions: journal (states, attempt columns when present, audit kinds, outbox, metadata, logical inventory), Git (ref, reflog chain with marker position, lock files, validity, ref format), grants store, process topology as a diagnostic, never a proof (`/proc` on Linux; one `KERN_PROC_ALL` sysctl on macOS, its record layout checked on our own record, sessions by `getsid(2)` there since `ps -o sess` prints 0; no listing is a snapshot); a reader that fails, a malformed line or record or an empty table raise, a row that cannot be read says so (`gone`, `zombie`, `denied`, `malformed`): an empty table never proves an absence; one deadline bounds the reading), envelopes, secret search by value; a JSON-lines recorder |
+| `lab_process.py` | the scope of a launch, its cleanup, and the authority a confirmation rests on: `Launch` starts the agent in its own session, whose id is the pid, and reads its outputs and exit status without reaping it (`waitid` `WNOWAIT`), so that its session id is not reused while the sweep runs; `claim_authority()` makes the harness the subreaper of its descendants (Linux, `PR_SET_CHILD_SUBREAPER`): every orphaned descendant of a launch is re-parented to it, pinned until reaped, and `waitid(P_ALL)` proves when none is left (`no_children`, `scope_closed`); `stop_scope()` works under one monotonic deadline, signals the agent and the adopted orphans by `kill(2)` (pinned), any other descendant through a pidfd only (Linux) and otherwise waits for it, reaps what it adopted, and separates `observed_empty`, a diagnostic from tables that are no snapshots, from `confirmed`, the proof under the authority only (agent exited, no member, no adopted zombie still to reap, no unattributed child); on macOS there is no authority: the sweep ends after two consecutive empty observations following the agent's exit and nothing is removed; `preserve_fixture()` removes the fixture only on a proven closed scope and a successful scenario, keeps it otherwise with the reason |
 | `lab_hook.py` | the lab `reference-transaction` hook as generated text: at `prepared` it writes the updates and waits for a resume file, an expired wait refuses the transaction (exit 1, trace `prepared.expired`); testable with a short bound |
-| `test_lab_components.py` | sensitivity tests of the components alone, no product binary: `drop_ack` accepts then loses the reply and the resend is deduplicated, exact correlation of audit and outbox ids, inventory sensitive to any stored value, `attempt()` on both schemas, secret search over an explicit output set, the hook's expiry branch, the reader on malformed tables, the cleanup's scope on fake agents (child in another group of the same session with an acknowledged start; parent exited but unreaped with its child re-parented, where the search by parent pid is blind and the session finds it; parent reaped before the sweep, where the authority is lost and nothing is signalled; the race table-then-fork-then-exit with real processes, never confirmed with the child alive; the two-generation race, a descendant listed then forking and vanishing before its session is read, the table indeterminate and read again; the zombie-at-read race with real processes, the test a subreaper on Linux; a birth during the listing, the listing incomplete and `observed_empty` no confirmation; a descendant signalled only through a pidfd, refused otherwise; reader failure, malformed table and unreadable row give an unconfirmed stop and no signal; one deadline over several slow readings, a late non-empty table triggering no signal, a late reap not a success; several launches; a bystander in another session intact; the late markers of exactly the children never signalled) |
-| `scenario_nominal.py` | end to end on one cell: `health`, then an `update_ref` by `alice` on a synthetic bare repository under a migrated Gitolite policy, with the real topology agent → executor (group leader, same session) → git → hook surveyed while a repository `reference-transaction` hook holds Git at `prepared`; every assertion recorded; every launch kept until its stop is confirmed, and on an unconfirmed stop the fixture directory is kept in place (`fixture-kept.json`) rather than copied |
+| `test_lab_components.py` | sensitivity tests of the components alone, no product binary: `drop_ack` accepts then loses the reply and the resend is deduplicated, exact correlation of audit and outbox ids, inventory sensitive to any stored value, `attempt()` on both schemas, secret search over an explicit output set, the hook's expiry branch, the reader on malformed tables, the cleanup's scope on fake agents (child in another group of the same session with an acknowledged start; parent exited but unreaped with its child re-parented, where the search by parent pid is blind and the session finds it; parent reaped before the sweep, where the authority is lost and nothing is signalled; the race table-then-fork-then-exit with real processes, never confirmed with the child alive; the two-generation race, a descendant listed then forking and vanishing before its session is read; the zombie-at-read race with real processes, the test a subreaper on Linux, the zombie reaped by the stop; every stop confirmed under the authority and only observed without it; a descendant signalled only through a pidfd, refused otherwise; reader failure, malformed table and unreadable row give an unconfirmed stop and no signal; one deadline over several slow readings, a late non-empty table triggering no signal, a late reap not a success; several launches; a bystander in another session intact; the late markers of exactly the children never signalled) |
+| `scenario_nominal.py` | end to end on one cell: `health`, then an `update_ref` by `alice` on a synthetic bare repository under a migrated Gitolite policy, with the real topology agent → executor (group leader, same session) → git → hook surveyed while a repository `reference-transaction` hook holds Git at `prepared`; every assertion recorded; every launch kept until its stop; the fixture lives in the evidence directory and is removed only when the scope is proven closed under the subreaper authority and the scenario succeeded, kept otherwise with the reason in `fixture-kept.json` |
 
 The `reference-transaction` hook the scenario installs in the synthetic
 repository is the synchronisation mechanism of the harness plan (§2.2): it
@@ -21,36 +21,21 @@ product's supervision. Fault injection (lab build targets, SQLite test VFS)
 is not here: it is step 2c, under separate targets.
 
 The cleanup's scope is the session of each launch, which the executor keeps
-when it becomes the leader of its own group. Its authority is the unreaped
-agent: while the session leader exists, zombie included, the kernel does not
-reuse its pid, and a session is joined by inheritance only, so every process
-observed with that session id is a descendant, whatever its age; the
-scenario therefore holds every agent unreaped until the final stop, which
-reaps it after observing the scope empty. Once an agent has been reaped the
-number may be reused and the cleanup refuses to signal: no date is used as
-a proof of ownership. The same rule holds for targets: a descendant's
-number is not reserved by anything the harness holds, so it is signalled
-only through a pidfd, which names the process (Linux); without one (macOS)
-descendants are observed and waited for, never signalled, and a descendant
-still present at the deadline leaves the stop unconfirmed; the product
-gives no guarantee there (the life descriptor between agent and executor
-is read by the agent, which escalates nothing once dead). A process table
-being read in two phases, a listing then a reading per pid, the agent's
-exit status is read before each table and an empty scope is concluded only
-from a table read after the agent was seen exited. The listing is proven
-complete, no process born during it: on Linux `/proc` is listed between
-two equal readings of `ns_last_pid`; on macOS a `proc_listallpids`
-snapshot, which XNU copies under its process-list lock (`proc_listpids`,
-`bsd/kern/proc_info.c`, revision f6217f8), must have a row of the
-`KERN_PROC_ALL` sysctl for every pid, that sysctl itself being no
-snapshot. And a row that may have been a member
-and may have forked after the listing, a member zombie by its reading, a
-process gone or zombie by its reading whose group leader is not read alive
-in another session (a group never spans sessions), makes the table
-indeterminate. Such tables are diagnostics, `observed_empty`, read again
-under the same deadline, never a confirmation. A descendant that creates
-its own session leaves that scope: the harness does not claim to contain
-it, the Linux laboratory proves confinement by cgroup.
+when it becomes the leader of its own group. Observation and proof are kept
+apart. A process table is a diagnostic: no listing is a snapshot, a
+descendant may fork and vanish between the listing and its reading, so an
+empty observation never authorizes a removal. The proof rests on a kernel
+authority: the agent held unreaped until the sweep is over, so that its
+session id cannot be reused; and, on Linux, the harness as subreaper of
+its descendants, to which every orphan is re-parented the moment its
+parent dies, so that a living descendant always has a living ancestor that
+is a child of the harness, pinned until reaped, and `waitid(P_ALL)` with no
+child left proves the whole scope closed. On macOS there is no such
+authority: the cleanup signals the agent, waits for the descendants it may
+not signal, reports what it observed, and the fixture is kept. A
+descendant that creates its own session is still adopted and counted
+(`unattributed`), never dropped; the Linux laboratory of step 2c will add
+confinement by cgroup.
 
 ## Existing tests and the qualification scenarios they serve
 

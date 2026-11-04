@@ -15,17 +15,17 @@ Each run writes into a fresh directory EVIDENCE_ROOT/<utc timestamp>-<pid>/
 (default root: a temporary directory): provenance.json (product revision,
 working-tree patch digest when dirty, binary digests), assertions.jsonl,
 topology.json, the agent's captured outputs, the server's request journal,
-summary.json; on failure the synthetic repository and the journal are
-copied there too, after the stop of every launch has been confirmed
-(lab_process). When a stop is not confirmed, no copy is presented as
-coherent: the original fixture directory is kept in place and its path is
-recorded in fixture-kept.json. The lab secret is searched, at the end, in
-that closed set of outputs. Exit 0 when every assertion holds, 1 otherwise.
+summary.json; the fixture (synthetic repository, journal, markers, token)
+lives in that directory too, under fixture/, and is removed only when the
+scope of every launch is proven closed under lab_process's authority (the
+Linux subreaper) and the scenario succeeded; otherwise it is kept as it is
+and fixture-kept.json says why (on macOS: no authority, the scope is
+observed, not proven). The lab secret is searched, at the end, in the
+closed set of outputs. Exit 0 when every assertion holds, 1 otherwise.
 """
 import hashlib
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -44,6 +44,7 @@ AGENT, EXECUTOR, MAELYS_GIT, OPENSSL = map(lambda arg: str(Path(arg).resolve()),
 ROOT_DIR = Path(sys.argv[5]).resolve() if len(sys.argv) > 5 else Path(tempfile.mkdtemp(prefix="gitc10-nominal-"))
 EVIDENCE = ROOT_DIR / (time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + f"-{os.getpid()}")
 EVIDENCE.mkdir(parents=True, exist_ok=False)
+AUTHORITY = lab_process.claim_authority()  # before any launch: the subreaper adopts every orphan
 GIT = "/usr/bin/git"
 ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 ENV.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null")
@@ -118,28 +119,9 @@ def launch_agent(config_path, timeout_s=120):
     return launch.returncode, out, err, timed_out
 
 
-FIXTURE_NAMES = ("example.git", "markers", "agent.sqlite3", "agent.sqlite3-wal", "agent.sqlite3-shm")
-
-
-class Fixture:
-    """The fixture directory: unlike TemporaryDirectory, removed on exit only
-    once the finalization has confirmed the stop of every launch; kept in
-    place otherwise, including when the finalization itself does not run."""
-
-    def __init__(self):
-        self.path = Path(tempfile.mkdtemp(prefix="gitc10-lab-")).resolve()
-        self.keep = True
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_):
-        if not self.keep:
-            shutil.rmtree(self.path, ignore_errors=True)
-
-
-with Fixture() as fixture:
-    root = fixture.path
+root = EVIDENCE / "fixture"
+root.mkdir()
+if True:
     try:
         cert, key = root / "cert.pem", root / "key.pem"
         run(OPENSSL, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=localhost",
@@ -227,7 +209,7 @@ with Fixture() as fixture:
             if not S.wait_until(lambda: (markers / "prepared").exists(), 30):
                 survey["error"] = "prepared marker never appeared"
                 return
-            rows = S.topology(comm=True)
+            rows = S.topology()
             survey.update(agent=rows.get(launch.pid), tree=S.descendants(launch.pid, rows),
                           session=[row for row in rows.values() if row.get("sid") == launch.sid],
                           prepared_updates=(markers / "prepared.updates").read_text(),
@@ -296,18 +278,22 @@ with Fixture() as fixture:
         failed_exception = error
         A.record("scenario.exception", None, repr(error), ok=False)
     finally:
-        # Before any copy or removal of the fixture: the scope of every
-        # launch stopped, confirmed, then the agent reaped (review 843-02,
-        # B8-01: the agents are held unreaped until here so that their
-        # session ids cannot have been reused). On the nominal path each
-        # agent has exited and reaped its executor; the stop then observes
-        # an empty scope and confirms at once.
-        stop_confirmed = True
-        for outcome in lab_process.stop_all(launches, timeout_s=10):
-            cleanups.append(outcome)
-            if not outcome["confirmed"]:
-                stop_confirmed = False
-                A.record("cleanup.fixture_stop_confirmed", True, outcome, ok=False)
+        # Before any removal of the fixture: the scope of every launch
+        # stopped, the agents held unreaped until here (their session ids
+        # cannot have been reused), then reaped. Observation is recorded on
+        # every host; the proof that the scope is closed exists under the
+        # subreaper authority only (Linux), and alone allows the removal.
+        final = lab_process.stop_all(launches, timeout_s=10)
+        cleanups.extend(final)
+        for outcome in final:
+            A.check(f"cleanup.observed_empty.{outcome['sid']}", True, outcome["observed_empty"])
+            if AUTHORITY is not None:
+                A.check(f"cleanup.confirmed.{outcome['sid']}", True, outcome["confirmed"])
+        scope_closed = lab_process.scope_closed(final)
+        if AUTHORITY is not None:
+            A.check("cleanup.scope_closed", True, scope_closed)
+        else:
+            A.record("cleanup.scope_closed", None, "no authority on this host: observed, not proven", ok=True)
         (EVIDENCE / "cleanups.json").write_text(json.dumps(cleanups, indent=2, default=str))
         outputs.append(EVIDENCE / "cleanups.json")
         # Outputs are produced and closed before the secret is searched.
@@ -320,16 +306,13 @@ with Fixture() as fixture:
             server.stop()
         else:
             secret = None
-        # A coherent copy on failure only after every stop is confirmed;
-        # otherwise writers may remain and the original stays in place (it
-        # holds the lab token, a lab secret), the scenario failing on the
-        # record above.
-        outcome = lab_process.preserve_fixture(root, EVIDENCE, stop_confirmed,
-                                               failed_exception is not None or A.failed, FIXTURE_NAMES, cleanups)
-        if outcome["kept"] is not None:
-            A.record("cleanup.fixture_kept_in_place", None, str(root), ok=False)
+        # The fixture is removed only on a proven closed scope and a
+        # successful scenario; kept otherwise, as it is (it holds the lab
+        # token, a lab secret), with the reason recorded.
+        kept = lab_process.preserve_fixture(root, EVIDENCE, scope_closed, failed_exception is not None or A.failed,
+                                            cleanups)
+        if kept["kept"] is not None:
             outputs.append(EVIDENCE / "fixture-kept.json")
-        fixture.keep = outcome["kept"] is not None
         if secret:
             hits = S.secret_absent(secret, outputs + [EVIDENCE / "topology.json", EVIDENCE / "assertions.jsonl"]
                                    if (EVIDENCE / "topology.json").exists() else outputs)
@@ -337,6 +320,8 @@ with Fixture() as fixture:
 
 summary = A.summary()
 (EVIDENCE / "summary.json").write_text(json.dumps(dict(
-    scenario="nominal", platform=sys.platform, fixture_kept=None if stop_confirmed else str(root), **summary), indent=2))
+    scenario="nominal", platform=sys.platform, authority=AUTHORITY, scope_closed=scope_closed,
+    fixture_kept=str(kept["kept"]) if kept["kept"] is not None else None, fixture_kept_reason=kept["reason"],
+    **summary), indent=2))
 print(json.dumps(dict(evidence=str(EVIDENCE), **summary)))
 sys.exit(1 if summary["failed"] or failed_exception is not None else 0)

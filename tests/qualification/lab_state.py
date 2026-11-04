@@ -248,21 +248,10 @@ class TopologyError(OSError):
     process, and in particular proves no stop."""
 
 
-class Table(dict):
-    """A process table: rows by pid, plus whether the listing it came from
-    is proven complete (no process born during it) and, if not, why."""
-
-    def __init__(self, rows=(), complete=False, incomplete_reason=None):
-        super().__init__(rows)
-        self.complete = complete
-        self.incomplete_reason = incomplete_reason
-
-
 def parse_proc_stat(text):
     """pid, ppid, pgid, sid, state (one letter, `Z` for a zombie), comm and
-    start (clock ticks since boot: with the pid, the identity of a process
-    across readings, a successor of the pid starting later) of one
-    /proc/<pid>/stat; raises TopologyError on a malformed line."""
+    start (clock ticks since boot) of one /proc/<pid>/stat; raises
+    TopologyError on a malformed line."""
     try:
         comm = text[text.index("(") + 1:text.rindex(")")]
         fields = text[text.rindex(")") + 2:].split()
@@ -279,11 +268,10 @@ SZOMB = 5
 
 def parse_kinfo_procs(buffer, self_pid=None):
     """Rows pid, ppid, pgid, state (`Z` for a zombie), comm and start (the
-    start timeval: with the pid, the identity of a process across readings,
-    a successor of the pid starting later) of a KERN_PROC_ALL buffer (macOS). The layout is checked on the buffer
-    itself: its length a multiple of the record size, and the record of
-    self_pid (ours, when given) carrying our parent, group and command
-    at the expected offsets; otherwise TopologyError, never a guess."""
+    start timeval) of a KERN_PROC_ALL buffer (macOS). The layout is checked
+    on the buffer itself: its length a multiple of the record size, and the
+    record of self_pid (ours, when given) carrying our parent and group at
+    the expected offsets; otherwise TopologyError, never a guess."""
     import struct
     if not buffer or len(buffer) % KINFO_PROC_SIZE:
         raise TopologyError(f"kern.proc.all buffer of {len(buffer)} bytes is no multiple of {KINFO_PROC_SIZE}")
@@ -295,11 +283,11 @@ def parse_kinfo_procs(buffer, self_pid=None):
         stat = record[o["p_stat"]]
         comm = record[o["p_comm"]:o["p_comm"] + 17].split(b"\0", 1)[0].decode("utf-8", "replace")
         ppid, pgid = struct.unpack_from("<ii", record, o["e_ppid"])
-        start = struct.unpack_from("<qi", record, o["p_starttime"])  # timeval: the process's identity with its pid
+        started = struct.unpack_from("<qi", record, o["p_starttime"])
         if pid <= 0:
             continue  # the kernel's own record
         rows[pid] = dict(pid=pid, ppid=ppid, pgid=pgid, sid=None, state="Z" if stat == SZOMB else "S", comm=comm,
-                         start=start)
+                         start=started)
     if not rows:
         raise TopologyError("kern.proc.all listed no process")
     if self_pid is not None:
@@ -312,9 +300,7 @@ def parse_kinfo_procs(buffer, self_pid=None):
 def kern_proc_all():
     """The raw KERN_PROC_ALL buffer (macOS): one sysctl, a few milliseconds,
     every process alive or zombie with its parent, group, state and
-    command; no snapshot (XNU collects the pids under lock, then fills each
-    row later and omits a pid that died in between), which topology()
-    settles with a pid_snapshot() taken right after."""
+    command."""
     import ctypes
     libc = ctypes.CDLL(None, use_errno=True)
     mib = (ctypes.c_int * 3)(1, 14, 0)  # CTL_KERN, KERN_PROC, KERN_PROC_ALL
@@ -335,80 +321,25 @@ def list_proc():
     return list(Path("/proc").iterdir())
 
 
-def ns_last_pid():
-    """The last pid allocated in this pid namespace (Linux): unchanged
-    across a listing, it proves that no process was born during it."""
-    try:
-        return int(Path("/proc/sys/kernel/ns_last_pid").read_text().strip())
-    except (OSError, ValueError) as error:
-        raise TopologyError(f"ns_last_pid unreadable, no listing can be proven complete: {error!r}") from error
-
-
-def pid_snapshot():
-    """Every pid, alive or zombie, as one kernel snapshot (macOS):
-    proc_listallpids(3) copies the pids of allproc and zombproc into a
-    kernel buffer under proc_list_lock (XNU bsd/kern/proc_info.c,
-    proc_listpids, revision f6217f8). Raises TopologyError when the buffer
-    was too small (the count is read first and the buffer doubled)."""
-    import ctypes
-    try:
-        libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
-    except OSError as error:
-        raise TopologyError(f"libproc unavailable: {error!r}") from error
-    libproc.proc_listallpids.argtypes = [ctypes.c_void_p, ctypes.c_int]
-    libproc.proc_listallpids.restype = ctypes.c_int
-    count = libproc.proc_listallpids(None, 0)
-    if count <= 0:
-        raise TopologyError(f"proc_listallpids count {count}")
-    capacity = count * 2 + 256
-    buffer = (ctypes.c_int * capacity)()
-    got = libproc.proc_listallpids(buffer, ctypes.sizeof(buffer))
-    if got <= 0 or got >= capacity:
-        raise TopologyError(f"proc_listallpids returned {got} for a capacity of {capacity}")
-    return set(buffer[:got]) - {0}  # pid 0 is the kernel, which ps does not list
-
-
-def topology(pids=None, timeout=30.0, comm=True):
-    """PID, PPID, PGID, SID, state and command of the given pids (or all),
-    as a Table that says whether its listing is proven complete (comm is
-    kept for the callers that asked for it; it costs nothing now).
-
-    Linux: the listing is a readdir of /proc, which is no snapshot; it is
-    bracketed by two readings of ns_last_pid, and the Table is complete only
-    when they are equal, i.e. no process was born in this namespace during
-    the listing. Each pid is then read from /proc/<pid>/stat (state `Z` for
-    a zombie, with its session); a pid whose stat has vanished is a `gone`
-    row without group.
-
-    macOS: one KERN_PROC_ALL sysctl gives pid, ppid, pgid, state and comm
-    of every process, zombies included, in a few milliseconds, but it is no
-    snapshot (XNU collects the pids, then fills each row later, omitting a
-    pid that died in between), so one proc_listallpids snapshot is taken
-    right after it, under the kernel's list lock: the Table is complete
-    only when every pid of the snapshot has a row, i.e. no process was
-    born after the sysctl's collection; a row whose pid is not in the
-    snapshot is `gone` (it ended in between), a row in state `Z` is a
-    `zombie`, both keep their group; the session of every other pid is
-    getsid(2) (`ps -o sess` prints 0 on the verified Mac), a refusal being
-    `gone` as well (a pid that just ended). The record layout is checked
-    on our own record before any row is trusted.
-
-    A table is never empty, a malformed record raises, and a row whose
-    session could not be read says why (`gone`, `zombie`, `denied`,
-    `malformed`): a dropped row would let a table pass for complete. The
-    deadline `timeout` (seconds) bounds the reading. The invariants are
-    compared, never literal pids."""
+def topology(pids=None, timeout=30.0):
+    """PID, PPID, PGID, SID, state, command and start of the given pids (or
+    all): a diagnostic, never a proof. No listing is a snapshot: /proc is a
+    readdir then one reading per pid (Linux); KERN_PROC_ALL collects the
+    pids, then fills each row later (macOS), where the session is then
+    getsid(2), since `ps -o sess` prints 0 on the verified Mac. A process
+    that ended between the listing and its reading is a row with sid=None
+    and `sid_error` `gone` (or `zombie` when listed as such), never
+    dropped; `denied` and `malformed` say why else a session is missing; a
+    reader that fails, a malformed line or record, an empty table or the
+    deadline `timeout` (seconds) raise TopologyError. What a stop may
+    conclude from a table is lab_process's, under its authority."""
     deadline = time.monotonic() + timeout
     rows = {}
     if LINUX:
-        before = ns_last_pid()
         try:
             entries = list_proc()
         except OSError as error:
             raise TopologyError(f"/proc unreadable: {error!r}") from error
-        after = ns_last_pid()
-        complete, reason = before == after, (None if before == after else
-                                              f"{after - before if after >= before else 'wrapped'} pid(s) allocated during the listing")
         for proc in entries:
             if not proc.name.isdigit():
                 continue
@@ -428,16 +359,10 @@ def topology(pids=None, timeout=30.0, comm=True):
                 rows[pid] = dict(pid=pid, ppid=None, pgid=None, sid=None, state=None, comm=None,
                                  sid_error="denied", error=repr(error))
     else:
-        listed = parse_kinfo_procs(kern_proc_all(), os.getpid())
-        snapshot = pid_snapshot()
-        born = snapshot - set(listed)
-        complete, reason = not born, (None if not born else f"{len(born)} pid(s) in the snapshot without a row")
-        for pid, row in listed.items():
+        for pid, row in parse_kinfo_procs(kern_proc_all(), os.getpid()).items():
             if pids and pid not in pids:
                 continue
-            if pid not in snapshot:
-                row["sid_error"] = "gone"
-            elif row["state"] == "Z":
+            if row["state"] == "Z":
                 row["sid_error"] = "zombie"
             else:
                 try:
@@ -449,7 +374,9 @@ def topology(pids=None, timeout=30.0, comm=True):
             rows[pid] = row
         if time.monotonic() > deadline:
             raise TopologyError("deadline expired while reading the sessions")
-    return Table(rows, complete, reason)
+    if not rows:
+        raise TopologyError("no process listed")
+    return rows
 
 
 def descendants(root_pid, rows=None):
