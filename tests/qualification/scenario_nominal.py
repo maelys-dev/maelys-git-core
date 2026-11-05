@@ -38,10 +38,12 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lab_fixture  # noqa: E402
 import lab_hook  # noqa: E402
 import lab_process  # noqa: E402
 import lab_state as S  # noqa: E402
 from lab_cloud_server import LabCloudServer, command  # noqa: E402
+from lab_fixture import ENV, GIT, git  # noqa: E402
 
 AGENT, EXECUTOR, MAELYS_GIT, OPENSSL = map(lambda arg: str(Path(arg).resolve()), sys.argv[1:5])
 ROOT_DIR = Path(sys.argv[5]).resolve() if len(sys.argv) > 5 else Path(tempfile.mkdtemp(prefix="gitc10-nominal-"))
@@ -51,22 +53,7 @@ try:  # before any launch: the subreaper adopts every orphan
     AUTHORITY, AUTHORITY_ERROR = lab_process.claim_authority(), None
 except OSError as error:  # Linux refusing the claim: recorded with its errno, nothing launched
     AUTHORITY, AUTHORITY_ERROR = None, error
-GIT = "/usr/bin/git"
-ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-ENV.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null")
 PRODUCT = Path(__file__).resolve().parents[2]
-
-
-def run(*args, ok=True, input=None, timeout=60):
-    result = subprocess.run(list(map(str, args)), input=input, capture_output=True, text=True, env=ENV,
-                            timeout=timeout)
-    if ok and result.returncode:
-        raise AssertionError(f"{args}: {result.stdout}\n{result.stderr}")
-    return result
-
-
-def git(*args, **kwargs):
-    return run(GIT, *args, **kwargs)
 
 
 def sha256_file(path):
@@ -133,46 +120,19 @@ scope_closed, kept = False, dict(kept=None, reason="qualification refused: the a
 if QUALIFIED:
     root.mkdir()
     try:
-        cert, key = root / "cert.pem", root / "key.pem"
-        run(OPENSSL, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=localhost",
-            "-addext", "subjectAltName=DNS:localhost", "-keyout", key, "-out", cert)
+        cert, key = lab_fixture.certificate(OPENSSL, root)
         server = LabCloudServer(str(cert), str(key)).start()
-
         # Policy: a migrated Gitolite configuration, alice writes refs/heads/.
-        conf, migrated = root / "gitolite.conf", root / "migrated"
-        conf.write_text("repo example\n    RW+ refs/heads/ = alice\n")
-        run(MAELYS_GIT, "migrate", "gitolite", conf, migrated, "--apply", "--format", "json", "--non-interactive")
-        manifest, grants = migrated / "manifest.json", migrated / "grants.json"
-
+        manifest, grants = lab_fixture.policy(MAELYS_GIT, root)
         # Synthetic repository: bare, a seed commit on refs/heads/seed, reflog
         # on every ref as the profile configures it, the lab hook.
-        work, bare = root / "work", root / "example.git"
-        git("init", "-q", work)
-        for k, v in (("user.name", "Lab"), ("user.email", "lab@example.invalid"), ("commit.gpgSign", "false")):
-            git("-C", work, "config", k, v)
-        (work / "a.txt").write_text("a\n")
-        git("-C", work, "add", ".")
-        git("-C", work, "commit", "-qm", "seed")
-        head = git("-C", work, "rev-parse", "HEAD").stdout.strip()
-        git("init", "-q", "--bare", bare)
-        git("--git-dir", bare, "config", "core.logAllRefUpdates", "always")
-        git("-C", work, "push", "-q", bare, "HEAD:refs/heads/seed")
+        work, bare, head = lab_fixture.repository(root)
         markers = root / "markers"
         markers.mkdir()
         lab_hook.install(bare, markers)
-
         # The agent's configuration (as test_cloud_transport.py does it). The
         # token file legitimately holds the secret: it is not an output.
-        token, config_path, database = root / "token", root / "config.json", root / "agent.sqlite3"
-        token.write_text(server.token)
-        token.chmod(0o600)
-        config = dict(version=1, agent_id="lab-agent", authority=f"localhost:{server.port}", ca_file=str(cert),
-                      token_file=str(token), database_path=str(database), manifest_path=str(manifest),
-                      grants_path=str(grants), repository_root=str(root), git_executable=GIT, executor_path=EXECUTOR,
-                      command_target="/commands", event_target="/events", poll_timeout_ms=1000,
-                      request_timeout_ms=30000)
-        config_path.write_text(json.dumps(config))
-        config_path.chmod(0o600)
+        config_path, database, token = lab_fixture.configuration(root, server, cert, manifest, grants, EXECUTOR)
 
         def keep_output(name, text):
             path = EVIDENCE / name

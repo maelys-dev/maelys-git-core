@@ -151,6 +151,12 @@ def outbox(database, message_id, suffixes=()):
     return rows
 
 
+def outbox_unacked(database):
+    """The outbox rows not acknowledged yet, oldest first: what the agent
+    still has to post."""
+    return _all(database, "SELECT id,kind,attempts,created_at_ms FROM outbox WHERE acked_at_ms IS NULL ORDER BY created_at_ms")
+
+
 def metadata(database, key):
     row = _one(database, "SELECT value FROM metadata WHERE key=?", key)
     return row["value"] if row else None

@@ -13,6 +13,18 @@ jobs:
         os: [ubuntu-24.04, macos-15]
         sanitizers: ["off", "address,undefined"]
         cloud: ["ON", "OFF"]
+        # The qualification laboratory (tests/qualification, GIT-C10): the
+        # -lab targets declared and built, their scenario run; a fifth
+        # configuration beside the four above, on each OS.
+        include:
+          - os: ubuntu-24.04
+            sanitizers: "off"
+            cloud: "ON"
+            lab: "ON"
+          - os: macos-15
+            sanitizers: "off"
+            cloud: "ON"
+            lab: "ON"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -43,22 +55,25 @@ jobs:
         env:
           SANITIZERS: ${{ matrix.sanitizers }}
           CLOUD_AGENT: ${{ matrix.cloud }}
+          LAB: ${{ matrix.lab || 'OFF' }}
         run: |
           flags=""
           if [ "$SANITIZERS" != off ]; then flags="-fsanitize=$SANITIZERS -fno-omit-frame-pointer"; fi
           if [ "$RUNNER_OS" = Linux ]; then
             docker run --rm --network none --user "$(id -u):$(id -g)" \
               --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/source,readonly" \
-              -e "AUDIT_CFLAGS=$flags" -e "CLOUD_AGENT=$CLOUD_AGENT" maelys-git-core-ci sh -ec '
+              -e "AUDIT_CFLAGS=$flags" -e "CLOUD_AGENT=$CLOUD_AGENT" -e "LAB=$LAB" maelys-git-core-ci sh -ec '
                 cmake -S /source/maelys-git-core -B /tmp/build -DCMAKE_BUILD_TYPE=Debug \
                   -DCMAKE_C_COMPILER=clang -DMAELYS_GIT_WERROR=ON "-DCMAKE_C_FLAGS=$AUDIT_CFLAGS" \
-                  -DMAELYS_GIT_ENABLE_CLOUD_AGENT="$CLOUD_AGENT"
+                  -DMAELYS_GIT_ENABLE_CLOUD_AGENT="$CLOUD_AGENT" \
+                  -DMAELYS_GIT_BUILD_LAB="$LAB" -DMG_LAB_FAULT_FILE=/tmp/build/lab/fault
                 cmake --build /tmp/build -j 4
                 ctest --test-dir /tmp/build --output-on-failure -j 4 --timeout 120'
           else
             cmake -S maelys-git-core -B build -DCMAKE_BUILD_TYPE=Debug \
               -DMAELYS_GIT_WERROR=ON "-DCMAKE_C_FLAGS=$flags" \
               -DMAELYS_GIT_ENABLE_CLOUD_AGENT="$CLOUD_AGENT" \
+              -DMAELYS_GIT_BUILD_LAB="$LAB" "-DMG_LAB_FAULT_FILE=$PWD/build/lab/fault" \
               "-DMAELYS_OPENSSL_PROGRAM=$(brew --prefix openssl)/bin/openssl"
             cmake --build build -j 4
             ctest --test-dir build --output-on-failure -j 4 --timeout 120

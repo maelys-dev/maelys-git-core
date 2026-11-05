@@ -3,6 +3,7 @@
 
 #include "internal.h"
 #include "common/json_write.h"
+#include "lab.h"
 #include "maelys_git_agent.h"
 
 #include <maelys/json.h>

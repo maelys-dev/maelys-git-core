@@ -13,6 +13,12 @@ option(MAELYS_GIT_BUILD_TESTS "Build the Maelys Git tests" ON)
 option(MAELYS_GIT_ENABLE_CLOUD_AGENT "Build the HTTPS Cloud agent" ON)
 option(MAELYS_GIT_WERROR "Treat compiler warnings as errors" OFF)
 option(MAELYS_GIT_DATALOG_PROFILE_LARGE "Build the policy engine with its LARGE size profile" OFF)
+# The qualification laboratory (GIT-C10): the agent and the executor built
+# again from the same sources with the fault points of tests/qualification,
+# as separate targets, never part of `all`, never installed or packaged.
+option(MAELYS_GIT_BUILD_LAB "Declare the -lab targets of the qualification laboratory" OFF)
+set(MG_LAB_FAULT_FILE "/var/lib/maelys-git-lab/fault" CACHE STRING
+    "The fault file maelys-git-executor-lab reads at startup (markers.jsonl and resume.* live beside it)")
 include(cmake/dependencies.cmake)
 set(MAELYS_DATALOG_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../maelys-datalog"
@@ -329,6 +335,45 @@ if(MAELYS_GIT_ENABLE_CLOUD_AGENT)
     target_link_libraries(maelys_git_cli_agent PUBLIC maelys_git_agent_http)
 endif()
 
+# ---- qualification laboratory -----------------------------------------------
+# The agent sources compiled once more with MG_LAB_FAULTS, into one library
+# the two -lab programs link instead of the deliverable agent libraries: the
+# installed archives and programs carry no point, no name and no string of
+# the laboratory (tests/check_no_lab_strings.py holds it in every build).
+if(MAELYS_GIT_BUILD_LAB)
+    if(NOT MAELYS_GIT_ENABLE_CLOUD_AGENT)
+        message(FATAL_ERROR "The qualification laboratory needs the Cloud agent: MAELYS_GIT_ENABLE_CLOUD_AGENT=ON")
+    endif()
+    add_library(maelys_git_lab STATIC EXCLUDE_FROM_ALL
+        src/protocol/protocol.c
+        src/agent/config.c
+        src/agent/store.c
+        src/agent/retry.c
+        src/agent/executor.c
+        src/agent/grants_store.c
+        src/agent/agent.c
+        src/agent/cloud.c
+        src/agent/supervisor.c
+        src/agent/lab.c
+        src/cli/agent.c)
+    add_dependencies(maelys_git_lab maelys_agent_dependencies)
+    target_include_directories(maelys_git_lab PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src" "${MAELYS_GIT_GENERATED_DIR}"
+        "${MAELYS_HTTP_SOURCE_DIR}/include" "${MAELYS_SYSTEM_SOURCE_DIR}/include")
+    target_compile_definitions(maelys_git_lab PRIVATE
+        MAELYS_GIT_ENABLE_CLOUD_AGENT=1 MG_LAB_FAULTS=1 MG_LAB_FAULT_FILE="${MG_LAB_FAULT_FILE}")
+    target_link_libraries(maelys_git_lab
+        PUBLIC maelys_git_cli_admin
+        PRIVATE "${MAELYS_HTTP_TLS_LIB}" "${MAELYS_HTTP_CLIENT_LIB}"
+                "${MAELYS_HTTP_CORE_LIB}" "${MAELYS_SYSTEM_LIB}"
+                PkgConfig::MBEDTLS SQLite::SQLite3 maelys_git_build_flags)
+    add_executable(maelys-git-agent-lab EXCLUDE_FROM_ALL cmd/maelys-git-agent/main.c)
+    target_link_libraries(maelys-git-agent-lab PRIVATE maelys_git_lab maelys_git_build_flags)
+    add_executable(maelys-git-executor-lab EXCLUDE_FROM_ALL cmd/maelys-git-executor/main.c)
+    target_link_libraries(maelys-git-executor-lab PRIVATE maelys_git_lab maelys_git_build_flags)
+    add_custom_target(maelys-git-lab DEPENDS maelys-git-agent-lab maelys-git-executor-lab)
+endif()
+
 # ---- tests ------------------------------------------------------------------
 if(MAELYS_GIT_BUILD_TESTS)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -623,7 +668,40 @@ if(MAELYS_GIT_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/qualification/test_lab_components.py
                 ${MAELYS_OPENSSL_PROGRAM})
         set_tests_properties(maelys-git-qualification-components PROPERTIES TIMEOUT 120)
+        if(MAELYS_GIT_BUILD_LAB)
+            # The -lab targets are outside `all`: the tests of the laboratory
+            # build them first, as a fixture.
+            add_test(NAME maelys-git-lab-build
+                COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target maelys-git-lab --parallel 4)
+            set_tests_properties(maelys-git-lab-build PROPERTIES FIXTURES_SETUP lab TIMEOUT 600)
+            # The positive control of the deliverable check: the names and
+            # strings of the laboratory are in the -lab programs.
+            add_test(NAME maelys-git-lab-strings
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_no_lab_strings.py
+                    --points ${CMAKE_CURRENT_SOURCE_DIR}/src/agent/lab.c
+                    --present $<TARGET_FILE:maelys-git-agent-lab> $<TARGET_FILE:maelys-git-executor-lab>)
+            set_tests_properties(maelys-git-lab-strings PROPERTIES FIXTURES_REQUIRED lab)
+            # Every point of B reached by a real agent and executor of the
+            # laboratory, each fault applied, its markers and the state it
+            # leaves read; the VFS survey of the operations of each phase.
+            add_test(NAME maelys-git-qualification-faults
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/qualification/scenario_faults.py
+                    $<TARGET_FILE:maelys-git-agent-lab> $<TARGET_FILE:maelys-git-executor-lab>
+                    $<TARGET_FILE:maelys-git> ${MAELYS_OPENSSL_PROGRAM} ${MG_LAB_FAULT_FILE}
+                    ${CMAKE_CURRENT_BINARY_DIR}/qualification-faults)
+            set_tests_properties(maelys-git-qualification-faults PROPERTIES FIXTURES_REQUIRED lab TIMEOUT 600)
+        endif()
     endif()
+    # The deliverables carry nothing of the laboratory, whatever the build
+    # type and whether the -lab targets are declared: no definition name,
+    # no point name, no environment or file name of it.
+    add_test(NAME maelys-git-no-lab-strings
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_no_lab_strings.py
+            --points ${CMAKE_CURRENT_SOURCE_DIR}/src/agent/lab.c
+            --absent $<TARGET_FILE:maelys-git> $<TARGET_FILE:maelys-git-agent> $<TARGET_FILE:maelys-git-executor>
+                $<TARGET_FILE:maelys-git-shell> $<TARGET_FILE:maelys-git-hook>
+                $<TARGET_FILE:maelys_git_core> $<TARGET_FILE:maelys_git_agent_core> $<TARGET_FILE:maelys_git_cli>
+                $<TARGET_FILE:maelys_git_cli_admin> $<TARGET_FILE:maelys_git_cli_agent>)
 
     add_test(NAME maelys-git-cli-integration
         COMMAND ${CMAKE_COMMAND}
