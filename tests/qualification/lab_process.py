@@ -13,8 +13,12 @@ Observation and proof are kept apart. A process table (lab_state.topology)
 is a diagnostic: no listing is a snapshot, a descendant may fork and
 vanish between the listing and its reading, so an empty observation
 (`observed_empty`) never authorizes the removal of a fixture nor a copy
-presented as coherent. `confirmed` is the proof that nothing of the scope
-remains, and it rests on a kernel authority only:
+presented as coherent. `swept` says that the sweep of a launch ended
+under the authority available, with the agent reaped in time: it rests
+on the tables read, so it is not the proof that nothing of the launch
+remains (a living descendant omitted by a table is not seen by it). The
+proof is scope_closed(), read from the kernel immediately before the
+decision, and it rests on a kernel authority only:
 
 - the agent is our child, held unreaped (waitid WNOWAIT reads its exit
   status) until the sweep is over: its pid, hence its session id, is not
@@ -23,14 +27,16 @@ remains, and it rests on a kernel authority only:
   every orphaned descendant of a launch, at any depth, with or without a
   session of its own, is re-parented to us the moment its parent dies,
   so a living descendant always has a living ancestor that is our child,
-  and our children are pinned until we reap them. A launch's scope is
-  closed when the agent has exited, no process of its session is alive,
-  no child of ours is a zombie still to reap (its orphans may have just
-  been adopted), and no child of ours is unattributed (a descendant that
-  made its own session: not a member by session, still ours); the whole
-  scope of every launch is closed when waitid(P_ALL) reports no child at
-  all (no_children), which is what the scenario requires before it
-  removes anything;
+  and our children are pinned until we reap them. The sweep of a launch
+  ends when the agent has exited, no process of its session is observed
+  alive, no child of ours is a zombie still to reap (its orphans may have
+  just been adopted), and no child of ours is unattributed (a descendant
+  that made its own session: not a member by session, still ours); the
+  whole scope of every launch is proven closed when waitid(P_ALL) reports
+  no child at all (no_children), which is what the scenario requires
+  before it removes anything. On Linux the authority is required
+  (EXPECTED_AUTHORITY): a refused claim fails the qualification with its
+  errno, it never falls back to observation;
 - on macOS there is no such authority: the cleanup signals the agent,
   waits, bounded, for the descendants it may not signal, reports what it
   observed, and the fixture is kept.
@@ -41,11 +47,11 @@ kill(2), whose numbers are pinned; another descendant through a pidfd
 only (Linux), which names the process and not its number; otherwise the
 request is refused and the descendant is waited for. PINNABLE_DESCENDANTS
 says whether a pidfd is available. A member reaped by us before the sweep
-is a lost authority: nothing is signalled, the stop is unconfirmed.
+is a lost authority: nothing is signalled, the stop is unswept.
 
 Outcome. stop_scope() works under one monotonic deadline handed to every
 reading and checked after each reading, before each signal and after the
-reap; it answers `confirmed` only under the authority above, before the
+reap; it answers `swept` only under the authority above, before the
 deadline, with the agent reaped before the deadline; every other end
 leaves it false with the reason.
 """
@@ -66,9 +72,11 @@ LINUX = sys.platform.startswith("linux")
 # Whether a descendant that is not our child can be signalled through a
 # pidfd; without it such a descendant is observed and waited for.
 PINNABLE_DESCENDANTS = LINUX and hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal")
-# The authority a confirmation rests on, once claimed: "subreaper" (Linux)
-# or None (observation only, nothing removed).
+# The authority a proof rests on, once claimed: "subreaper" (Linux) or
+# None (observation only, nothing removed); the one this host must
+# provide for a run to qualify.
 AUTHORITY = None
+EXPECTED_AUTHORITY = "subreaper" if LINUX else None
 PR_SET_CHILD_SUBREAPER = 36
 
 
@@ -77,13 +85,17 @@ def claim_authority():
     prctl(2) PR_SET_CHILD_SUBREAPER, no privilege): every orphaned
     descendant of a launch is re-parented to it, pinned until it reaps
     it, and waitid(P_ALL) proves when none remains. To be called before
-    any launch. Returns the authority name, or None where there is none."""
+    any launch. Returns the authority name, or None where the host has
+    none (macOS); raises OSError, with the errno, where the host has one
+    and refuses it (Linux): the caller fails the qualification then, it
+    never falls back to observation."""
     global AUTHORITY
     if not LINUX:
         return None
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
-        return None
+        errno = ctypes.get_errno()
+        raise OSError(errno, f"prctl(PR_SET_CHILD_SUBREAPER) refused: {os.strerror(errno)}")
     AUTHORITY = "subreaper"
     return AUTHORITY
 
@@ -307,22 +319,24 @@ def classify(launch, rows, leader_exited, held=()):
 def stop_scope(launch, held=(), timeout_s=10.0, interval_s=0.05, sig=signal.SIGKILL):
     """Stop every process of the launch's scope under one deadline, reap the
     launched process and the orphans adopted meanwhile, and return
-    {'confirmed', 'observed_empty', 'authority', 'sid', 'signalled',
+    {'swept', 'observed_empty', 'authority', 'sid', 'signalled',
     'refused', 'reaped_adopted', 'sweeps', 'remaining', 'unattributed',
     'unreadable', 'errors', 'elapsed_ms', 'launch'}. `held` names the
     session ids (pids) of the other launches the caller still holds, to
-    which adopted orphans are attributed. `confirmed` only under the
-    authority described in the module (Linux subreaper); elsewhere the
-    sweep stops after two consecutive empty observations following the
-    agent's exit, a diagnostic, and reaps the agent. A stop
-    already confirmed is returned as it was: the scope is final."""
-    if launch.stop is not None and launch.stop["confirmed"]:
+    which adopted orphans are attributed. `swept` only under the
+    authority described in the module (Linux subreaper), and it is the
+    end of the sweep, not the proof that nothing remains (scope_closed);
+    elsewhere the sweep stops after two consecutive empty observations
+    following the agent's exit, a diagnostic, and reaps the agent. A
+    launch already swept has its agent reaped: no later sweep holds the
+    authority, its record is returned as it stands."""
+    if launch.stop is not None and launch.stop["swept"]:
         return launch.stop
     t0 = time.monotonic()
     deadline = t0 + timeout_s
     signalled, refused, reaped_adopted, errors, sweeps = [], [], [], [], 0
     seen = dict(members=[], unreadable=[], ours_exited=[], unattributed=[])
-    confirmed, observed_empty, empties = False, False, 0
+    swept, observed_empty, empties = False, False, 0
 
     def expired(stage):
         if time.monotonic() > deadline:
@@ -366,7 +380,7 @@ def stop_scope(launch, held=(), timeout_s=10.0, interval_s=0.05, sig=signal.SIGK
                         observed_empty = True
                         break
                 elif leader_exited and not seen["ours_exited"] and not seen["unattributed"]:
-                    observed_empty = confirmed = True
+                    observed_empty = swept = True
                     break
             for row in seen["members"]:
                 if expired("before a signal"):
@@ -384,22 +398,22 @@ def stop_scope(launch, held=(), timeout_s=10.0, interval_s=0.05, sig=signal.SIGK
                 time.sleep(max(0.0, min(interval_s, deadline - time.monotonic())))
                 continue
             break
-        if observed_empty or confirmed:
+        if observed_empty or swept:
             try:
                 launch.reap(timeout=max(0.0, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
                 errors.append(f"launch {launch.pid} not reaped before the deadline")
-                confirmed = False
-            if confirmed and expired("after the reap"):
-                confirmed = False
-    if refused and not confirmed:
+                swept = False
+            if swept and expired("after the reap"):
+                swept = False
+    if refused and not swept:
         errors.append(f"{len(refused)} descendant(s) not signalled: identity cannot be held until the signal "
                       "on this host (no pidfd, not adopted); waited for the scope to drain")
     if AUTHORITY is None and observed_empty:
         errors.append("no authority on this host: the scope was observed empty, not proven closed")
-    elif seen["unattributed"] and not confirmed:
+    elif seen["unattributed"] and not swept:
         errors.append(f"{len(seen['unattributed'])} child(ren) of ours in a session of no held launch")
-    outcome = dict(confirmed=confirmed, observed_empty=observed_empty, authority=AUTHORITY, sid=launch.sid,
+    outcome = dict(swept=swept, observed_empty=observed_empty, authority=AUTHORITY, sid=launch.sid,
                    signalled=sorted(set(signalled)), refused=sorted(refused), reaped_adopted=sorted(reaped_adopted),
                    sweeps=sweeps, remaining=seen["members"], unattributed=seen["unattributed"],
                    unreadable=seen["unreadable"], errors=errors, elapsed_ms=int((time.monotonic() - t0) * 1000),
@@ -410,15 +424,16 @@ def stop_scope(launch, held=(), timeout_s=10.0, interval_s=0.05, sig=signal.SIGK
 
 def stop_all(launches, **options):
     """Stop every launch, in order, the others held; a launch whose stop is
-    already confirmed keeps that record."""
+    already swept keeps that record."""
     sids = [launch.sid for launch in launches]
     return [stop_scope(launch, held=[sid for sid in sids if sid != launch.sid], **options) for launch in launches]
 
 
 def scope_closed(outcomes):
-    """The proof the scenario needs before removing a fixture: every stop
-    confirmed under the authority, and no child of ours left at all."""
-    return bool(outcomes) and all(o["confirmed"] for o in outcomes) and AUTHORITY is not None and no_children()
+    """The proof the scenario needs before removing a fixture, read from
+    the kernel now, immediately before the decision: every sweep ended
+    under the authority, and no child of ours left at all."""
+    return bool(outcomes) and all(o["swept"] for o in outcomes) and AUTHORITY is not None and no_children()
 
 
 def preserve_fixture(fixture, evidence, closed, failed, cleanups=()):

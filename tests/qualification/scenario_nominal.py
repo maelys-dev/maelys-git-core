@@ -18,10 +18,13 @@ topology.json, the agent's captured outputs, the server's request journal,
 summary.json; the fixture (synthetic repository, journal, markers, token)
 lives in that directory too, under fixture/, and is removed only when the
 scope of every launch is proven closed under lab_process's authority (the
-Linux subreaper) and the scenario succeeded; otherwise it is kept as it is
-and fixture-kept.json says why (on macOS: no authority, the scope is
-observed, not proven). The lab secret is searched, at the end, in the
-closed set of outputs. Exit 0 when every assertion holds, 1 otherwise.
+Linux subreaper), read from the kernel immediately before the decision,
+and the scenario succeeded; otherwise it is kept as it is and
+fixture-kept.json says why (on macOS: no authority, the scope is
+observed, not proven). On Linux the authority is required: a refused
+claim is recorded with its errno and nothing is launched. The lab secret
+is searched, at the end, in the closed set of outputs. Exit 0 when every
+assertion holds, 1 otherwise.
 """
 import hashlib
 import json
@@ -44,7 +47,10 @@ AGENT, EXECUTOR, MAELYS_GIT, OPENSSL = map(lambda arg: str(Path(arg).resolve()),
 ROOT_DIR = Path(sys.argv[5]).resolve() if len(sys.argv) > 5 else Path(tempfile.mkdtemp(prefix="gitc10-nominal-"))
 EVIDENCE = ROOT_DIR / (time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + f"-{os.getpid()}")
 EVIDENCE.mkdir(parents=True, exist_ok=False)
-AUTHORITY = lab_process.claim_authority()  # before any launch: the subreaper adopts every orphan
+try:  # before any launch: the subreaper adopts every orphan
+    AUTHORITY, AUTHORITY_ERROR = lab_process.claim_authority(), None
+except OSError as error:  # Linux refusing the claim: recorded with its errno, nothing launched
+    AUTHORITY, AUTHORITY_ERROR = None, error
 GIT = "/usr/bin/git"
 ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 ENV.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null")
@@ -84,11 +90,14 @@ def provenance():
 
 A = S.Assertions(EVIDENCE / "assertions.jsonl")
 (EVIDENCE / "provenance.json").write_text(json.dumps(provenance(), indent=2))
+A.check("authority.claimed", lab_process.EXPECTED_AUTHORITY,
+        AUTHORITY if AUTHORITY_ERROR is None else repr(AUTHORITY_ERROR))
+QUALIFIED = AUTHORITY == lab_process.EXPECTED_AUTHORITY  # never observation on a host that refused its authority
 outputs = []          # the closed set of files the secret is searched in, at the end
 agent_runs = 0
 failed_exception = None
 server = None
-launches = []         # every launch of the agent, kept until its stop is confirmed
+launches = []         # every launch of the agent, kept until swept
 cleanups = []         # one stop record per launch (and per stop on timeout)
 
 
@@ -120,8 +129,9 @@ def launch_agent(config_path, timeout_s=120):
 
 
 root = EVIDENCE / "fixture"
-root.mkdir()
-if True:
+scope_closed, kept = False, dict(kept=None, reason="qualification refused: the authority was not claimed")
+if QUALIFIED:
+    root.mkdir()
     try:
         cert, key = root / "cert.pem", root / "key.pem"
         run(OPENSSL, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=localhost",
@@ -279,21 +289,16 @@ if True:
         A.record("scenario.exception", None, repr(error), ok=False)
     finally:
         # Before any removal of the fixture: the scope of every launch
-        # stopped, the agents held unreaped until here (their session ids
+        # swept, the agents held unreaped until here (their session ids
         # cannot have been reused), then reaped. Observation is recorded on
-        # every host; the proof that the scope is closed exists under the
-        # subreaper authority only (Linux), and alone allows the removal.
+        # every host; the end of a sweep under the subreaper authority
+        # (Linux) is recorded too, and neither is the proof.
         final = lab_process.stop_all(launches, timeout_s=10)
         cleanups.extend(final)
         for outcome in final:
             A.check(f"cleanup.observed_empty.{outcome['sid']}", True, outcome["observed_empty"])
             if AUTHORITY is not None:
-                A.check(f"cleanup.confirmed.{outcome['sid']}", True, outcome["confirmed"])
-        scope_closed = lab_process.scope_closed(final)
-        if AUTHORITY is not None:
-            A.check("cleanup.scope_closed", True, scope_closed)
-        else:
-            A.record("cleanup.scope_closed", None, "no authority on this host: observed, not proven", ok=True)
+                A.check(f"cleanup.swept.{outcome['sid']}", True, outcome["swept"])
         (EVIDENCE / "cleanups.json").write_text(json.dumps(cleanups, indent=2, default=str))
         outputs.append(EVIDENCE / "cleanups.json")
         # Outputs are produced and closed before the secret is searched.
@@ -306,11 +311,18 @@ if True:
             server.stop()
         else:
             secret = None
-        # The fixture is removed only on a proven closed scope and a
+        # The proof, read from the kernel immediately before the decision:
+        # every sweep ended under the authority and no child of ours is
+        # left at all. The fixture is removed only on that proof and a
         # successful scenario; kept otherwise, as it is (it holds the lab
         # token, a lab secret), with the reason recorded.
+        scope_closed = lab_process.scope_closed(final)
         kept = lab_process.preserve_fixture(root, EVIDENCE, scope_closed, failed_exception is not None or A.failed,
                                             cleanups)
+        if AUTHORITY is not None:
+            A.check("cleanup.scope_closed", True, scope_closed)
+        else:
+            A.record("cleanup.scope_closed", None, "no authority on this host: observed, not proven", ok=True)
         if kept["kept"] is not None:
             outputs.append(EVIDENCE / "fixture-kept.json")
         if secret:

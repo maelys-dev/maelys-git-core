@@ -1,6 +1,6 @@
 """Sensitivity tests of the qualification harness components, with no product
 binary: the counter-examples of the 2b reviews (2B-01 to 2B-04, the hook's expiry,
-843-01, 843-02 and the reviews of 570154a to 49b7115) must be detected.
+843-01, 843-02 and the reviews of 570154a to f84cddb) must be detected.
 
     test_lab_components.py OPENSSL
 """
@@ -166,9 +166,10 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
     check("hook.committed_marker", True, result.returncode == 0 and (markers / "committed").exists())
 
     # ---- 843-02 and the reviews of 570154a, b8bdb60, 03b12b6, c0e5e1f,
-    # d310295, 49b7115: cleanup covers the real scope of a launch, signals
-    # only identities it can hold, separates observation from proof, and
-    # proves a closed scope only under the subreaper authority (Linux).
+    # d310295, 49b7115, f84cddb: cleanup covers the real scope of a launch,
+    # signals only identities it can hold, separates observation from
+    # proof, and proves a closed scope only under the subreaper authority
+    # (Linux), read from the kernel, never from a table.
     # A fake agent in its own session starts a child that, like the
     # executor, leads another process group in the same session (setpgrp,
     # no setsid) and would write a marker late; the agent acknowledges the
@@ -176,11 +177,15 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
     # atomic replacement. Each child has a bounded lifetime and a safety
     # net closes the block. The expectations say, per host, whether a
     # descendant is signalled (our adopted child or a pidfd) or waited for,
-    # and whether a stop can be confirmed (an authority) or only observed.
+    # and whether a sweep ends under an authority or is only observed.
     import lab_process
     import time as _time
 
-    AUTH = lab_process.claim_authority()  # the test is the subreaper of its fakes, as the scenario is
+    try:  # the test is the subreaper of its fakes, as the scenario is; required on Linux (F84-02)
+        AUTH, auth_error = lab_process.claim_authority(), None
+    except OSError as error:
+        AUTH, auth_error = None, error
+    check("authority.claimed", lab_process.EXPECTED_AUTHORITY, AUTH if auth_error is None else repr(auth_error))
     PIN = lab_process.PINNABLE_DESCENDANTS
     print(f"      authority: {AUTH}, pidfd: {PIN}")
 
@@ -262,20 +267,21 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
     def check_stopped(name, outcome, launch, descendants):
         """What every nominal stop must show on this host: the agent
         signalled when it was alive and reaped after; every descendant
-        ended; the scope confirmed under an authority, observed empty
-        otherwise, and each descendant signalled (pinned: our adopted
-        child, or a pidfd) or refused and waited for."""
+        ended; the sweep ended under an authority (`swept`, not the
+        proof), observed empty otherwise, and each descendant signalled
+        (pinned: our adopted child, or a pidfd) or refused and waited
+        for."""
         check(f"{name}.agent_reaped", True, launch.reaped)
         check(f"{name}.descendants_ended", [True] * len(descendants), [ended(pid) for pid in descendants])
         check(f"{name}.observed_empty", True, outcome["observed_empty"])
-        check(f"{name}.confirmed", AUTH is not None, outcome["confirmed"])
+        check(f"{name}.swept", AUTH is not None, outcome["swept"])
         check(f"{name}.authority", AUTH, outcome["authority"])
         check(f"{name}.descendants_signalled_or_refused", sorted(descendants),
               sorted(pid for pid in descendants if pid in outcome["signalled"] or pid in outcome["refused"]))
         check(f"{name}.only_scope_signalled", True,
               set(outcome["signalled"]) <= {launch.pid, *descendants})
 
-    bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])  # in our own session
+    bystander = None  # started later, in our own session, once the kernel guard has been exercised
     real_topology, real_signal = S.topology, lab_process.signal_member
     LISTING = "list_proc" if lab_process.LINUX else "kern_proc_all"
     real_listing = getattr(S, LISTING)
@@ -350,13 +356,13 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
 
         # (b') authority lost: the parent reaped before the sweep. The
         # number may be reused: nothing is signalled, the stop is not
-        # confirmed, the child is left alone and ends by itself (its late
+        # swept, the child is left alone and ends by itself (its late
         # marker is the proof that no signal reached it).
         launch, child = fake("lost", "exit")
         S.wait_until(launch.exited, 5)
         check("lost.reaped_before_sweep", 0, launch.reap(timeout=5))
         outcome = stop(launch, timeout_s=5)
-        check("lost.not_confirmed", False, outcome["confirmed"])
+        check("lost.not_swept", False, outcome["swept"])
         check("lost.no_signal", [], outcome["signalled"])
         check("lost.reason", True, any("authority lost" in e for e in outcome["errors"]))
         check("lost.no_sweep", 0, outcome["sweeps"])
@@ -370,7 +376,7 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         # read while the agent is alive, then the agent forks its child and
         # exits before the classification. The status is read before the
         # table, so that table cannot conclude; the next one sees the
-        # child. Never a confirmed stop with the child alive.
+        # child. Never a swept stop with the child alive.
         launch, _ = fake("race", "wait")
         calls = []
 
@@ -388,12 +394,12 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         child = child_of("race")
         check("race.first_table_agent_only", [launch.pid], calls[0] if calls else None)
         check("race.child_seen_by_a_later_table", True, child is not None and any(child in c for c in calls[1:]))
-        check("race.never_confirmed_with_child_alive", False, outcome["confirmed"] and not ended(child))
+        check("race.never_swept_with_child_alive", False, outcome["swept"] and not ended(child))
         check_stopped("race", outcome, launch, [child])
 
         # (g) the two-generation race of review C0-01: the worker is listed,
         # then forks the leaf and exits before its session is read. The
-        # leaf is seen by a later table; never a confirmed stop with the
+        # leaf is seen by a later table; never a swept stop with the
         # leaf alive.
         launch, worker = fake("gen2", "exit", child_script=fake_worker)
         marker = root / "gen2.late"
@@ -417,7 +423,7 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         leaf = published(leaf_ack, int)
         check("gen2.worker_listed_first", True, bool(phases) and phases[0])
         check("gen2.leaf_started", True, leaf is not None)
-        check("gen2.never_confirmed_with_leaf_alive", False, outcome["confirmed"] and not ended(leaf))
+        check("gen2.never_swept_with_leaf_alive", False, outcome["swept"] and not ended(leaf))
         check("gen2.sweeps_more_than_one", True, outcome["sweeps"] >= 2)
         check_stopped("gen2", outcome, launch, [leaf])
         check("gen2.worker_reaped_by_the_stop", AUTH == "subreaper", worker in outcome["reaped_adopted"])
@@ -426,7 +432,7 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         # (z) the zombie-at-read race of review D310-01: the worker is listed
         # alive, forks the leaf and exits before its own row is read. Under
         # the subreaper the worker is our zombie, reaped by the stop, which
-        # reads again; the leaf, adopted, is ours. Never a confirmed stop
+        # reads again; the leaf, adopted, is ours. Never a swept stop
         # with the leaf alive.
         launch, worker = fake("zomb", "exit", child_script=fake_worker)
         marker = root / "zomb.late"
@@ -450,10 +456,45 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         leaf = published(leaf_ack, int)
         check("zombie.worker_listed_first", True, bool(listings) and listings[0])
         check("zombie.leaf_started", True, leaf is not None)
-        check("zombie.never_confirmed_with_leaf_alive", False, outcome["confirmed"] and not ended(leaf))
+        check("zombie.never_swept_with_leaf_alive", False, outcome["swept"] and not ended(leaf))
         check_stopped("zombie", outcome, launch, [leaf])
         check("zombie.worker_reaped_by_the_stop", AUTH == "subreaper", worker in outcome["reaped_adopted"])
         fake_child.write_text(PLAIN_CHILD)
+
+        # (o) F84-01: a living descendant omitted by the diagnostic. The
+        # agent exits, its child is adopted (Linux) and alive, and the only
+        # table returned shows nothing of it. The sweep ends on that
+        # diagnostic (`swept` under the authority: not the proof) and the
+        # child is never signalled; the proof, scope_closed(), reads the
+        # kernel and refuses while the child lives, so the fixture is kept;
+        # once the child has ended and been reaped, the scope is closed.
+        # Every previous launch is reaped here: nothing of ours is left.
+        check("omit.nothing_of_ours_before", True, lab_process.no_children())
+        launch, child = fake("omit", "exit")
+        S.wait_until(launch.exited, 5)
+        S.topology = lambda pids=None, timeout=30.0: {pid: row for pid, row in real_topology(timeout=timeout).items()
+                                                      if pid != child}
+        outcome = stop(launch, timeout_s=5)
+        S.topology = real_topology
+        check("omit.child_alive_after_sweep", False, ended(child))
+        check("omit.child_never_signalled", False, child in outcome["signalled"])
+        check("omit.swept_on_the_diagnostic", AUTH is not None, outcome["swept"])
+        check("omit.agent_reaped", True, launch.reaped)
+        check("omit.not_closed_with_child_alive", False, lab_process.scope_closed([outcome]))
+        omit_fixture, omit_evidence = root / "omit-fixture", root / "omit-evidence"
+        omit_fixture.mkdir()
+        omit_evidence.mkdir()
+        (omit_fixture / "agent.sqlite3").write_text("journal")
+        kept = lab_process.preserve_fixture(omit_fixture, omit_evidence, lab_process.scope_closed([outcome]), False,
+                                            [outcome])
+        check("omit.fixture_kept", (omit_fixture, "no authority on this host" if AUTH is None else "scope not proven closed"),
+              (kept["kept"], kept["reason"]))
+        check("omit.original_intact", "journal", (omit_fixture / "agent.sqlite3").read_text())
+        check("omit.child_ends_by_itself", True, S.wait_until(lambda: ended(child), 5))
+        if AUTH == "subreaper":
+            os.waitpid(child, 0)  # adopted, ended by itself: reaped here, the sweep never saw it
+        check("omit.closed_once_reaped", AUTH is not None, lab_process.scope_closed([outcome]))
+        bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])  # in our own session
 
         # (p) identity held until the signal (03-02): a child of a living
         # fake agent is signalled through a pidfd only; without one the
@@ -467,25 +508,25 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         check("pin.agent_signal_zero", True, lab_process.signal_member(launch.pid, launch.sid, 0, launch))
 
         # (c) observation impossible (reader error, malformed table, an
-        # unreadable row): no signal, stop not confirmed, the child
+        # unreadable row): no signal, stop not swept, the child
         # untouched; then the real stop (the launch `pin` is reused).
         S.topology = lambda pids=None, timeout=30.0: (_ for _ in ()).throw(S.TopologyError("lab: reader failed"))
         outcome = lab_process.stop_scope(launch, held=held_except(launch), timeout_s=1)
         S.topology = real_topology
-        check("unsure.reader_failed_not_confirmed", False, outcome["confirmed"] or outcome["observed_empty"])
+        check("unsure.reader_failed_not_swept", False, outcome["swept"] or outcome["observed_empty"])
         check("unsure.reader_failed_no_signal", [], outcome["signalled"])
         check("unsure.reader_failed_reason", True, any("topology unreadable" in e for e in outcome["errors"]))
         S.topology = lambda pids=None, timeout=30.0: S.parse_proc_stat("100002 (x) S 1\n")
         outcome = lab_process.stop_scope(launch, held=held_except(launch), timeout_s=1)
         S.topology = real_topology
-        check("unsure.malformed_not_confirmed", False, outcome["confirmed"] or outcome["observed_empty"])
+        check("unsure.malformed_not_swept", False, outcome["swept"] or outcome["observed_empty"])
         check("unsure.malformed_no_signal", [], outcome["signalled"])
         unreadable_rows = dict(real_topology())
         unreadable_rows[child] = dict(pid=child, ppid=None, pgid=None, sid=None, comm=None, sid_error="denied")
         S.topology = lambda pids=None, timeout=30.0: unreadable_rows
         outcome = lab_process.stop_scope(launch, held=held_except(launch), timeout_s=1)
         S.topology = real_topology
-        check("unsure.unreadable_row_not_confirmed", False, outcome["confirmed"] or outcome["observed_empty"])
+        check("unsure.unreadable_row_not_swept", False, outcome["swept"] or outcome["observed_empty"])
         check("unsure.unreadable_row_listed", [child], [r["pid"] for r in outcome["unreadable"]])
         check("unsure.agent_never_signalled", True, launch.pid not in outcome["signalled"] and not launch.exited())
         check("unsure.child_alive", False, ended(child))
@@ -510,7 +551,7 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         S.topology = slow_empty
         outcome = lab_process.stop_scope(launch, held=held_except(launch), timeout_s=0.01)
         S.topology = real_topology
-        check("deadline.empty_after_deadline_not_confirmed", False, outcome["confirmed"] or outcome["observed_empty"])
+        check("deadline.empty_after_deadline_not_swept", False, outcome["swept"] or outcome["observed_empty"])
         check("deadline.reason_recorded", True, any("deadline" in e for e in outcome["errors"]))
         check("deadline.budget_handed_to_reader", True, bool(budgets) and all(b <= 0.01 for b in budgets))
         live_table = real_topology()
@@ -525,21 +566,43 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         outcome = lab_process.stop_scope(launch, held=held_except(launch), timeout_s=0.01)
         S.topology = real_topology
         check("deadline.late_table_no_signal", [], requests)
-        check("deadline.late_table_not_confirmed", False, outcome["confirmed"])
+        check("deadline.late_table_not_swept", False, outcome["swept"])
+
+        # Several slow readings on a virtual clock, so that the readings
+        # cost what the test says whatever the host's timers do (the CI
+        # macOS runner stretched a 30 ms sleep to 90 ms): readings of 30,
+        # 30 and 20 ms (the last cut to its budget) and two intervals of
+        # 10 ms exhaust a 100 ms deadline, with decreasing budgets, and
+        # the sweep ends on the deadline with the members unsignalled.
+        class Clock:
+            now = 1000.0
+
+            def monotonic(self):
+                return self.now
+
+            def sleep(self, seconds):
+                self.now += max(seconds, 1e-6)
+
+        clock = Clock()
 
         def slow_live_short(pids=None, timeout=30.0):
             budgets.append(timeout)
-            _time.sleep(min(0.03, timeout))
+            clock.sleep(min(0.03, timeout))
             return live_table
 
         budgets.clear()
         S.topology = slow_live_short
-        outcome = lab_process.stop_scope(launch, held=held_except(launch), timeout_s=0.1, interval_s=0.01)
+        lab_process.time = clock
+        try:
+            outcome = lab_process.stop_scope(launch, held=held_except(launch), timeout_s=0.1, interval_s=0.01)
+        finally:
+            lab_process.time = _time
         S.topology = real_topology
         print("      deadline probe:", dict(readings=len(budgets), budgets=[round(b, 3) for b in budgets],
                                           elapsed_ms=outcome["elapsed_ms"], errors=outcome["errors"]))
-        check("deadline.several_readings_bounded", True, len(budgets) >= 2 and outcome["elapsed_ms"] <= 200
-              and not outcome["confirmed"])
+        check("deadline.several_readings_bounded", True, [round(b, 3) for b in budgets] == [0.1, 0.06, 0.02]
+              and 99 <= outcome["elapsed_ms"] <= 100 and not outcome["swept"]
+              and any("deadline expired" in e for e in outcome["errors"]))
         check("deadline.budgets_decrease", True, all(b2 < b1 for b1, b2 in zip(budgets, budgets[1:])))
         lab_process.signal_member = real_signal
         check("deadline.child_untouched", False, ended(child))
@@ -561,12 +624,14 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         outcome = lab_process.stop_scope(launch, held=held_except(launch), timeout_s=0.05, interval_s=0.001)
         S.topology = real_topology
         check("deadline.late_reap_observed", True, outcome["observed_empty"])
-        check("deadline.late_reap_not_confirmed", False, outcome["confirmed"])
+        check("deadline.late_reap_not_swept", False, outcome["swept"])
         check("deadline.late_reap_reason", AUTH is not None, any("after the reap" in e for e in outcome["errors"]))
         check("deadline.late_reap_done", True, launch.reaped)
 
-        # (e) several launches: no previous scope is forgotten, a confirmed
-        # stop is final, the others' adopted orphans are attributed to them.
+        # (e) several launches: no previous scope is forgotten, a swept
+        # launch keeps its record (its agent is reaped: no later sweep
+        # holds the authority), the others' adopted orphans are attributed
+        # to them.
         first, child1 = fake("first", "alive", delay=1.5)   # alive during its own sweep
         second, child2 = fake("second", "alive", delay=4.0)  # still alive when its turn comes, after the first's drain
         outcomes = lab_process.stop_all([first, second], timeout_s=5)
@@ -575,7 +640,7 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         check_stopped("stop.second", outcomes[1], second, [child2])
         check("stop.no_unattributed", [[], []], [o["unattributed"] for o in outcomes])
         if AUTH is not None:
-            check("stop.confirmed_is_final", outcomes[0], lab_process.stop_scope(first, timeout_s=5))
+            check("stop.swept_record_stands", outcomes[0], lab_process.stop_scope(first, timeout_s=5))
 
         # Late markers: exactly the children never signalled wrote theirs
         # (left alone on lost authority; waited for where a descendant can
@@ -584,7 +649,7 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         _time.sleep(1.3)
         waited = {"alive", "pin", "first", "second"} if not (AUTH == "subreaper" or PIN) else set()
         waited |= {"dead", "race", "gen2", "zomb"} if not (AUTH == "subreaper" or PIN) else set()
-        expected = sorted({"latereap", "lost"} | waited)
+        expected = sorted({"latereap", "lost", "omit"} | waited)
         check("stop.late_markers", [n + ".late" for n in expected], sorted(p.name for p in root.glob("*.late")))
         check("bystander.intact", None, bystander.poll())
         check("bystander.never_signalled", False, any(bystander.pid in o["signalled"] for o in all_outcomes))
@@ -596,8 +661,9 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
         for launch in fake_launches:  # safety net: nothing of the test survives it
             if not launch.reaped:
                 lab_process.stop_scope(launch, held=held_except(launch), timeout_s=5)
-        bystander.kill()
-        bystander.wait(timeout=5)
+        if bystander is not None:
+            bystander.kill()
+            bystander.wait(timeout=5)
         if AUTH == "subreaper":  # whatever was adopted and has ended
             while True:
                 try:
@@ -614,7 +680,7 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
     fixture.mkdir()
     evidence.mkdir()
     (fixture / "agent.sqlite3").write_text("journal")
-    outcome = lab_process.preserve_fixture(fixture, evidence, False, False, [dict(confirmed=False)])
+    outcome = lab_process.preserve_fixture(fixture, evidence, False, False, [dict(swept=False)])
     check("preserve.unproven_kept", fixture, outcome["kept"])
     check("preserve.unproven_reason", "no authority on this host" if AUTH is None else "scope not proven closed",
           outcome["reason"])
