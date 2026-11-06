@@ -704,7 +704,8 @@ if(MAELYS_GIT_BUILD_TESTS)
             # after, reported when unreached) and the xOpen contract in
             # failure (one close, never two). They share markers.jsonl with
             # the scenario: never at the same time.
-            foreach(case armed_phase_only unreached_disarmed second_passage unreached_at_exit
+            foreach(case armed_phase_only unreached_disarmed unreached_names_its_arming
+                         unreached_same_point_again second_passage unreached_at_exit
                          open_error_with_methods open_error_without_methods open_ok_closes_once)
                 add_test(NAME maelys-git-lab-vfs-${case} COMMAND test-maelys-git-lab-vfs ${case})
                 set_tests_properties(maelys-git-lab-vfs-${case} PROPERTIES

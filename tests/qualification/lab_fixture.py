@@ -34,15 +34,24 @@ def worktree_identity(product, scopes=SCOPES):
     """What a run ran on, mechanically: HEAD, and the tree object of the
     content of SCOPES as it stands in the worktree, tracked changes and
     untracked files included (the ignore rules respected), written from a
-    private index that starts at HEAD. Neither the index, nor a ref, nor
-    the worktree of the repository is touched; the blobs of the untracked
-    files enter its object store. The dirty status and the digest of every
-    untracked file in SCOPES stand beside, readable without Git."""
+    private index that starts at HEAD. Nothing of the repository is
+    written: the private index and the objects of the untracked content go
+    to a temporary directory, the repository's own objects are read as an
+    alternate, and Git's optional locks are off; the sources may be mounted
+    read-only, as the Linux CI mounts them. The dirty status and the digest
+    of every untracked file in SCOPES stand beside, readable without Git."""
     product = Path(product)
-    head = git("-C", product, "rev-parse", "HEAD").stdout.strip()
-    status = git("-C", product, "status", "--porcelain", "--untracked-files=all", "--", *scopes).stdout
+    base = dict(ENV, GIT_OPTIONAL_LOCKS="0")
+    head = git("-C", product, "rev-parse", "HEAD", env=base).stdout.strip()
+    objects = git("-C", product, "rev-parse", "--path-format=absolute", "--git-path", "objects",
+                  env=base).stdout.strip()
+    status = git("-C", product, "status", "--porcelain", "--untracked-files=all", "--", *scopes,
+                 env=base).stdout
     with tempfile.TemporaryDirectory() as temp:
-        env = dict(ENV, GIT_INDEX_FILE=str(Path(temp) / "index"))
+        private_objects = Path(temp) / "objects"
+        private_objects.mkdir()
+        env = dict(base, GIT_INDEX_FILE=str(Path(temp) / "index"), GIT_OBJECT_DIRECTORY=str(private_objects),
+                   GIT_ALTERNATE_OBJECT_DIRECTORIES=objects)
         git("-C", product, "read-tree", "HEAD", env=env)
         git("-C", product, "add", "-A", "--", *scopes, env=env)
         tree = git("-C", product, "write-tree", env=env).stdout.strip()

@@ -189,6 +189,66 @@ static void case_unreached_disarmed(void) {
     free(tail);
 }
 
+/* The reviewer's reproduction (F52-02): the context names the next
+ * command before its first point ends the phase. The report of the
+ * unreached fault names the command and the passage of the arming. */
+static void case_unreached_names_its_arming(void) {
+    sqlite3_vfs *vfs = lab_vfs_ready(FSYNC_SECOND);
+    char path[4096];
+    database_path(path, sizeof(path), "naming");
+    int rc;
+    sqlite3_file *file = open_main(vfs, path, &rc);
+    CHECK(rc == SQLITE_OK, "open: %d", rc);
+    mg_lab_context("command-one");
+    (void)mg_lab_reach("store.complete_commit");
+    CHECK(file->pMethods->xSync(file, SQLITE_SYNC_NORMAL) == SQLITE_OK, "command-one: the only sync failed");
+    mg_lab_context("command-two");
+    (void)mg_lab_reach("store.pending_insert");
+    (void)mg_lab_reach("store.complete_commit");
+    CHECK(file->pMethods->xSync(file, SQLITE_SYNC_NORMAL) == SQLITE_OK, "command-two: the first sync failed");
+    CHECK(file->pMethods->xSync(file, SQLITE_SYNC_NORMAL) == SQLITE_OK, "command-two: the second sync failed");
+    CHECK(file->pMethods->xClose(file) == SQLITE_OK, "close failed");
+    free(file);
+    (void)unlink(path);
+    char *tail = markers_tail();
+    CHECK(lines_with(tail, "\"event\":\"vfs_unreached\"", NULL) == 1u, "exactly one vfs_unreached marker expected");
+    CHECK(lines_with(tail, "\"event\":\"vfs_unreached\"", "\"message_id\":\"command-one\"", "\"passage\":1",
+                     "\"point\":\"store.complete_commit\"", "\"seen\":1", NULL) == 1u,
+          "the vfs_unreached marker must name command-one, passage 1");
+    CHECK(lines_with(tail, "\"event\":\"vfs_unreached\"", "\"message_id\":\"command-two\"", NULL) == 0u,
+          "the vfs_unreached marker names command-two");
+    CHECK(lines_with(tail, "\"event\":\"vfs_fault\"", NULL) == 0u, "no vfs_fault marker expected");
+    free(tail);
+}
+
+/* The same point reached again directly: the report carries the passage
+ * of the arming, not the passage that ends it. */
+static void case_unreached_same_point_again(void) {
+    sqlite3_vfs *vfs = lab_vfs_ready(FSYNC_SECOND);
+    char path[4096];
+    database_path(path, sizeof(path), "again");
+    int rc;
+    sqlite3_file *file = open_main(vfs, path, &rc);
+    CHECK(rc == SQLITE_OK, "open: %d", rc);
+    mg_lab_context("command-one");
+    (void)mg_lab_reach("store.complete_commit");
+    CHECK(file->pMethods->xSync(file, SQLITE_SYNC_NORMAL) == SQLITE_OK, "passage 1: the only sync failed");
+    (void)mg_lab_reach("store.complete_commit");
+    CHECK(file->pMethods->xSync(file, SQLITE_SYNC_NORMAL) == SQLITE_OK, "passage 2: the first sync failed");
+    CHECK(file->pMethods->xSync(file, SQLITE_SYNC_NORMAL) == SQLITE_OK, "passage 2: the second sync failed");
+    CHECK(file->pMethods->xClose(file) == SQLITE_OK, "close failed");
+    free(file);
+    (void)unlink(path);
+    char *tail = markers_tail();
+    CHECK(lines_with(tail, "\"event\":\"vfs_unreached\"", NULL) == 1u, "exactly one vfs_unreached marker expected");
+    CHECK(lines_with(tail, "\"event\":\"vfs_unreached\"", "\"passage\":1", "\"seen\":1", NULL) == 1u,
+          "the vfs_unreached marker must carry passage 1");
+    CHECK(lines_with(tail, "\"event\":\"reached\"", "\"passage\":2", NULL) == 1u,
+          "the second reach must be passage 2");
+    CHECK(lines_with(tail, "\"event\":\"vfs_fault\"", NULL) == 0u, "no vfs_fault marker expected");
+    free(tail);
+}
+
 /* A fault targeted at the second passage fires there, and only there. */
 static void case_second_passage(void) {
     sqlite3_vfs *vfs = lab_vfs_ready("store.complete_commit:vfs=main:xSync:SQLITE_IOERR_FSYNC:1:2");
@@ -238,14 +298,18 @@ static void case_unreached_at_exit(void) {
         (void)file->pMethods->xClose(file);
         free(file);
         (void)unlink(path);
+        mg_lab_context("command-two"); /* the report at exit still names the arming */
         exit(failures ? 5 : 0);
     }
     int status = 0;
     while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
     CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0, "the child did not exit 0: %d", status);
     char *tail = markers_tail();
-    CHECK(lines_with(tail, "\"event\":\"vfs_unreached\"", "\"message_id\":\"command-one\"", "\"seen\":1", NULL) == 1u,
-          "one vfs_unreached marker at exit expected");
+    CHECK(lines_with(tail, "\"event\":\"vfs_unreached\"", "\"message_id\":\"command-one\"", "\"passage\":1",
+                     "\"seen\":1", NULL) == 1u,
+          "one vfs_unreached marker at exit naming command-one, passage 1, expected");
+    CHECK(lines_with(tail, "\"event\":\"vfs_unreached\"", "\"message_id\":\"command-two\"", NULL) == 0u,
+          "the report at exit names the current context instead of the arming");
     CHECK(lines_with(tail, "\"event\":\"vfs_fault\"", NULL) == 0u, "no vfs_fault marker expected");
     free(tail);
 }
@@ -368,6 +432,8 @@ int main(int argc, char **argv) {
     } cases[] = {
         {"armed_phase_only", case_armed_phase_only},
         {"unreached_disarmed", case_unreached_disarmed},
+        {"unreached_names_its_arming", case_unreached_names_its_arming},
+        {"unreached_same_point_again", case_unreached_same_point_again},
         {"second_passage", case_second_passage},
         {"unreached_at_exit", case_unreached_at_exit},
         {"open_error_with_methods", case_open_error_with_methods},

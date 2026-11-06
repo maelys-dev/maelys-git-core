@@ -110,8 +110,10 @@ A VFS fault lives in the instance of the phase that armed it: the next
 point, whichever it is, ends that phase, and so does the exit of the
 process. A fault still armed then has missed its occurrence: it is
 reported by a `vfs_unreached` marker (the occurrence expected, the count
-`seen`) and disarmed; it is never carried to the next phase, nor to the
-next passage of the same point on another command.
+`seen`, and the `message_id` and `passage` of the arming, not of the
+moment of the report: the next command may already be named when its
+first point ends the phase) and disarmed; it is never carried to the next
+phase, nor to the next passage of the same point on another command.
 
 Points of B (plan §2.3), their owner and what the scenario asserts:
 
@@ -146,10 +148,12 @@ second close through the wrapper reaches nothing). `tests/test_lab_vfs.c`
 holds the fidelity of the VFS, one process per case (CTest
 `maelys-git-lab-vfs-*`, built with the `-lab` programs): the armed
 occurrence fires in its phase and nowhere else, the unreached fault is
-reported and disarmed at the next point and at exit, a fault targeted at
-the second passage fires there only, and the three outcomes of `xOpen`
-(failure with methods, failure without, success) close once or not at
-all. The survey of the nominal `health` (`vfs-survey.json`)
+reported and disarmed at the next point and at exit and its report names
+the command and passage of the arming (the context changed before the
+next point, the same point reached again directly, the context changed
+before exit), a fault targeted at the second passage fires there only,
+and the three outcomes of `xOpen` (failure with methods, failure without,
+success) close once or not at all. The survey of the nominal `health` (`vfs-survey.json`)
 shows the commit of the completion syncing the WAL (`wal:xSync` in the
 phase `store.complete_commit`), as `journal_mode=WAL` with
 `synchronous=FULL` prescribes; the same phase also holds the checkpoint of

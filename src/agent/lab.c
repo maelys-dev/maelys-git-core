@@ -165,6 +165,8 @@ static struct {
         int armed;
         size_t kind, op, phase;
         unsigned seq;       /* the instance of the phase that armed */
+        unsigned passage;   /* the passage of the point that armed */
+        char context[MG_MESSAGE_ID_MAX]; /* the command of the arming */
         int code;
         const char *code_name;
         unsigned occurrence;
@@ -174,7 +176,11 @@ static struct {
 
 /* ---- markers ------------------------------------------------------------------- */
 
-static void marker_begin(mg_json_t *json, const char *event, size_t point) {
+/* A marker about POINT at PASSAGE for the command CONTEXT: an event
+ * recorded about an earlier moment names that moment, not the current
+ * one. */
+static void marker_begin_at(mg_json_t *json, const char *event, size_t point, unsigned passage,
+                            const char *context) {
     mg_json_begin(json, MG_JSON_DATA);
     mg_json_object(json, NULL);
     mg_json_i64(json, "ts_ms", mg_now_ms());
@@ -183,10 +189,16 @@ static void marker_begin(mg_json_t *json, const char *event, size_t point) {
     mg_json_string(json, "event", event);
     if (point < COUNT(k_points)) {
         mg_json_string(json, "point", k_points[point].name);
-        mg_json_i64(json, "passage", (int64_t)lab.passages[point]);
+        mg_json_i64(json, "passage", (int64_t)passage);
     }
     if (lab.phase < COUNT(k_points)) mg_json_string(json, "phase", k_points[lab.phase].name);
-    if (lab.context[0]) mg_json_string(json, "message_id", lab.context);
+    if (context && context[0]) mg_json_string(json, "message_id", context);
+}
+
+/* A marker about the current moment: the passage of POINT so far and the
+ * current command. */
+static void marker_begin(mg_json_t *json, const char *event, size_t point) {
+    marker_begin_at(json, event, point, point < COUNT(k_points) ? lab.passages[point] : 0u, lab.context);
 }
 
 /* One line, appended by one write: lines of several processes never mix. */
@@ -390,13 +402,15 @@ static int vfs_check(const lab_file_t *file, size_t op) {
 
 /* An armed fault whose phase ends before its occurrence never carries
  * over to the next phase, nor to the next passage of the same point:
- * reported with the count seen, and disarmed. Also run at exit for the
- * last phase of the process. */
+ * reported with the count seen, and disarmed. The report names the
+ * command and the passage of the arming, whatever the current context
+ * (the next command may already be named when its first point ends
+ * the phase). Also run at exit for the last phase of the process. */
 static void vfs_disarm_unreached(void) {
     if (!lab.vfs.armed) return;
     lab.vfs.armed = 0;
     mg_json_t json;
-    marker_begin(&json, "vfs_unreached", lab.vfs.phase);
+    marker_begin_at(&json, "vfs_unreached", lab.vfs.phase, lab.vfs.passage, lab.vfs.context);
     mg_json_string(&json, "file", k_kinds[lab.vfs.kind]);
     mg_json_string(&json, "op", k_ops[lab.vfs.op]);
     mg_json_i64(&json, "occurrence", (int64_t)lab.vfs.occurrence);
@@ -671,11 +685,12 @@ mg_lab_outcome_t mg_lab_reach(const char *point) {
         (void)fprintf(stderr, "maelys-git-lab: unknown point %s\n", point);
         return outcome;
     }
-    ++lab.passages[index];
-    /* A phase runs from a point to the next: the VFS counts its operations
-     * from here, whatever the point, and a fault armed for the phase that
-     * ends here is reported if it has not fired. */
+    /* A phase runs from a point to the next: a fault armed for the phase
+     * that ends here is reported if it has not fired, before this passage
+     * counts; then the VFS counts its operations from here, whatever the
+     * point. */
     vfs_disarm_unreached();
+    ++lab.passages[index];
     ++lab.phase_seq;
     lab.phase = index;
     memset(lab.counts, 0, sizeof(lab.counts));
@@ -712,6 +727,8 @@ mg_lab_outcome_t mg_lab_reach(const char *point) {
         lab.vfs.op = spec->vfs_op;
         lab.vfs.phase = index;
         lab.vfs.seq = lab.phase_seq;
+        lab.vfs.passage = lab.passages[index];
+        (void)snprintf(lab.vfs.context, sizeof(lab.vfs.context), "%s", lab.context);
         lab.vfs.code = spec->code;
         lab.vfs.code_name = spec->code_name;
         lab.vfs.occurrence = spec->vfs_occurrence;
