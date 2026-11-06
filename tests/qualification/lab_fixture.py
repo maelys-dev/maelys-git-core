@@ -3,9 +3,11 @@ certificate, a migrated Gitolite policy, a synthetic bare repository with
 a seed commit, and the agent's configuration as test_cloud_transport.py
 writes it. Pure construction: nothing here launches the agent.
 """
+import hashlib
 import json
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 GIT = "/usr/bin/git"
@@ -13,9 +15,9 @@ ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 ENV.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null")
 
 
-def run(*args, ok=True, input=None, timeout=60):
-    result = subprocess.run(list(map(str, args)), input=input, capture_output=True, text=True, env=ENV,
-                            timeout=timeout)
+def run(*args, ok=True, input=None, timeout=60, env=None):
+    result = subprocess.run(list(map(str, args)), input=input, capture_output=True, text=True,
+                            env=ENV if env is None else env, timeout=timeout)
     if ok and result.returncode:
         raise AssertionError(f"{args}: {result.stdout}\n{result.stderr}")
     return result
@@ -23,6 +25,32 @@ def run(*args, ok=True, input=None, timeout=60):
 
 def git(*args, **kwargs):
     return run(GIT, *args, **kwargs)
+
+
+SCOPES = ("src", "include", "tests", "CMakeLists.txt", ".github")
+
+
+def worktree_identity(product, scopes=SCOPES):
+    """What a run ran on, mechanically: HEAD, and the tree object of the
+    content of SCOPES as it stands in the worktree, tracked changes and
+    untracked files included (the ignore rules respected), written from a
+    private index that starts at HEAD. Neither the index, nor a ref, nor
+    the worktree of the repository is touched; the blobs of the untracked
+    files enter its object store. The dirty status and the digest of every
+    untracked file in SCOPES stand beside, readable without Git."""
+    product = Path(product)
+    head = git("-C", product, "rev-parse", "HEAD").stdout.strip()
+    status = git("-C", product, "status", "--porcelain", "--untracked-files=all", "--", *scopes).stdout
+    with tempfile.TemporaryDirectory() as temp:
+        env = dict(ENV, GIT_INDEX_FILE=str(Path(temp) / "index"))
+        git("-C", product, "read-tree", "HEAD", env=env)
+        git("-C", product, "add", "-A", "--", *scopes, env=env)
+        tree = git("-C", product, "write-tree", env=env).stdout.strip()
+    untracked = sorted(line[3:] for line in status.splitlines() if line.startswith("?? "))
+    return dict(product_head=head, tree_dirty=bool(status.strip()), status=status.strip().splitlines(),
+                scopes=list(scopes), worktree_tree=tree,
+                untracked_sha256={path: hashlib.sha256((product / path).read_bytes()).hexdigest()
+                                  for path in untracked})
 
 
 def certificate(openssl, root):

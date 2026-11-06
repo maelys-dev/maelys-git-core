@@ -106,6 +106,13 @@ injection and every VFS fault writes one JSON line to `markers.jsonl`
 beside the fault file (`ts_ms`, `pid`, `role`, `event`, `point`,
 `passage`, `phase`, `message_id` when known), appended by one write.
 
+A VFS fault lives in the instance of the phase that armed it: the next
+point, whichever it is, ends that phase, and so does the exit of the
+process. A fault still armed then has missed its occurrence: it is
+reported by a `vfs_unreached` marker (the occurrence expected, the count
+`seen`) and disarmed; it is never carried to the next phase, nor to the
+next passage of the same point on another command.
+
 Points of B (plan §2.3), their owner and what the scenario asserts:
 
 | Point | Owner | Actions | State the fault leaves at B |
@@ -131,7 +138,18 @@ The SQLite VFS `maelys-lab` is registered by `maelys-git-agent-lab` at
 `xWrite`, `xSync`, `xTruncate` and `xFileSize` per phase (a phase runs
 from a point to the next), and returns the armed code at the armed
 occurrence; the index WAL `-shm` goes through the `xShm*` methods, which are
-forwarded, never failed. The survey of the nominal `health` (`vfs-survey.json`)
+forwarded, never failed. The wrapper keeps the contract of `xOpen` in
+failure: when the underlying VFS exposed its methods and failed, the
+wrapper exposes its own (the `vfs_open` marker says `methods`), so the
+close SQLite then performs reaches the underlying file, exactly once (a
+second close through the wrapper reaches nothing). `tests/test_lab_vfs.c`
+holds the fidelity of the VFS, one process per case (CTest
+`maelys-git-lab-vfs-*`, built with the `-lab` programs): the armed
+occurrence fires in its phase and nowhere else, the unreached fault is
+reported and disarmed at the next point and at exit, a fault targeted at
+the second passage fires there only, and the three outcomes of `xOpen`
+(failure with methods, failure without, success) close once or not at
+all. The survey of the nominal `health` (`vfs-survey.json`)
 shows the commit of the completion syncing the WAL (`wal:xSync` in the
 phase `store.complete_commit`), as `journal_mode=WAL` with
 `synchronous=FULL` prescribes; the same phase also holds the checkpoint of

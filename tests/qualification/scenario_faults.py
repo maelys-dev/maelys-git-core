@@ -63,16 +63,16 @@ def sha256_file(path):
 
 
 def provenance():
-    head = subprocess.run([GIT, "-C", str(PRODUCT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    status = subprocess.run([GIT, "-C", str(PRODUCT), "status", "--porcelain", "--untracked-files=all", "--",
-                             "tests", "CMakeLists.txt", "src", "include"], capture_output=True, text=True).stdout
-    patch = subprocess.run([GIT, "-C", str(PRODUCT), "diff", "HEAD", "--", "tests", "CMakeLists.txt", "src", "include"],
+    """What this run ran on: the product revision, the tree of the
+    worktree content in the scopes (untracked files included) and the
+    digest of the patch; the digests of the binaries used."""
+    patch = subprocess.run([GIT, "-C", str(PRODUCT), "diff", "HEAD", "--", *lab_fixture.SCOPES],
                            capture_output=True, text=True).stdout
-    return dict(product_head=head, tree_dirty=bool(status.strip()), status=status.strip().splitlines(),
+    return dict(**lab_fixture.worktree_identity(PRODUCT),
                 patch_sha256=hashlib.sha256(patch.encode()).hexdigest() if patch else None,
                 binaries={Path(p).name: sha256_file(p) for p in (AGENT, EXECUTOR, MAELYS_GIT)},
-                binary_class="B-lab", fault_file=str(FAULT_FILE), platform=sys.platform,
-                python=sys.version.split()[0], git_version=git("--version").stdout.strip())
+                binary_class="B-lab", fault_file=str(FAULT_FILE), platform=sys.platform, python=sys.version.split()[0],
+                git_version=git("--version").stdout.strip())
 
 
 A = S.Assertions(EVIDENCE / "assertions.jsonl")
@@ -180,6 +180,13 @@ def agent_run(case, config_path, spec=None, timeout_s=60, before_finish=None):
     if watcher:
         watcher.join(timeout=5)
     rows = markers_since(offset)
+    # The markers of the run are read by offset: another writer of the
+    # file during the run (a laboratory program started by hand, a test
+    # run beside this one) would be read as this agent's. Its agent-role
+    # markers carry another pid: diagnosed, never silently absorbed.
+    foreign = [row for row in rows if row.get("role") == "agent" and row.get("pid") != launch.pid]
+    if foreign:
+        A.record(f"{case}.run_{agent_runs}_foreign_agent_markers", 0, len(foreign), ok=False)
     stem = f"run-{agent_runs}"
     for name, text in ((f"{stem}.stdout", out), (f"{stem}.stderr", err)):
         (case_dir / name).write_text(text or "")
@@ -389,6 +396,7 @@ if QUALIFIED:
                                                   code_name="SQLITE_IOERR_FSYNC", phase="store.complete_commit")],
                 [dict(file=r.get("file"), op=r.get("op"), occurrence=r.get("occurrence"), code=r.get("code"),
                       code_name=r.get("code_name"), phase=r.get("phase")) for r in fault])
+        A.check(f"{case}.no_unreached_marker", 0, len(events(run.markers, event="vfs_unreached")))
         A.check(f"{case}.state_running", "running", S.command_state(database, "c-vfs"))
         # B reports the failure of the completion as IO_FAILED; the message
         # it carries is the one of its explicit ROLLBACK after SQLite rolled

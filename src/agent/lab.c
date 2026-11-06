@@ -156,6 +156,7 @@ static struct {
     size_t spec_count;
     unsigned passages[COUNT(k_points)];
     size_t phase;           /* the last point reached, or SIZE_MAX */
+    unsigned phase_seq;     /* the instance of the phase: one more at every point */
     char context[MG_MESSAGE_ID_MAX];
     int markers;            /* the marker file, or -1 */
     char dir[PATH_MAX];     /* the directory of the fault file */
@@ -163,6 +164,7 @@ static struct {
     struct {
         int armed;
         size_t kind, op, phase;
+        unsigned seq;       /* the instance of the phase that armed */
         int code;
         const char *code_name;
         unsigned occurrence;
@@ -370,7 +372,7 @@ static int vfs_check(const lab_file_t *file, size_t op) {
         mg_json_i64(&json, "n", (int64_t)n);
         marker_end(&json);
     }
-    if (lab.vfs.armed && lab.vfs.kind == file->kind && lab.vfs.op == op && lab.vfs.phase == lab.phase &&
+    if (lab.vfs.armed && lab.vfs.kind == file->kind && lab.vfs.op == op && lab.vfs.seq == lab.phase_seq &&
         n == lab.vfs.occurrence) {
         lab.vfs.armed = 0;
         mg_json_t json;
@@ -386,10 +388,33 @@ static int vfs_check(const lab_file_t *file, size_t op) {
     return SQLITE_OK;
 }
 
+/* An armed fault whose phase ends before its occurrence never carries
+ * over to the next phase, nor to the next passage of the same point:
+ * reported with the count seen, and disarmed. Also run at exit for the
+ * last phase of the process. */
+static void vfs_disarm_unreached(void) {
+    if (!lab.vfs.armed) return;
+    lab.vfs.armed = 0;
+    mg_json_t json;
+    marker_begin(&json, "vfs_unreached", lab.vfs.phase);
+    mg_json_string(&json, "file", k_kinds[lab.vfs.kind]);
+    mg_json_string(&json, "op", k_ops[lab.vfs.op]);
+    mg_json_i64(&json, "occurrence", (int64_t)lab.vfs.occurrence);
+    mg_json_i64(&json, "seen", (int64_t)lab.counts[lab.vfs.kind][lab.vfs.op]);
+    mg_json_i64(&json, "code", lab.vfs.code);
+    mg_json_string(&json, "code_name", lab.vfs.code_name);
+    marker_end(&json);
+}
+
 #define REAL(file) (((lab_file_t *)(file))->real)
 
+/* Closes the underlying file once: its methods are cleared after, so a
+ * second close through the wrapper reaches nothing. */
 static int lab_close(sqlite3_file *file) {
-    int rc = REAL(file)->pMethods ? REAL(file)->pMethods->xClose(REAL(file)) : SQLITE_OK;
+    sqlite3_file *real = REAL(file);
+    if (!real->pMethods) return SQLITE_OK;
+    int rc = real->pMethods->xClose(real);
+    real->pMethods = NULL;
     return rc;
 }
 static int lab_read(sqlite3_file *file, void *buffer, int amount, sqlite3_int64 offset) {
@@ -458,6 +483,7 @@ static int lab_open(sqlite3_vfs *vfs, const char *name, sqlite3_file *file, int 
     lab_file_t *wrapped = (lab_file_t *)file;
     wrapped->real = (sqlite3_file *)((char *)file + sizeof(*wrapped));
     wrapped->kind = classify(flags);
+    wrapped->real->pMethods = NULL;
     int rc = real_vfs->xOpen(real_vfs, name, wrapped->real, flags, out_flags);
     mg_json_t json;
     marker_begin(&json, "vfs_open", SIZE_MAX);
@@ -466,8 +492,13 @@ static int lab_open(sqlite3_vfs *vfs, const char *name, sqlite3_file *file, int 
     else mg_json_null(&json, "path");
     mg_json_i64(&json, "flags", flags);
     mg_json_i64(&json, "rc", rc);
+    mg_json_boolean(&json, "methods", wrapped->real->pMethods != NULL);
     marker_end(&json);
-    if (rc == SQLITE_OK) file->pMethods = &lab_methods;
+    /* The contract of xOpen: when it fails with pMethods set, the caller
+     * closes the file. The wrapper exposes its methods whenever the
+     * underlying VFS exposed its own, in success and in failure alike, so
+     * that close reaches the underlying file. */
+    file->pMethods = wrapped->real->pMethods ? &lab_methods : NULL;
     return rc;
 }
 static int lab_delete(sqlite3_vfs *vfs, const char *name, int sync_directory) {
@@ -567,6 +598,7 @@ static void vfs_register(void) {
     lab_methods.xFetch = lab_fetch;
     lab_methods.xUnfetch = lab_unfetch;
     if (sqlite3_vfs_register(&lab_vfs, 1) != SQLITE_OK) refuse("cannot register the VFS maelys-lab", "");
+    (void)atexit(vfs_disarm_unreached);
 }
 
 /* ---- initialization -------------------------------------------------------------- */
@@ -641,7 +673,10 @@ mg_lab_outcome_t mg_lab_reach(const char *point) {
     }
     ++lab.passages[index];
     /* A phase runs from a point to the next: the VFS counts its operations
-     * from here, whatever the point. */
+     * from here, whatever the point, and a fault armed for the phase that
+     * ends here is reported if it has not fired. */
+    vfs_disarm_unreached();
+    ++lab.phase_seq;
     lab.phase = index;
     memset(lab.counts, 0, sizeof(lab.counts));
     marker("reached", index);
@@ -676,6 +711,7 @@ mg_lab_outcome_t mg_lab_reach(const char *point) {
         lab.vfs.kind = spec->vfs_kind;
         lab.vfs.op = spec->vfs_op;
         lab.vfs.phase = index;
+        lab.vfs.seq = lab.phase_seq;
         lab.vfs.code = spec->code;
         lab.vfs.code_name = spec->code_name;
         lab.vfs.occurrence = spec->vfs_occurrence;

@@ -61,14 +61,12 @@ def sha256_file(path):
 
 
 def provenance():
-    """What this run ran on: the product revision and, when the tree is
-    dirty, the digest of the patch; the digests of the binaries used."""
-    head = subprocess.run([GIT, "-C", str(PRODUCT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    status = subprocess.run([GIT, "-C", str(PRODUCT), "status", "--porcelain", "--untracked-files=all", "--", "tests", "CMakeLists.txt", "src", "include"],
-                            capture_output=True, text=True).stdout
-    patch = subprocess.run([GIT, "-C", str(PRODUCT), "diff", "HEAD", "--", "tests", "CMakeLists.txt", "src", "include"],
+    """What this run ran on: the product revision, the tree of the
+    worktree content in the scopes (untracked files included) and the
+    digest of the patch; the digests of the binaries used."""
+    patch = subprocess.run([GIT, "-C", str(PRODUCT), "diff", "HEAD", "--", *lab_fixture.SCOPES],
                            capture_output=True, text=True).stdout
-    return dict(product_head=head, tree_dirty=bool(status.strip()), status=status.strip().splitlines(),
+    return dict(**lab_fixture.worktree_identity(PRODUCT),
                 patch_sha256=hashlib.sha256(patch.encode()).hexdigest() if patch else None,
                 binaries={Path(p).name: sha256_file(p) for p in (AGENT, EXECUTOR, MAELYS_GIT)},
                 platform=sys.platform, python=sys.version.split()[0],

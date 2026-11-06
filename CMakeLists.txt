@@ -371,7 +371,15 @@ if(MAELYS_GIT_BUILD_LAB)
     target_link_libraries(maelys-git-agent-lab PRIVATE maelys_git_lab maelys_git_build_flags)
     add_executable(maelys-git-executor-lab EXCLUDE_FROM_ALL cmd/maelys-git-executor/main.c)
     target_link_libraries(maelys-git-executor-lab PRIVATE maelys_git_lab maelys_git_build_flags)
-    add_custom_target(maelys-git-lab DEPENDS maelys-git-agent-lab maelys-git-executor-lab)
+    # The fidelity of the VFS of the laboratory, one process per case
+    # (tests/test_lab_vfs.c): built with the -lab programs, never installed.
+    add_executable(test-maelys-git-lab-vfs EXCLUDE_FROM_ALL tests/test_lab_vfs.c)
+    target_include_directories(test-maelys-git-lab-vfs PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_definitions(test-maelys-git-lab-vfs PRIVATE
+        MAELYS_GIT_ENABLE_CLOUD_AGENT=1 MG_LAB_FAULTS=1 MG_LAB_FAULT_FILE="${MG_LAB_FAULT_FILE}")
+    target_link_libraries(test-maelys-git-lab-vfs PRIVATE maelys_git_lab SQLite::SQLite3 maelys_git_build_flags)
+    add_custom_target(maelys-git-lab
+        DEPENDS maelys-git-agent-lab maelys-git-executor-lab test-maelys-git-lab-vfs)
 endif()
 
 # ---- tests ------------------------------------------------------------------
@@ -689,7 +697,19 @@ if(MAELYS_GIT_BUILD_TESTS)
                     $<TARGET_FILE:maelys-git-agent-lab> $<TARGET_FILE:maelys-git-executor-lab>
                     $<TARGET_FILE:maelys-git> ${MAELYS_OPENSSL_PROGRAM} ${MG_LAB_FAULT_FILE}
                     ${CMAKE_CURRENT_BINARY_DIR}/qualification-faults)
-            set_tests_properties(maelys-git-qualification-faults PROPERTIES FIXTURES_REQUIRED lab TIMEOUT 600)
+            set_tests_properties(maelys-git-qualification-faults PROPERTIES
+                FIXTURES_REQUIRED lab RESOURCE_LOCK lab-markers TIMEOUT 600)
+            # The fidelity of the VFS: the lifetime of an armed fault (the
+            # instance of the phase that armed it, nothing before, nothing
+            # after, reported when unreached) and the xOpen contract in
+            # failure (one close, never two). They share markers.jsonl with
+            # the scenario: never at the same time.
+            foreach(case armed_phase_only unreached_disarmed second_passage unreached_at_exit
+                         open_error_with_methods open_error_without_methods open_ok_closes_once)
+                add_test(NAME maelys-git-lab-vfs-${case} COMMAND test-maelys-git-lab-vfs ${case})
+                set_tests_properties(maelys-git-lab-vfs-${case} PROPERTIES
+                    FIXTURES_REQUIRED lab RESOURCE_LOCK lab-markers TIMEOUT 60)
+            endforeach()
         endif()
     endif()
     # The deliverables carry nothing of the laboratory, whatever the build
