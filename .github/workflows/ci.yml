@@ -13,9 +13,15 @@ jobs:
         os: [ubuntu-24.04, macos-15]
         sanitizers: ["off", "address,undefined"]
         cloud: ["ON", "OFF"]
+        lab: ["OFF"]
         # The qualification laboratory (tests/qualification, GIT-C10): the
         # -lab targets declared and built, their scenario run; a fifth
-        # configuration beside the four above, on each OS.
+        # configuration beside the four above, on each OS. `lab` is a
+        # dimension of the matrix so that each entry below overrides an
+        # original value and becomes a combination of its own: an entry
+        # that overrides nothing extends the matching (off, ON) combination
+        # instead, which then runs with the laboratory and nothing runs its
+        # delivered form.
         include:
           - os: ubuntu-24.04
             sanitizers: "off"
@@ -55,7 +61,7 @@ jobs:
         env:
           SANITIZERS: ${{ matrix.sanitizers }}
           CLOUD_AGENT: ${{ matrix.cloud }}
-          LAB: ${{ matrix.lab || 'OFF' }}
+          LAB: ${{ matrix.lab }}
         run: |
           flags=""
           if [ "$SANITIZERS" != off ]; then flags="-fsanitize=$SANITIZERS -fno-omit-frame-pointer"; fi
