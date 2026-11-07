@@ -84,8 +84,16 @@ maelys_git_result_t mg_agent_serve(maelys_git_policy_t *policy,
             continue;
         }
         char *encoded = NULL;
+        MG_LAB_CONTEXT(message.message_id);
+        MG_LAB_POINT("executor.record_launch");
         result = mg_executor_execute(policy, git_executable, repository_root,
                                      &message, denial_mode, &encoded, &local_error);
+#if defined(MG_LAB_FAULTS)
+        /* After the effect, before the result line: the executor's
+         * alterations of the laboratory. */
+        if (result == MAELYS_GIT_OK && (result = mg_lab_alter_result(&encoded)) != MAELYS_GIT_OK)
+            mg_error_set(&local_error, result, 0, "laboratory alteration of the result failed");
+#endif
         if (result == MAELYS_GIT_OK) {
             if (fprintf(output, "%s\n", encoded) < 0 || fflush(output) != 0) {
                 free(encoded);
