@@ -156,8 +156,16 @@ static maelys_git_result_t http_request(maelys_http_client_t *client,
         result = MAELYS_HTTP_ERR_IO;
     if (result == MAELYS_HTTP_OK)
         result = maelys_http_exchange_create(client, request, deadline, &exchange);
-    while (result == MAELYS_HTTP_OK || result == MAELYS_HTTP_AGAIN)
+    while (result == MAELYS_HTTP_OK || result == MAELYS_HTTP_AGAIN) {
+#if defined(MG_LAB_FAULTS)
+        int64_t advance_started = mg_monotonic_ms();
+#endif
         result = maelys_http_exchange_advance(exchange);
+#if defined(MG_LAB_FAULTS)
+        mg_lab_http_trace(method, target, (int)result, maelys_http_result_string(result),
+                          mg_monotonic_ms() - advance_started);
+#endif
+    }
     if (result == MAELYS_HTTP_COMPLETE) *out_status = maelys_http_exchange_status(exchange);
     else {
         const char *diagnostic = exchange ? maelys_http_exchange_error(exchange) : NULL;
@@ -197,9 +205,10 @@ static maelys_git_result_t flush_one(cloud_clients_t *clients,
     result = http_request(clients->events, config, "POST", config->event_target,
                           item.payload, item.id, config->request_timeout_ms,
                           &status, &capture, error);
-    if (result == MAELYS_GIT_OK && status >= 200u && status < 300u)
+    if (result == MAELYS_GIT_OK && status >= 200u && status < 300u) {
+        MG_LAB_POINT("http.before_ack");
         result = mg_store_ack_outbox(store, item.id, error);
-    else if (result == MAELYS_GIT_OK && (status == 401u || status == 403u)) {
+    } else if (result == MAELYS_GIT_OK && (status == 401u || status == 403u)) {
         mg_error_set(error, MAELYS_GIT_ERR_DENIED, 0, "cloud rejected agent credentials");
         result = MAELYS_GIT_ERR_DENIED;
     } else {
@@ -241,6 +250,7 @@ static maelys_git_result_t process_command(const maelys_git_agent_config_t *conf
         mg_error_set(error, MAELYS_GIT_ERR_DENIED, 0, "command targets another agent");
         return MAELYS_GIT_ERR_DENIED;
     }
+    MG_LAB_CONTEXT(message.message_id);
     mg_store_command_state_t state;
     char *stored_result = NULL;
     result = mg_store_record_command(store, &message, raw, &state, &stored_result, error);
@@ -303,6 +313,7 @@ static maelys_git_result_t process_command(const maelys_git_agent_config_t *conf
     free(stored_result);
     mg_protocol_message_clear(&message);
     free(raw);
+    MG_LAB_CONTEXT(NULL);
     return result;
 }
 
@@ -328,6 +339,7 @@ static maelys_git_result_t poll_commands(cloud_clients_t *clients,
     result = http_request(clients->commands, config, "GET", target, NULL, NULL,
                           poll_deadline, &status, &capture, error);
     if (result != MAELYS_GIT_OK) return result;
+    MG_LAB_POINT("http.after_poll");
     if (status == 204u) return MAELYS_GIT_OK;
     if (status == 401u || status == 403u) {
         mg_error_set(error, MAELYS_GIT_ERR_DENIED, 0, "cloud rejected agent credentials");

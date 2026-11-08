@@ -147,6 +147,7 @@ static int command_grants_store_prune(maelys_cli_context_t *context) {
 
 #ifdef MAELYS_GIT_ENABLE_CLOUD_AGENT
 static int command_run(maelys_cli_context_t *context) {
+    MG_LAB_INIT("agent");
     maelys_git_error_t error = {0};
     int once = maelys_cli_flag(context, "once");
     maelys_git_result_t result = maelys_git_agent_run_cloud(
@@ -190,6 +191,7 @@ static int command_stdio(maelys_cli_context_t *context) {
 /* The executor answers the agent that supervises it, which keeps the text of
  * a denial in its audit and removes it from the result it publishes. */
 static int command_executor_serve(maelys_cli_context_t *context) {
+    MG_LAB_INIT("executor");
     return serve(context, MAELYS_GIT_EXPLAIN_ON_DENIAL);
 }
 

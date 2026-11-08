@@ -112,6 +112,7 @@ static maelys_git_result_t open_journal(sqlite3 *db, maelys_git_error_t *error) 
             !execute(db, "INSERT INTO metadata(key,value) VALUES('dedup_form','" DEDUPLICATION_FORM "')"))
             result = database_error(db, error, "record deduplication form");
     }
+    MG_LAB_POINT("store.open_after_barrier");
     if (result == MAELYS_GIT_OK &&
         !execute(db, "UPDATE commands SET state='pending' WHERE state='running'"))
         result = database_error(db, error, "recover running commands");
@@ -225,6 +226,7 @@ maelys_git_result_t mg_store_record_command(maelys_git_agent_store_t *store,
     int inserted = sqlite3_changes(store->database) == 1;
     sqlite3_finalize(statement);
     if (step != SQLITE_DONE) return database_error(store->database, error, "insert command");
+    MG_LAB_POINT("store.pending_insert");
     if (inserted) { *out_state = MG_STORE_COMMAND_NEW; return MAELYS_GIT_OK; }
 
     const char *select = "SELECT raw_json,state,result_json FROM commands WHERE id=?";
@@ -338,7 +340,19 @@ maelys_git_result_t mg_store_complete_command(maelys_git_agent_store_t *store,
         (void)snprintf(event_id, sizeof(event_id), "grants:%s", command_id);
         ok = mg_store_audit(store, event_id, "grants_snapshot", events->grants, now_ms, error) == MAELYS_GIT_OK;
     }
-    if (ok) ok = execute(store->database, "COMMIT");
+    if (ok) {
+#if defined(MG_LAB_FAULTS)
+        /* The point that opens the phase of this commit: a synthetic fault
+         * takes the ROLLBACK path below with its code, a VFS fault armed
+         * here fails the real commit. */
+        mg_lab_outcome_t lab = mg_lab_reach("store.complete_commit");
+        if (lab.synthetic) {
+            mg_error_set(error, MAELYS_GIT_ERR_IO, lab.code, "complete command: synthetic fault %s", lab.code_name);
+            ok = 0;
+        } else
+#endif
+        ok = execute(store->database, "COMMIT");
+    }
     if (!ok) {
         (void)execute(store->database, "ROLLBACK");
         if (!error || error->code == MAELYS_GIT_OK)

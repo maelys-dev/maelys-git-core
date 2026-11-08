@@ -237,6 +237,7 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
         close_fd(&input_pipe[1]); close_fd(&output_pipe[0]); close_fd(&life_pipe[0]);
         return spawn_result;
     }
+    MG_LAB_POINT("supervisor.after_spawn");
     int64_t deadline = mg_monotonic_ms();
     if (deadline >= 0) deadline += (int64_t)config->request_timeout_ms;
     size_t request_length = strlen(request_json);
@@ -332,6 +333,7 @@ static maelys_git_result_t run_executor(const maelys_git_agent_config_t *config,
     --used;
     if (used > 0u && response[used - 1u] == '\r') --used;
     response[used] = '\0';
+    MG_LAB_POINT("supervisor.before_validate");
     maelys_git_result_t validated = mg_protocol_validate_result(
         response, used, command, out_succeeded, error);
     if (validated != MAELYS_GIT_OK) {

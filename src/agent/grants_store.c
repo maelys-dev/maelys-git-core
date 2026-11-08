@@ -120,6 +120,19 @@ void mg_grants_archive_release(mg_grants_archive_t *archive) {
     archive->lock = -1;
 }
 
+/* The sync of the store's directory that publishes an entry; the point
+ * grants.sync of the laboratory fails it with the errno it names. */
+static int sync_store_directory(const char *directory) {
+#if defined(MG_LAB_FAULTS)
+    mg_lab_outcome_t lab = mg_lab_reach("grants.sync");
+    if (lab.synthetic) {
+        errno = lab.code;
+        return 0;
+    }
+#endif
+    return mg_sync_directory(directory);
+}
+
 /* An entry already in the store holds the bytes its name says. */
 static maelys_git_result_t verify_entry(const char *path, const char *sha256, maelys_git_error_t *error) {
     unsigned char *bytes = NULL;
@@ -190,7 +203,7 @@ maelys_git_result_t mg_grants_store_archive(const char *grants_path, const char 
             result = code_of(saved);
         }
     }
-    if (result == MAELYS_GIT_OK && !mg_sync_directory(directory)) {
+    if (result == MAELYS_GIT_OK && !sync_store_directory(directory)) {
         int saved = errno;
         mg_error_set(error, MAELYS_GIT_ERR_IO, saved, "cannot make grants store entry %s durable: %s", path,
                      strerror(saved));

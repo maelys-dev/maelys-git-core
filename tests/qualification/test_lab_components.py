@@ -4,6 +4,7 @@ binary: the counter-examples of the 2b reviews (2B-01 to 2B-04, the hook's expir
 
     test_lab_components.py OPENSSL
 """
+import hashlib
 import http.client
 import json
 import os
@@ -15,6 +16,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lab_fixture  # noqa: E402
 import lab_hook  # noqa: E402
 import lab_state as S  # noqa: E402
 from lab_cloud_server import LabCloudServer  # noqa: E402
@@ -690,6 +692,69 @@ with tempfile.TemporaryDirectory(prefix="gitc10-components-") as temporary:
     check("preserve.failed_kept", (fixture, "scenario failed"), (outcome["kept"], outcome["reason"]))
     outcome = lab_process.preserve_fixture(fixture, evidence, True, False)
     check("preserve.closed_success_removed", (None, False), (outcome["kept"], fixture.exists()))
+
+
+# ---- F52-01: the identity of a run never writes into the source repository,
+# which the Linux CI mounts read-only: a source repository of test, its
+# .git tree made read-only, clean then with an untracked file added and
+# changed; HEAD, the index and the object store of the source untouched.
+with tempfile.TemporaryDirectory(prefix="gitc10-provenance-") as temporary:
+    source = Path(temporary) / "source"
+    source.mkdir()
+
+    def source_git(*args, **kwargs):
+        return lab_fixture.git("-C", source, *args, **kwargs)
+
+    source_git("init", "-q")
+    for key, value in (("user.name", "Lab"), ("user.email", "lab@example.invalid"), ("commit.gpgSign", "false")):
+        source_git("config", key, value)
+    for scope in ("src", "include", "tests", ".github"):
+        (source / scope).mkdir()
+        (source / scope / "seed").write_text(scope + "\n")
+    (source / "CMakeLists.txt").write_text("project(seed)\n")
+    (source / "elsewhere.txt").write_text("outside the scopes\n")
+    source_git("add", "-A")
+    source_git("commit", "-qm", "seed")
+    source_git("gc", "-q", "--prune=now")
+    head = source_git("rev-parse", "HEAD").stdout.strip()
+    head_tree = source_git("rev-parse", "HEAD^{tree}").stdout.strip()
+    index_bytes = (source / ".git" / "index").read_bytes()
+
+    def git_dir_entries():
+        return sorted(str(p.relative_to(source)) for p in (source / ".git").rglob("*"))
+
+    def set_git_dir_mode(mode):
+        for directory in [source / ".git"] + [p for p in (source / ".git").rglob("*") if p.is_dir()]:
+            os.chmod(directory, mode)
+
+    entries_before = git_dir_entries()
+    writable_as_root = os.geteuid() == 0  # a read-only mode does not bind root
+    set_git_dir_mode(0o555)
+    try:
+        clean = lab_fixture.worktree_identity(source)
+        check("provenance.readonly_clean_tree_is_head", head_tree, clean["worktree_tree"])
+        check("provenance.readonly_clean_status", (False, {}), (clean["tree_dirty"], clean["untracked_sha256"]))
+        (source / "src" / "new.c").write_text("a\n")
+        one = lab_fixture.worktree_identity(source)
+        check("provenance.readonly_untracked_listed", {"src/new.c": hashlib.sha256(b"a\n").hexdigest()},
+              one["untracked_sha256"])
+        check("provenance.readonly_untracked_in_tree", True, one["worktree_tree"] != head_tree and one["tree_dirty"])
+        (source / "src" / "new.c").write_text("b\n")
+        two = lab_fixture.worktree_identity(source)
+        check("provenance.readonly_change_moves_tree", True,
+              two["worktree_tree"] not in (head_tree, one["worktree_tree"]))
+        check("provenance.readonly_change_moves_digest", hashlib.sha256(b"b\n").hexdigest(),
+              two["untracked_sha256"]["src/new.c"])
+        (source / "elsewhere.txt").write_text("changed outside the scopes\n")
+        three = lab_fixture.worktree_identity(source)
+        check("provenance.outside_scopes_ignored", two["worktree_tree"], three["worktree_tree"])
+    finally:
+        set_git_dir_mode(0o755)
+    check("provenance.head_untouched", head, source_git("rev-parse", "HEAD").stdout.strip())
+    check("provenance.index_untouched", True, index_bytes == (source / ".git" / "index").read_bytes())
+    check("provenance.object_store_untouched", entries_before, git_dir_entries())
+    if writable_as_root:
+        print("note  provenance.readonly: run as root, the read-only mode did not bind")
 
 if failures:
     print(f"{len(failures)} component check(s) failed: {failures}")
